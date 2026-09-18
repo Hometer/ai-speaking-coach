@@ -16,6 +16,7 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     level: Mapped[str] = mapped_column(String(16), default="basic")
+    memory_enabled: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -28,6 +29,7 @@ class Session(Base):
     goal_text: Mapped[str] = mapped_column(Text, default="")
     difficulty: Mapped[str] = mapped_column(String(16), default="standard")
     end_reason: Mapped[str] = mapped_column(String(32), nullable=True)
+    review: Mapped[str] = mapped_column(Text, default="")
     rechecked: Mapped[bool] = mapped_column(default=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -79,3 +81,13 @@ class BudgetLedger(Base):
     reserved: Mapped[float] = mapped_column(Float, default=0.0)
     spent: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+class Memory(Base):
+    __tablename__ = "memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    text: Mapped[str] = mapped_column(Text, default="")
+    source_session_id: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

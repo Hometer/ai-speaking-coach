@@ -31,6 +31,7 @@ class Settings:
         self.max_tool_retry = int(os.getenv("MAX_TOOL_RETRY", "1"))
         self.max_teach_adjust = int(os.getenv("MAX_TEACH_ADJUST", "2"))
         self.nominal_cost_per_turn = float(os.getenv("NOMINAL_COST_PER_TURN", "0.50"))
+        self.upload_retention_minutes = float(os.getenv("UPLOAD_RETENTION_MINUTES", "10"))
 
 
 settings = Settings()

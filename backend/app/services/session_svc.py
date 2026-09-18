@@ -11,11 +11,14 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.models.entities import Evaluation, Session, Turn, User
 from app.schemas.coach import CoachDecision
+from app.services import memory as memory_svc
 from app.services.budget import BudgetGuard, ToolBudget
+from app.services.cleanup import cleanup_old_uploads
 from app.services.coach import get_coach_provider
 from app.services.evaluator import get_evaluator_provider
 from app.services.practice import get_practice_eval_provider
 from app.services.asr import get_asr_provider
+from app.services.review import build_review
 from app.services.tts import get_tts_provider
 from app.services.turn import _validate_audio
 
@@ -286,6 +289,19 @@ def submit_practice(
     }
 
 
+def _review_of(session: Session) -> dict[str, Any]:
+    if session.review:
+        try:
+            return json.loads(session.review)
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _end_result(db: DbSession, session: Session) -> dict[str, Any]:
+    return {"summary": _summary(db, session), "review": _review_of(session)}
+
+
 def _summary(db: DbSession, session: Session) -> dict[str, Any]:
     turns = (
         db.query(Turn).filter(Turn.session_id == session.id).order_by(Turn.seq).all()
@@ -312,12 +328,17 @@ def _summary(db: DbSession, session: Session) -> dict[str, Any]:
 def end_session(db: DbSession, session_id: str, user_id: str, reason: str) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
     if session.status == S_ENDED:
-        return _summary(db, session)
+        return _end_result(db, session)
     session.status = S_ENDED
     session.end_reason = reason or "user_ended"
     session.ended_at = _now()
+    review = build_review(db, session, session.end_reason)
+    session.review = json.dumps(review, ensure_ascii=False)
     db.commit()
-    return _summary(db, session)
+    if memory_svc.is_memory_enabled(db, user_id):
+        memory_svc.generate_candidates(db, user_id, session_id, review)
+    cleanup_old_uploads()
+    return _end_result(db, session)
 
 
 def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]:
@@ -331,6 +352,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
         "goal_text": session.goal_text,
         "difficulty": session.difficulty,
         "end_reason": session.end_reason,
+        "review": _review_of(session),
         "turns": [
             {
                 "turn_id": t.id,
@@ -346,3 +368,44 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
             for t in turns
         ],
     }
+
+
+def _count_user_turns(db: DbSession, session_id: str) -> int:
+    return (
+        db.query(Turn)
+        .filter(Turn.session_id == session_id, Turn.input_type.in_(("voice", "text")))
+        .count()
+    )
+
+
+def list_sessions(db: DbSession, user_id: str) -> list[dict[str, Any]]:
+    sessions = (
+        db.query(Session)
+        .filter(Session.user_id == user_id)
+        .order_by(Session.started_at.desc())
+        .all()
+    )
+    result = []
+    for s in sessions:
+        review = _review_of(s)
+        result.append(
+            {
+                "session_id": s.id,
+                "status": s.status,
+                "difficulty": s.difficulty,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+                "turn_count": _count_user_turns(db, s.id),
+                "goal_status": review.get("goal_status") or _summary(db, s)["goal_status"],
+                "end_reason": s.end_reason,
+            }
+        )
+    return result
+
+
+def delete_session(db: DbSession, session_id: str, user_id: str) -> None:
+    session = _require_session(db, session_id, user_id)
+    memory_svc.delete_by_session(db, session_id)
+    db.query(Evaluation).filter(Evaluation.session_id == session_id).delete()
+    db.delete(session)  # 级联删除 turns
+    db.commit()

@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.errors import AppError, error_body
 from app.models.database import SessionLocal
+from app.schemas.memory import MemoryItem, MemoryToggleRequest
 from app.schemas.session import (
     EndRequest,
     EndResponse,
@@ -14,8 +15,10 @@ from app.schemas.session import (
     SessionCreateRequest,
     SessionCreatedResponse,
     SessionDetailResponse,
+    SessionListItem,
 )
 from app.schemas.turn import TextTurnRequest, TurnResponse
+from app.services import memory as memory_svc
 from app.services import session_svc
 from app.services.turn import handle_text_turn, handle_voice_turn, resolve_audio_path
 
@@ -139,8 +142,7 @@ async def end_session(
 ):
     db = SessionLocal()
     try:
-        summary = session_svc.end_session(db, session_id, x_user_id, req.reason)
-        return {"summary": summary}
+        return session_svc.end_session(db, session_id, x_user_id, req.reason)
     finally:
         db.close()
 
@@ -153,5 +155,85 @@ async def session_detail(
     db = SessionLocal()
     try:
         return session_svc.get_session_detail(db, session_id, x_user_id)
+    finally:
+        db.close()
+
+
+@router.get("/sessions", response_model=list[SessionListItem])
+async def list_sessions(
+    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+):
+    db = SessionLocal()
+    try:
+        return session_svc.list_sessions(db, x_user_id)
+    finally:
+        db.close()
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(
+    session_id: str,
+    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+):
+    db = SessionLocal()
+    try:
+        session_svc.delete_session(db, session_id, x_user_id)
+        return {"deleted": True}
+    finally:
+        db.close()
+
+
+# ===== 阶段 2.3：学习记忆 =====
+
+
+@router.post("/users/me/memory")
+async def toggle_memory(
+    req: MemoryToggleRequest,
+    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+):
+    db = SessionLocal()
+    try:
+        enabled = memory_svc.set_memory_enabled(db, x_user_id, req.enabled)
+        return {"enabled": enabled}
+    finally:
+        db.close()
+
+
+@router.get("/users/me/memories", response_model=list[MemoryItem])
+async def list_memories(
+    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+):
+    db = SessionLocal()
+    try:
+        mems = memory_svc.list_memories(db, x_user_id)
+        return [
+            {"id": m.id, "text": m.text, "source_session_id": m.source_session_id}
+            for m in mems
+        ]
+    finally:
+        db.close()
+
+
+@router.delete("/users/me/memories/{memory_id}")
+async def delete_memory(
+    memory_id: int,
+    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+):
+    db = SessionLocal()
+    try:
+        memory_svc.delete_memory(db, x_user_id, memory_id)
+        return {"deleted": True}
+    finally:
+        db.close()
+
+
+@router.delete("/users/me/memories")
+async def clear_memories(
+    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+):
+    db = SessionLocal()
+    try:
+        memory_svc.clear_memories(db, x_user_id)
+        return {"deleted": True}
     finally:
         db.close()

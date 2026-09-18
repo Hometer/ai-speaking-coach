@@ -5,20 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>AI 口语练习 · 最小验证页</title>
 <style>
-  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; color: #1f2329; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 680px; margin: 24px auto; padding: 0 16px; color: #1f2329; }
   h1 { font-size: 19px; }
   .hint { color: #8a9099; font-size: 13px; }
-  button { padding: 10px 18px; border: 0; border-radius: 8px; background: #3d78ff; color: #fff; cursor: pointer; font-size: 15px; }
+  button { padding: 9px 16px; border: 0; border-radius: 8px; background: #3d78ff; color: #fff; cursor: pointer; font-size: 14px; }
   button.secondary { background: #eef1f6; color: #1f2329; }
+  button.danger { background: #fdecea; color: #d93025; }
   button:disabled { background: #b8c4d9; cursor: not-allowed; }
   .card { border: 1px solid #e5e8ee; border-radius: 10px; padding: 14px; margin: 12px 0; }
   .label { font-size: 13px; color: #8a9099; margin-bottom: 6px; }
   .goal { background: #fff7e6; border-color: #ffe1a8; }
   .msg { margin: 10px 0; }
   .msg .who { font-size: 12px; color: #8a9099; }
-  .msg .body { margin-top: 2px; line-height: 1.6; white-space: pre-wrap; }
-  .msg.user .body { background: #f0f6ff; border-radius: 8px; padding: 8px 10px; }
-  .msg.coach .body { background: #eef7ee; border-radius: 8px; padding: 8px 10px; }
+  .msg .body { margin-top: 2px; line-height: 1.6; white-space: pre-wrap; border-radius: 8px; padding: 8px 10px; }
+  .msg.user .body { background: #f0f6ff; }
+  .msg.coach .body { background: #eef7ee; }
   audio { width: 100%; margin-top: 6px; }
   textarea { width: 100%; box-sizing: border-box; min-height: 56px; padding: 10px; border: 1px solid #d5dae3; border-radius: 8px; font-size: 15px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -26,14 +27,26 @@
   select { padding: 8px; border: 1px solid #d5dae3; border-radius: 8px; font-size: 14px; }
   .badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #eef1f6; color: #5b6472; }
   .practice { background: #f6f0ff; border-color: #e0cfff; }
-  #chatPanel, #summaryPanel { display: none; }
+  .item { border: 1px solid #e5e8ee; border-radius: 8px; padding: 10px; margin: 8px 0; }
+  .item .title { font-size: 14px; margin-bottom: 4px; }
+  .improve { border-left: 3px solid #ffc943; padding-left: 10px; margin: 8px 0; }
+  .panel { display: none; }
+  #startPanel { display: block; }
+  .nav { display: flex; gap: 8px; margin-bottom: 4px; }
 </style>
 </head>
 <body>
 <h1>AI 口语练习 · 最小验证页</h1>
-<p class="hint">阶段 2.2 临时验收工具。mock 模式：教练与评测为固定规则、AI 语音为静音。</p>
+<p class="hint">阶段 2.3 临时验收工具。mock 模式：教练/评测为固定规则、语音为静音。</p>
 
-<div id="startPanel" class="card">
+<div class="nav">
+  <button id="navStart" class="secondary">开始练习</button>
+  <button id="navHistory" class="secondary">历史</button>
+  <button id="navMemory" class="secondary">记忆</button>
+</div>
+
+<!-- 开始练习 -->
+<div id="startPanel" class="card panel">
   <div class="label">选择难度，开始一段「面试自我介绍」练习</div>
   <div class="row">
     <select id="level">
@@ -50,7 +63,8 @@
   <div class="err" id="startErr"></div>
 </div>
 
-<div id="chatPanel">
+<!-- 练习中 -->
+<div id="chatPanel" class="panel">
   <div class="card goal">
     <div class="label">本次目标</div>
     <div id="goalText" class="hint"></div>
@@ -77,235 +91,222 @@
       <button id="sendBtn">发送文字</button>
     </div>
   </div>
-
   <div class="row">
     <button id="endBtn" class="secondary">结束练习</button>
   </div>
   <div class="err" id="errBox"></div>
 </div>
 
-<div id="summaryPanel" class="card">
-  <div class="label">练习摘要</div>
+<!-- 摘要与回顾 -->
+<div id="summaryPanel" class="card panel">
+  <div class="label">练习摘要与回顾</div>
   <div id="summaryText" style="line-height:1.7"></div>
+  <div id="reviewBox"></div>
   <div class="row" style="margin-top:10px">
     <button id="againBtn" class="secondary">再练一次</button>
   </div>
 </div>
 
+<!-- 历史 -->
+<div id="historyPanel" class="card panel">
+  <div class="label">练习历史</div>
+  <div id="historyList"></div>
+  <div id="historyDetail" style="display:none"></div>
+</div>
+
+<!-- 记忆 -->
+<div id="memoryPanel" class="card panel">
+  <div class="label">学习记忆（默认关闭）</div>
+  <div class="row">
+    <label><input type="checkbox" id="memoryToggle" /> 开启记忆</label>
+    <button id="memoryClear" class="danger">清空</button>
+  </div>
+  <div id="memoryList" class="hint" style="margin-top:10px"></div>
+</div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const UID = 'demo-user';
-
-let sessionId = null;
-let status = '';
-let mediaRecorder = null;
-let chunks = [];
-let practiceSentence = '';
-let practiceDemoUrl = '';
+let sessionId = null, status = '', mediaRecorder = null, chunks = [], practiceSentence = '', practiceDemoUrl = '';
 
 function setErr(msg) { $('errBox').textContent = msg || ''; }
+function showPanel(id) {
+  ['startPanel','chatPanel','summaryPanel','historyPanel','memoryPanel'].forEach(p => { $(p).style.display = (p === id) ? 'block' : 'none'; });
+  if (id === 'historyPanel') loadHistory();
+  if (id === 'memoryPanel') loadMemory();
+}
+$('navStart').onclick = () => showPanel('startPanel');
+$('navHistory').onclick = () => showPanel('historyPanel');
+$('navMemory').onclick = () => showPanel('memoryPanel');
 
-// ===== 录音工具 =====
+const STATUS_CN = { WAITING_INPUT:'等待回答', RECHECK:'复测中', PRACTICE:'跟读中', ENDED:'已结束', PAUSED:'已暂停' };
+const EVAL_CN = { independent:'独立完成', hinted:'提示下完成', incomplete:'未完成', insufficient_evidence:'证据不足', not_started:'未开始' };
+
+// ===== 录音 =====
 function startRecording(btn, stateEl, onDone) {
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
-    btn.textContent = '录音回答';
-    stateEl.textContent = '正在上传…';
-    return;
-  }
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setErr('浏览器不支持录音，请用 Chrome 或 Safari，或用文字输入。');
-    return;
-  }
+  if (mediaRecorder && mediaRecorder.state === 'recording') { mediaRecorder.stop(); btn.textContent = '录音回答'; stateEl.textContent = '正在上传…'; return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setErr('浏览器不支持录音，请用 Chrome 或 Safari，或用文字输入。'); return; }
   navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-    setErr('');
-    chunks = [];
+    setErr(''); chunks = [];
     const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
     mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-    mediaRecorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-      onDone(blob);
-    };
-    mediaRecorder.start();
-    btn.textContent = '停止';
-    stateEl.textContent = '录音中…';
+    mediaRecorder.onstop = async () => { stream.getTracks().forEach(t => t.stop()); onDone(new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' })); };
+    mediaRecorder.start(); btn.textContent = '停止'; stateEl.textContent = '录音中…';
   }).catch(e => setErr('无法获取麦克风：' + (e && e.message ? e.message : e) + '。可改用文字输入。'));
 }
 
-// ===== SSE 解析 =====
 async function consumeSSE(response, onEvent) {
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
+  const reader = response.body.getReader(); const decoder = new TextDecoder(); let buf = '';
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let idx;
+    const { done, value } = await reader.read(); if (done) break;
+    buf += decoder.decode(value, { stream: true }); let idx;
     while ((idx = buf.indexOf('\n\n')) >= 0) {
-      const raw = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
+      const raw = buf.slice(0, idx); buf = buf.slice(idx + 2);
       let event = 'message', dataStr = '';
-      for (const line of raw.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim();
-        else if (line.startsWith('data:')) dataStr += line.slice(5).trim();
-      }
+      for (const line of raw.split('\n')) { if (line.startsWith('event:')) event = line.slice(6).trim(); else if (line.startsWith('data:')) dataStr += line.slice(5).trim(); }
       if (dataStr) onEvent(event, JSON.parse(dataStr));
     }
   }
 }
 
 function addMessage(who, text, audioUrl) {
-  const div = document.createElement('div');
-  div.className = 'msg ' + who;
+  const div = document.createElement('div'); div.className = 'msg ' + who;
   div.innerHTML = '<div class="who">' + (who === 'user' ? '你说的' : 'AI 说') + '</div><div class="body"></div>';
   div.querySelector('.body').textContent = text;
-  if (audioUrl) {
-    const a = document.createElement('audio');
-    a.controls = true;
-    a.src = audioUrl;
-    div.querySelector('.body').appendChild(a);
-  }
-  $('messages').appendChild(div);
-  div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  if (audioUrl) { const a = document.createElement('audio'); a.controls = true; a.src = audioUrl; div.querySelector('.body').appendChild(a); }
+  $('messages').appendChild(div); div.scrollIntoView({ behavior:'smooth', block:'end' });
 }
-
-function updateStatus(s) {
-  status = s;
-  const map = { WAITING_INPUT: '等待回答', RECHECK: '复测中', PRACTICE: '跟读中', ENDED: '已结束', PAUSED: '已暂停' };
-  $('statusText').textContent = map[s] || s;
-}
+function updateStatus(s) { status = s; $('statusText').textContent = STATUS_CN[s] || s; }
 
 function handleTurnDone(d) {
-  addMessage('coach', d.reply_text, d.reply_audio_url);
-  updateStatus(d.status);
+  addMessage('coach', d.reply_text, d.reply_audio_url); updateStatus(d.status);
   if (d.action_type === 'suggest_practice' && d.practice_sentence) {
-    practiceSentence = d.practice_sentence;
-    practiceDemoUrl = d.reply_audio_url;
+    practiceSentence = d.practice_sentence; practiceDemoUrl = d.reply_audio_url;
     $('practiceSentence').textContent = practiceSentence;
     if (practiceDemoUrl) { $('practiceDemo').src = practiceDemoUrl; $('practiceDemo').style.display = 'block'; }
     $('practicePanel').style.display = 'block';
-  } else {
-    $('practicePanel').style.display = 'none';
-  }
-  if (d.status === 'ENDED') {
-    setErr('目标已达成，可点击「结束练习」查看摘要。');
-  }
+  } else { $('practicePanel').style.display = 'none'; }
+  if (d.status === 'ENDED') setErr('目标已达成，可点「结束练习」查看回顾。');
 }
 
-// ===== 会话流程 =====
-$('startBtn').addEventListener('click', async () => {
+// ===== 会话 =====
+$('startBtn').onclick = async () => {
   try {
     $('startErr').textContent = '';
-    const r = await fetch('/api/v1/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Id': UID },
-      body: JSON.stringify({ level: $('level').value, difficulty: $('difficulty').value })
-    });
+    const r = await fetch('/api/v1/sessions', { method:'POST', headers:{'Content-Type':'application/json','X-User-Id':UID}, body: JSON.stringify({ level:$('level').value, difficulty:$('difficulty').value }) });
     const data = await r.json();
     if (!r.ok) { $('startErr').textContent = '出错：' + (data.error ? data.error.message : r.status); return; }
-    sessionId = data.session_id;
-    $('goalText').textContent = data.goal_text;
-    $('messages').innerHTML = '';
-    addMessage('coach', data.reply_text, data.reply_audio_url);
-    updateStatus(data.status);
-    $('startPanel').style.display = 'none';
-    $('chatPanel').style.display = 'block';
-    $('summaryPanel').style.display = 'none';
+    sessionId = data.session_id; $('goalText').textContent = data.goal_text; $('messages').innerHTML = '';
+    addMessage('coach', data.reply_text, data.reply_audio_url); updateStatus(data.status);
+    showPanel('chatPanel');
   } catch (e) { $('startErr').textContent = '请求失败：' + e; }
-});
+};
 
 async function submitTurn(text, blob) {
-  setErr('');
-  let url, options;
-  if (blob) {
-    url = `/api/v1/sessions/${sessionId}/turns/voice`;
-    const fd = new FormData();
-    fd.append('audio', blob, 'recording');
-    options = { method: 'POST', headers: { 'X-User-Id': UID }, body: fd };
-  } else {
-    url = `/api/v1/sessions/${sessionId}/turns/text`;
-    options = {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Id': UID },
-      body: JSON.stringify({ text })
-    };
-  }
+  setErr(''); let url, options;
+  if (blob) { url = `/api/v1/sessions/${sessionId}/turns/voice`; const fd = new FormData(); fd.append('audio', blob, 'recording'); options = { method:'POST', headers:{'X-User-Id':UID}, body:fd }; }
+  else { url = `/api/v1/sessions/${sessionId}/turns/text`; options = { method:'POST', headers:{'Content-Type':'application/json','X-User-Id':UID}, body: JSON.stringify({ text }) }; }
   const r = await fetch(url, options);
   if (!r.ok) { const d = await r.json().catch(() => null); setErr('出错：' + (d && d.error ? d.error.message : r.status)); return; }
-  await consumeSSE(r, (event, data) => {
-    if (event === 'error') { setErr('出错：' + (data.error ? data.error.message : '未知错误')); return; }
-    if (event === 'done') { handleTurnDone(data); }
-  });
+  await consumeSSE(r, (event, data) => { if (event === 'error') setErr('出错：' + (data.error ? data.error.message : '未知错误')); else if (event === 'done') handleTurnDone(data); });
 }
+$('sendBtn').onclick = () => { const text = $('textInput').value.trim(); if (!text) { setErr('请输入文字'); return; } addMessage('user', text, null); $('textInput').value=''; submitTurn(text, null); };
+$('textInput').addEventListener('keydown', e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); $('sendBtn').click(); } });
+$('recBtn').onclick = () => startRecording($('recBtn'), $('recState'), blob => { addMessage('user','（语音回答）',null); submitTurn(null, blob); });
 
-$('sendBtn').addEventListener('click', () => {
-  const text = $('textInput').value.trim();
-  if (!text) { setErr('请输入文字'); return; }
-  addMessage('user', text, null);
-  $('textInput').value = '';
-  submitTurn(text, null);
-});
-$('textInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('sendBtn').click(); }
-});
-
-$('recBtn').addEventListener('click', () => {
-  startRecording($('recBtn'), $('recState'), (blob) => {
-    addMessage('user', '（语音回答）', null);
-    submitTurn(null, blob);
-  });
+$('practiceRecBtn').onclick = () => startRecording($('practiceRecBtn'), $('practiceRecState'), async blob => {
+  try {
+    const fd = new FormData(); fd.append('audio', blob, 'practice'); fd.append('sentence', practiceSentence);
+    const r = await fetch(`/api/v1/sessions/${sessionId}/practice`, { method:'POST', headers:{'X-User-Id':UID}, body:fd });
+    const data = await r.json();
+    if (!r.ok) { setErr('出错：' + (data.error ? data.error.message : r.status)); return; }
+    const score = data.eval && typeof data.eval.score === 'number' ? data.eval.score : '-';
+    $('practiceResult').textContent = '评测：得分 ' + score + '（mock）';
+    addMessage('coach', data.recheck_reply_text, data.recheck_audio_url); updateStatus(data.status);
+    $('practicePanel').style.display = 'none'; $('practiceRecBtn').textContent='录音跟读'; $('practiceRecState').textContent='未在录音';
+  } catch (e) { setErr('请求失败：' + e); }
 });
 
-// 跟读
-$('practiceRecBtn').addEventListener('click', () => {
-  startRecording($('practiceRecBtn'), $('practiceRecState'), async (blob) => {
-    try {
-      const fd = new FormData();
-      fd.append('audio', blob, 'practice');
-      fd.append('sentence', practiceSentence);
-      const r = await fetch(`/api/v1/sessions/${sessionId}/practice`, { method: 'POST', headers: { 'X-User-Id': UID }, body: fd });
-      const data = await r.json();
-      if (!r.ok) { setErr('出错：' + (data.error ? data.error.message : r.status)); return; }
-      const score = data.eval && typeof data.eval.score === 'number' ? data.eval.score : '-';
-      $('practiceResult').textContent = '评测：得分 ' + score + '（mock）' + (data.eval && data.eval.notes ? ' · ' + JSON.stringify(data.eval.notes) : '');
-      addMessage('coach', data.recheck_reply_text, data.recheck_audio_url);
-      updateStatus(data.status);
-      $('practicePanel').style.display = 'none';
-      $('practiceRecBtn').textContent = '录音跟读';
-      $('practiceRecState').textContent = '未在录音';
-    } catch (e) { setErr('请求失败：' + e); }
-  });
-});
-
-// 结束
-$('endBtn').addEventListener('click', async () => {
+$('endBtn').onclick = async () => {
   if (!sessionId) return;
-  const r = await fetch(`/api/v1/sessions/${sessionId}/end`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-User-Id': UID },
-    body: JSON.stringify({ reason: 'user_ended' })
-  });
+  const r = await fetch(`/api/v1/sessions/${sessionId}/end`, { method:'POST', headers:{'Content-Type':'application/json','X-User-Id':UID}, body: JSON.stringify({ reason:'user_ended' }) });
   const data = await r.json();
   if (!r.ok) { setErr('出错：' + (data.error ? data.error.message : r.status)); return; }
   const s = data.summary;
-  $('summaryText').innerHTML =
-    '目标完成情况：' + s.goal_status + '<br>' +
-    '有效回答轮数：' + s.turn_count + '<br>' +
-    '结束原因：' + s.end_reason;
-  $('chatPanel').style.display = 'none';
-  $('summaryPanel').style.display = 'block';
-});
+  $('summaryText').innerHTML = '目标完成情况：' + (EVAL_CN[s.goal_status] || s.goal_status) + ' · 回答轮数：' + s.turn_count + ' · 结束原因：' + s.end_reason;
+  renderReview(data.review);
+  showPanel('summaryPanel');
+};
+$('againBtn').onclick = () => { sessionId = null; setErr(''); showPanel('startPanel'); };
 
-$('againBtn').addEventListener('click', () => {
-  $('summaryPanel').style.display = 'none';
-  $('chatPanel').style.display = 'none';
-  $('startPanel').style.display = 'block';
-  sessionId = null;
-  setErr('');
-});
+function renderReview(review) {
+  const box = $('reviewBox'); box.innerHTML = '';
+  if (!review) return;
+  let html = '';
+  if (review.improvements && review.improvements.length) {
+    html += '<div class="label">改进建议</div>';
+    review.improvements.forEach(imp => {
+      html += '<div class="improve">原句：' + esc(imp.original) + '<br>建议：' + esc(imp.suggestion) + '<br>说明：' + esc(imp.explanation_cn) + '<br>练习句：' + esc(imp.practice_sentence) + '</div>';
+    });
+  }
+  if (review.ratings) html += '<div class="label">评价：词汇 ' + review.ratings.vocabulary + ' / 语法 ' + review.ratings.grammar + ' / 沟通 ' + review.ratings.communication + '</div>';
+  if (review.next_suggestion) html += '<div class="label">下次建议：' + esc(review.next_suggestion) + '</div>';
+  box.innerHTML = html;
+}
+function esc(s) { return (s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+// ===== 历史 =====
+async function loadHistory() {
+  $('historyDetail').style.display = 'none';
+  const r = await fetch('/api/v1/sessions', { headers:{'X-User-Id':UID} });
+  const items = await r.json();
+  const list = $('historyList'); list.innerHTML = '';
+  if (!items || !items.length) { list.innerHTML = '<div class="hint">还没有练习记录</div>'; return; }
+  items.forEach(it => {
+    const div = document.createElement('div'); div.className = 'item';
+    div.innerHTML = '<div class="title">' + (it.started_at ? new Date(it.started_at).toLocaleString() : '') + ' · ' + (EVAL_CN[it.goal_status] || it.goal_status) + ' · ' + it.turn_count + ' 轮</div><div class="row"><button class="secondary view">查看</button><button class="danger del">删除</button></div>';
+    div.querySelector('.view').onclick = () => viewHistory(it.session_id);
+    div.querySelector('.del').onclick = async () => { await fetch('/api/v1/sessions/' + it.session_id, { method:'DELETE', headers:{'X-User-Id':UID} }); loadHistory(); };
+    list.appendChild(div);
+  });
+}
+async function viewHistory(id) {
+  const r = await fetch('/api/v1/sessions/' + id, { headers:{'X-User-Id':UID} });
+  const d = await r.json();
+  const box = $('historyDetail'); box.style.display = 'block'; box.innerHTML = '';
+  box.innerHTML = '<div class="label">对话与回顾</div>';
+  (d.turns || []).forEach(t => {
+    if (t.user_text || t.transcript) box.innerHTML += '<div class="msg user"><div class="body">' + esc(t.user_text || t.transcript) + '</div></div>';
+    if (t.reply_text) box.innerHTML += '<div class="msg coach"><div class="body">' + esc(t.reply_text) + '</div></div>';
+  });
+  if (d.review) { const tmp = document.createElement('div'); tmp.id = 'histReview'; box.appendChild(tmp); renderReviewInto(d.review, tmp); }
+}
+function renderReviewInto(review, el) {
+  el.innerHTML = '';
+  let html = '';
+  if (review.improvements && review.improvements.length) { html += '<div class="label">改进建议</div>'; review.improvements.forEach(imp => { html += '<div class="improve">' + esc(imp.explanation_cn) + ' · 练习句：' + esc(imp.practice_sentence) + '</div>'; }); }
+  if (review.next_suggestion) html += '<div class="label">下次建议：' + esc(review.next_suggestion) + '</div>';
+  el.innerHTML = html;
+}
+
+// ===== 记忆 =====
+async function loadMemory() {
+  const r = await fetch('/api/v1/users/me/memories', { headers:{'X-User-Id':UID} });
+  const items = await r.json();
+  const list = $('memoryList'); list.innerHTML = '';
+  if (!items || !items.length) { list.textContent = '（暂无记忆）'; return; }
+  items.forEach(m => {
+    const div = document.createElement('div'); div.className = 'item';
+    div.innerHTML = '<div>' + esc(m.text) + '</div><div class="row" style="margin-top:6px"><button class="danger del">删除</button></div>';
+    div.querySelector('.del').onclick = async () => { await fetch('/api/v1/users/me/memories/' + m.id, { method:'DELETE', headers:{'X-User-Id':UID} }); loadMemory(); };
+    list.appendChild(div);
+  });
+}
+$('memoryToggle').onchange = async e => {
+  await fetch('/api/v1/users/me/memory', { method:'POST', headers:{'Content-Type':'application/json','X-User-Id':UID}, body: JSON.stringify({ enabled: e.target.checked }) });
+};
+$('memoryClear').onclick = async () => { await fetch('/api/v1/users/me/memories', { method:'DELETE', headers:{'X-User-Id':UID} }); loadMemory(); };
 </script>
 </body>
 </html>

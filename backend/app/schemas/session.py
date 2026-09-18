@@ -38,7 +38,19 @@ class SessionDetailResponse(BaseModel):
     goal_text: str
     difficulty: str
     end_reason: str | None = None
+    review: dict | None = None
     turns: list[TurnItem] = []
+
+
+class SessionListItem(BaseModel):
+    session_id: str
+    status: str
+    difficulty: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    turn_count: int = 0
+    goal_status: str = ""
+    end_reason: str | None = None
 
 
 class EndRequest(BaseModel):
@@ -56,6 +68,7 @@ class EndSummary(BaseModel):
 
 class EndResponse(BaseModel):
     summary: EndSummary
+    review: dict | None = None
 
 
 class PracticeResponse(BaseModel):
