@@ -110,6 +110,17 @@ def create_session(db: DbSession, user_id: str, level: str, difficulty: str) -> 
     audio = tts.synthesize(decision.reply_text)
     audio_url = _save_audio(audio, tts.ext)
     session.status = S_WAITING
+    db.add(
+        Turn(
+            id=uuid.uuid4().hex,
+            session_id=session_id,
+            seq=0,
+            input_type="coach",
+            reply_text=decision.reply_text,
+            reply_audio_url=audio_url,
+            action_type="follow_up",
+        )
+    )
     db.commit()
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
 
@@ -361,6 +372,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
                 "user_text": t.user_text,
                 "transcript": t.transcript,
                 "reply_text": t.reply_text,
+                "reply_audio_url": t.reply_audio_url,
                 "action_type": t.action_type,
                 "hint_used": t.hint_used,
                 "eval_result": t.eval_result,

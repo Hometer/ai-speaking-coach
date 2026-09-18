@@ -42,17 +42,21 @@ class DashScopeTTSProvider(TTSProvider):
 
     def synthesize(self, text: str) -> bytes:
         import dashscope
+        from dashscope.audio.tts_v2 import SpeechSynthesizer
 
         dashscope.api_key = self.api_key
-        resp = dashscope.audio.tts.SpeechSynthesizer.call(
-            model=self.model, text=text, voice=self.voice, format="mp3"
-        )
-        data = resp.get_audio_data() if hasattr(resp, "get_audio_data") else None
-        if not data:
-            code = getattr(resp, "code", "")
-            message = getattr(resp, "message", "未知错误")
-            raise AppError("TTS_ERROR", f"语音合成失败：{code} {message}".strip(), status_code=502)
-        return data
+        try:
+            synthesizer = SpeechSynthesizer(
+                model=self.model,
+                voice=self.voice,
+                language_hints=["en"],
+            )
+            audio = synthesizer.call(text)
+        except Exception as exc:  # noqa: BLE001
+            raise AppError("TTS_ERROR", f"语音合成失败：{str(exc)[:120]}", status_code=502)
+        if not audio:
+            raise AppError("TTS_ERROR", "语音合成为空", status_code=502)
+        return audio
 
 
 def get_tts_provider() -> TTSProvider:

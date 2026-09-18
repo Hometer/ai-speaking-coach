@@ -15,8 +15,8 @@ class Settings:
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
         self.model_asr = os.getenv("MODEL_ASR", "paraformer-v2")
         self.model_llm = os.getenv("MODEL_LLM", "qwen-plus")
-        self.model_tts = os.getenv("MODEL_TTS", "cosyvoice-v1")
-        self.tts_voice = os.getenv("TTS_VOICE", "Lois")
+        self.model_tts = os.getenv("MODEL_TTS", "cosyvoice-v2")
+        self.tts_voice = os.getenv("TTS_VOICE", "loongabby_v2")
         self.max_audio_mb = float(os.getenv("MAX_AUDIO_MB", "10"))
         self.data_dir = (PROJECT_ROOT / "data").resolve()
         self.database_url = os.getenv(
