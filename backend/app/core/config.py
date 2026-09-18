@@ -30,7 +30,7 @@ class Settings:
         self.max_tools_per_turn = int(os.getenv("MAX_TOOLS_PER_TURN", "3"))
         self.max_tool_retry = int(os.getenv("MAX_TOOL_RETRY", "1"))
         self.max_teach_adjust = int(os.getenv("MAX_TEACH_ADJUST", "2"))
-        self.nominal_cost_per_turn = float(os.getenv("NOMINAL_COST_PER_TURN", "0.50"))
+        self.nominal_cost_per_turn = float(os.getenv("NOMINAL_COST_PER_TURN", "0.10"))
         self.upload_retention_minutes = float(os.getenv("UPLOAD_RETENTION_MINUTES", "10"))
 
 

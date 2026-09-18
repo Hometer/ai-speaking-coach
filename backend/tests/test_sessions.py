@@ -174,9 +174,9 @@ def test_persistence_across_session(client):
 
 
 def test_budget_exceeded(client, monkeypatch):
-    monkeypatch.setattr(config.settings, "budget_session", 1.25)
-    s = _create_session(client)  # 会话创建占 0.50
-    _send_text(client, s["session_id"], "I have three years of experience in software development.")  # 回合 0.50
+    monkeypatch.setattr(config.settings, "budget_session", 0.25)
+    s = _create_session(client)  # 会话创建占 0.10
+    _send_text(client, s["session_id"], "I have three years of experience in software development.")  # 回合 0.10
     r = client.post(
         f"/api/v1/sessions/{s['session_id']}/turns/text",
         json={"text": "more"},

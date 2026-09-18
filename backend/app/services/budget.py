@@ -1,4 +1,6 @@
 """成本护栏：调用前预留、超额即拒（确定性框架，真实单价待试算）。"""
+from datetime import date
+
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import settings
@@ -19,6 +21,11 @@ class ToolBudget:
             raise AppError("TOOL_LIMIT_EXCEEDED", "本回合工具调用次数已达上限", status_code=429)
 
 
+def _day_key(key: str) -> str:
+    """按自然日隔离，用户日/项目日预算每天自动重置。"""
+    return f"{key}:{date.today().isoformat()}"
+
+
 class BudgetGuard:
     def __init__(self, db: DbSession):
         self.db = db
@@ -28,6 +35,7 @@ class BudgetGuard:
         if row is None:
             row = BudgetLedger(scope=scope, scope_key=key, reserved=0.0, spent=0.0)
             self.db.add(row)
+            self.db.flush()  # 立即写入，避免同一事务内重复建行
         return row
 
     @staticmethod
@@ -38,25 +46,28 @@ class BudgetGuard:
         """预留费用；预计超额即拒绝，不等账单产生。"""
         caps = [
             ("session", session_id, settings.budget_session),
-            ("user", user_id, settings.budget_user_day),
-            ("project", "all", settings.budget_project_day),
+            ("user", _day_key(user_id), settings.budget_user_day),
+            ("project", _day_key("all"), settings.budget_project_day),
         ]
-        for scope, key, cap in caps:
-            row = self._row(scope, key)
+        rows = [(scope, key, cap, self._row(scope, key)) for scope, key, cap in caps]
+        for _, _, cap, row in rows:
             if self._used(row) + amount > cap:
                 raise AppError(
                     "BUDGET_EXCEEDED",
                     "费用预算已用尽，本次练习结束",
                     status_code=402,
                 )
-        for scope, key, _ in caps:
-            row = self._row(scope, key)
+        for _, _, _, row in rows:
             row.reserved = (row.reserved or 0.0) + amount
         self.db.commit()
 
     def settle(self, amount: float, session_id: str, user_id: str) -> None:
         """按实际用量结算：把预留转为已花费。"""
-        for scope, key in [("session", session_id), ("user", user_id), ("project", "all")]:
+        for scope, key in [
+            ("session", session_id),
+            ("user", _day_key(user_id)),
+            ("project", _day_key("all")),
+        ]:
             row = self._row(scope, key)
             row.reserved = max(0.0, (row.reserved or 0.0) - amount)
             row.spent = (row.spent or 0.0) + amount
