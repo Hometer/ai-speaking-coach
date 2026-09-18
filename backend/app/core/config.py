@@ -19,6 +19,18 @@ class Settings:
         self.tts_voice = os.getenv("TTS_VOICE", "Lois")
         self.max_audio_mb = float(os.getenv("MAX_AUDIO_MB", "10"))
         self.data_dir = (PROJECT_ROOT / "data").resolve()
+        self.database_url = os.getenv(
+            "DATABASE_URL", f"sqlite:///{self.data_dir / 'ai_speaking.db'}"
+        )
+        # 预算与运行上限（金额是设计预算，未实测报价）
+        self.budget_session = float(os.getenv("BUDGET_SESSION", "3.00"))
+        self.budget_user_day = float(os.getenv("BUDGET_USER_DAY", "10.00"))
+        self.budget_project_day = float(os.getenv("BUDGET_PROJECT_DAY", "100.00"))
+        self.budget_end_reserve = float(os.getenv("BUDGET_END_RESERVE", "0.30"))
+        self.max_tools_per_turn = int(os.getenv("MAX_TOOLS_PER_TURN", "3"))
+        self.max_tool_retry = int(os.getenv("MAX_TOOL_RETRY", "1"))
+        self.max_teach_adjust = int(os.getenv("MAX_TEACH_ADJUST", "2"))
+        self.nominal_cost_per_turn = float(os.getenv("NOMINAL_COST_PER_TURN", "0.50"))
 
 
 settings = Settings()

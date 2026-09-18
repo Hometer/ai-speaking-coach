@@ -8,10 +8,11 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.core.errors import AppError, error_body
+from app.models.database import init_db
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="AI 口语练习 · 后端 MVP", version="0.1.0")
+app = FastAPI(title="AI 口语练习 · 后端 MVP", version="0.2.0")
 
 
 @app.exception_handler(AppError)
@@ -37,3 +38,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+# 启动时建表（幂等）；schema 稳定后引入 Alembic 迁移
+init_db()
