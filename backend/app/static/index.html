@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI 口语练习 · 最小验证页</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 640px; margin: 32px auto; padding: 0 16px; color: #1f2329; }
+  h1 { font-size: 20px; }
+  .hint { color: #8a9099; font-size: 13px; }
+  button { padding: 10px 18px; border: 0; border-radius: 8px; background: #3d78ff; color: #fff; cursor: pointer; font-size: 15px; }
+  button:disabled { background: #b8c4d9; cursor: not-allowed; }
+  .card { border: 1px solid #e5e8ee; border-radius: 10px; padding: 16px; margin: 16px 0; }
+  .label { font-size: 13px; color: #8a9099; margin-bottom: 6px; }
+  .you { background: #f4f7fb; }
+  .ai { background: #eef7ee; }
+  .bubble { font-size: 15px; line-height: 1.6; white-space: pre-wrap; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 64px; padding: 10px; border: 1px solid #d5dae3; border-radius: 8px; font-size: 15px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .err { color: #d93025; font-size: 13px; min-height: 18px; margin-top: 8px; }
+  audio { width: 100%; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>AI 口语练习 · 最小验证页</h1>
+<p class="hint">本页是阶段 2.1 的临时验收工具。mock 模式下：转写与回复是固定示例、AI 语音为静音（属预期）。</p>
+
+<div class="card">
+  <div class="label">1) 录音说话（也可直接用第 3 步的文字输入）</div>
+  <div class="row">
+    <button id="recBtn">开始录音</button>
+    <span id="recState" class="hint">未在录音</span>
+  </div>
+</div>
+
+<div class="card you">
+  <div class="label">你说的</div>
+  <div id="youText" class="bubble hint">（还没有内容）</div>
+</div>
+
+<div class="card ai">
+  <div class="label">AI 说</div>
+  <div id="aiText" class="bubble hint">（还没有内容）</div>
+  <audio id="aiAudio" controls style="display:none"></audio>
+</div>
+
+<div class="card">
+  <div class="label">3) 文字输入（降级入口，不计语音）</div>
+  <textarea id="textInput" placeholder="Type something in English..."></textarea>
+  <div class="row" style="margin-top:10px">
+    <button id="sendBtn">发送</button>
+    <span class="hint">回车即发送，Shift+回车换行</span>
+  </div>
+</div>
+
+<div class="err" id="errBox"></div>
+
+<script>
+const recBtn = document.getElementById('recBtn');
+const recState = document.getElementById('recState');
+const youText = document.getElementById('youText');
+const aiText = document.getElementById('aiText');
+const aiAudio = document.getElementById('aiAudio');
+const textInput = document.getElementById('textInput');
+const sendBtn = document.getElementById('sendBtn');
+const errBox = document.getElementById('errBox');
+
+let mediaRecorder = null;
+let chunks = [];
+
+function setErr(msg) { errBox.textContent = msg || ''; }
+
+recBtn.addEventListener('click', async () => {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    recBtn.textContent = '开始录音';
+    recState.textContent = '正在上传…';
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setErr('浏览器不支持录音，请用 Chrome 或 Safari，或改用下方文字输入。');
+    return;
+  }
+  try {
+    setErr('');
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    chunks = [];
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+    mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      await uploadVoice(blob);
+    };
+    mediaRecorder.start();
+    recBtn.textContent = '停止';
+    recState.textContent = '录音中…';
+  } catch (e) {
+    setErr('无法获取麦克风：' + (e && e.message ? e.message : e) + '。可改用文字输入。');
+  }
+});
+
+async function uploadVoice(blob) {
+  const fd = new FormData();
+  fd.append('audio', blob, 'recording');
+  try {
+    setErr('');
+    const r = await fetch('/api/v1/turn/voice', { method: 'POST', body: fd });
+    await showResult(r, null);
+  } catch (e) {
+    setErr('请求失败：' + e);
+    recState.textContent = '未在录音';
+  }
+}
+
+async function sendText() {
+  const text = textInput.value.trim();
+  if (!text) { setErr('请输入文字'); return; }
+  try {
+    setErr('');
+    const r = await fetch('/api/v1/turn/text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    await showResult(r, text);
+  } catch (e) {
+    setErr('请求失败：' + e);
+  }
+}
+
+async function showResult(r, typedText) {
+  const data = await r.json().catch(() => null);
+  if (!r.ok || !data) {
+    const msg = (data && data.error) ? data.error.message : ('HTTP ' + r.status);
+    setErr('出错：' + msg);
+    recState.textContent = '未在录音';
+    return;
+  }
+  if (data.transcript) {
+    youText.textContent = data.transcript;
+  } else if (typedText) {
+    youText.textContent = typedText;
+  }
+  aiText.textContent = data.reply_text;
+  if (data.reply_audio_url) {
+    aiAudio.src = data.reply_audio_url;
+    aiAudio.style.display = 'block';
+    aiAudio.play().catch(() => {});
+  }
+  recState.textContent = '未在录音';
+  textInput.value = '';
+}
+
+sendBtn.addEventListener('click', sendText);
+textInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); }
+});
+</script>
+</body>
+</html>
