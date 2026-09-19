@@ -1,4 +1,4 @@
-import type { ApiErrorBody, SessionCreated, SessionDetail, TurnDone } from "./types";
+import type { ApiErrorBody, MemoryItem, SessionCreated, SessionDetail, SessionListItem, TurnDone } from "./types";
 
 const UID = "demo-user";
 
@@ -32,6 +32,49 @@ export async function endSession(sessionId: string) {
     body: JSON.stringify({ reason: "user_ended" }),
   });
   return handle<{ summary: Record<string, unknown>; review: Record<string, unknown> | null }>(res);
+}
+
+export async function listSessions(): Promise<SessionListItem[]> {
+  const res = await fetch("/api/v1/sessions", { headers: { "X-User-Id": UID } });
+  return handle<SessionListItem[]>(res);
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(`/api/v1/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers: { "X-User-Id": UID },
+  });
+  await handle<unknown>(res);
+}
+
+export async function getMemories(): Promise<MemoryItem[]> {
+  const res = await fetch("/api/v1/users/me/memories", { headers: { "X-User-Id": UID } });
+  return handle<MemoryItem[]>(res);
+}
+
+export async function toggleMemory(enabled: boolean): Promise<{ enabled: boolean }> {
+  const res = await fetch("/api/v1/users/me/memory", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-User-Id": UID },
+    body: JSON.stringify({ enabled }),
+  });
+  return handle<{ enabled: boolean }>(res);
+}
+
+export async function deleteMemory(id: number): Promise<void> {
+  const res = await fetch(`/api/v1/users/me/memories/${id}`, {
+    method: "DELETE",
+    headers: { "X-User-Id": UID },
+  });
+  await handle<unknown>(res);
+}
+
+export async function clearMemories(): Promise<void> {
+  const res = await fetch("/api/v1/users/me/memories", {
+    method: "DELETE",
+    headers: { "X-User-Id": UID },
+  });
+  await handle<unknown>(res);
 }
 
 async function parseSSE<T>(res: Response): Promise<T> {

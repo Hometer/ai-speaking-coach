@@ -35,11 +35,14 @@ export default function PracticePage() {
   const [practiceResult, setPracticeResult] = useState("");
   const [recording, setRecording] = useState(false);
   const [recordMode, setRecordMode] = useState<"answer" | "practice" | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
 
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cancelRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -103,17 +106,31 @@ export default function PracticePage() {
     handleTurn({ text: t }, t);
   }
 
+  function clearTimer() {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  function timerText() {
+    if (!recording) return "";
+    if (elapsed >= 50) return `还剩 ${60 - elapsed} 秒`;
+    return `已录 ${elapsed} 秒`;
+  }
+
   async function toggleRecord(mode: "answer" | "practice") {
     if (recRef.current && recRef.current.state === "recording") {
+      cancelRef.current = false;
       recRef.current.stop();
-      setRecording(false);
-      setRecordMode(null);
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       chunksRef.current = [];
+      cancelRef.current = false;
+      setElapsed(0);
       const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
         : "";
@@ -123,7 +140,15 @@ export default function PracticePage() {
         if (e.data.size) chunksRef.current.push(e.data);
       };
       rec.onstop = () => {
+        clearTimer();
         stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        setRecordMode(null);
+        setElapsed(0);
+        if (cancelRef.current) {
+          cancelRef.current = false;
+          return;
+        }
         const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
         if (mode === "answer") handleTurn({ audio: blob });
         else submitPractice(blob);
@@ -131,8 +156,25 @@ export default function PracticePage() {
       rec.start();
       setRecording(true);
       setRecordMode(mode);
+      timerRef.current = setInterval(() => {
+        setElapsed((prev) => {
+          const next = prev + 1;
+          if (next >= 60 && recRef.current && recRef.current.state === "recording") {
+            cancelRef.current = false;
+            recRef.current.stop();
+          }
+          return next;
+        });
+      }, 1000);
     } catch {
       setErr("无法获取麦克风，可用文字输入。");
+    }
+  }
+
+  function cancelRecord() {
+    if (recRef.current && recRef.current.state === "recording") {
+      cancelRef.current = true;
+      recRef.current.stop();
     }
   }
 
@@ -249,6 +291,12 @@ export default function PracticePage() {
               >
                 {recording && recordMode === "practice" ? "停止" : "录音跟读"}
               </button>
+              {recording && recordMode === "practice" ? (
+                <>
+                  <span className="text-xs" style={{ color: elapsed >= 50 ? "var(--danger, #dc2626)" : "var(--muted)" }}>{timerText()}</span>
+                  <button onClick={cancelRecord} className="text-xs px-2 py-1 rounded-lg border" style={{ borderColor: "var(--line)", color: "var(--danger, #dc2626)" }}>取消</button>
+                </>
+              ) : null}
               <span className="text-xs" style={{ color: "var(--muted)" }}>
                 {practiceResult}
               </span>
@@ -306,6 +354,12 @@ export default function PracticePage() {
             >
               {recording && recordMode === "answer" ? "停止" : "🎤 录音回答"}
             </button>
+            {recording && recordMode === "answer" ? (
+              <>
+                <span className="text-xs" style={{ color: elapsed >= 50 ? "var(--danger, #dc2626)" : "var(--muted)" }}>{timerText()}</span>
+                <button onClick={cancelRecord} className="text-xs px-2 py-1 rounded-lg border" style={{ borderColor: "var(--line)", color: "var(--danger, #dc2626)" }}>取消</button>
+              </>
+            ) : null}
             <button
               onClick={sendText}
               disabled={busy || !text.trim()}

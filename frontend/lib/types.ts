@@ -46,6 +46,23 @@ export interface SessionDetail {
   turns: TurnItem[];
 }
 
+export interface SessionListItem {
+  session_id: string;
+  status: string;
+  difficulty: string;
+  started_at: string | null;
+  ended_at: string | null;
+  turn_count: number;
+  goal_status: string;
+  end_reason: string | null;
+}
+
+export interface MemoryItem {
+  id: number;
+  text: string;
+  source_session_id: string;
+}
+
 export interface ApiErrorBody {
   error: { code: string; message: string };
 }
