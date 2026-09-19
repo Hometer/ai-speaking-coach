@@ -13,7 +13,7 @@ class Settings:
     def __init__(self):
         self.provider_mode = os.getenv("PROVIDER_MODE", "mock").strip().lower()
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
-        self.model_asr = os.getenv("MODEL_ASR", "paraformer-v2")
+        self.model_asr = os.getenv("MODEL_ASR", "paraformer-realtime-v2")
         self.model_llm = os.getenv("MODEL_LLM", "qwen-plus")
         self.model_tts = os.getenv("MODEL_TTS", "cosyvoice-v2")
         self.tts_voice = os.getenv("TTS_VOICE", "loongabby_v2")
@@ -32,6 +32,10 @@ class Settings:
         self.max_teach_adjust = int(os.getenv("MAX_TEACH_ADJUST", "2"))
         self.nominal_cost_per_turn = float(os.getenv("NOMINAL_COST_PER_TURN", "0.10"))
         self.upload_retention_minutes = float(os.getenv("UPLOAD_RETENTION_MINUTES", "10"))
+        self.ffmpeg_bin = os.getenv("FFMPEG_BIN", "ffmpeg")
+        self.xf_appid = os.getenv("XF_APPID", "")
+        self.xf_api_key = os.getenv("XF_API_KEY", "")
+        self.xf_api_secret = os.getenv("XF_API_SECRET", "")
 
 
 settings = Settings()

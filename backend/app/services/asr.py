@@ -1,9 +1,10 @@
-"""语音识别（ASR）provider：抽象 + mock + 阿里云百炼（真实接入待验）。"""
+"""语音识别（ASR）provider：抽象 + mock + 阿里云百炼（真实接入）。"""
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from app.core.config import settings
 from app.core.errors import AppError
+from app.services.audio_util import transcode_to_wav_file
 
 
 class ASRProvider(ABC):
@@ -21,20 +22,53 @@ class MockASRProvider(ASRProvider):
 
 
 class DashScopeASRProvider(ASRProvider):
-    """阿里云百炼 paraformer 录音文件识别。真实接入方式待冒烟验证。"""
+    """阿里云百炼 paraformer-realtime-v2 本地文件识别。"""
 
     def __init__(self, api_key: str, model: str):
         self.api_key = api_key
         self.model = model
 
     def transcribe(self, audio_path: Path) -> str:
-        # 待验：paraformer-v2 录音文件识别通常需要文件公网 URL（或 OSS 中转），
-        # 本地直传的接入方式在真实冒烟时验证并固定。此处如实报"待验"。
-        raise AppError(
-            "ASR_NOT_READY",
-            "语音识别真实接入待验：请先以 mock 模式验收，提供 Key 后完成真实冒烟再启用。",
-            status_code=501,
-        )
+        import dashscope
+        from dashscope.audio.asr import Recognition, RecognitionCallback
+
+        dashscope.api_key = self.api_key
+        wav_path = transcode_to_wav_file(audio_path)
+        try:
+            recognition = Recognition(
+                model=self.model,
+                callback=RecognitionCallback(),
+                format="wav",
+                sample_rate=16000,
+            )
+            result = recognition.call(str(wav_path))
+        except AppError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise AppError("ASR_ERROR", f"语音识别失败：{str(exc)[:120]}", status_code=502)
+
+        text = _extract_text(result)
+        if not text:
+            raise AppError("ASR_EMPTY", "未识别到内容，请重说或改用文字", status_code=422)
+        return text
+
+
+def _extract_text(result) -> str:
+    try:
+        sentence = result.get_sentence()
+    except Exception:  # noqa: BLE001
+        return ""
+    if isinstance(sentence, list):
+        parts = []
+        for item in sentence:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text", "")).strip())
+            else:
+                parts.append(str(item).strip())
+        return " ".join(p for p in parts if p).strip()
+    if isinstance(sentence, dict):
+        return str(sentence.get("text", "")).strip()
+    return str(sentence or "").strip()
 
 
 def get_asr_provider() -> ASRProvider:
