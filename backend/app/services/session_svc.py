@@ -81,6 +81,16 @@ def _last_action_type(db: DbSession, session_id: str) -> str:
     return last.action_type if last else ""
 
 
+def _last_help_type(db: DbSession, session_id: str) -> str:
+    last = (
+        db.query(Turn)
+        .filter(Turn.session_id == session_id, Turn.help_type != "")
+        .order_by(Turn.seq.desc())
+        .first()
+    )
+    return last.help_type if last else ""
+
+
 def _has_practice(db: DbSession, session_id: str) -> bool:
     return (
         db.query(Turn)
@@ -276,7 +286,7 @@ def submit_turn(
         else:
             text_for_eval = user_text or ""
 
-        hint_used = _last_action_type(db, session_id) == "hint"
+        hint_used = _last_action_type(db, session_id) == "hint" or _last_help_type(db, session_id) == "organize"
 
         # 当前子目标 + 题目
         subgoals = _load_subgoals(session)
@@ -729,6 +739,54 @@ def request_hint(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]
         raise
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
     return {"session_id": session_id, "reply_text": decision.reply_text, "reply_audio_url": audio_url, "action_type": decision.action_type}
+
+
+def request_help(
+    db: DbSession, session_id: str, user_id: str, help_type: str, help_level: int = 0
+) -> dict[str, Any]:
+    session = _require_session(db, session_id, user_id)
+    if session.status == S_ENDED:
+        raise AppError("SESSION_ENDED", "会话已结束", status_code=409)
+    if session.status == S_PAUSED:
+        raise AppError("SESSION_PAUSED", "会话已暂停", status_code=409)
+    guard = BudgetGuard(db)
+    guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
+    try:
+        coach = get_coach_provider()
+        question = _last_coach_text(db, session_id)
+        decision = coach.help(
+            {"help_type": help_type, "help_level": help_level, "current_question": question}
+        )
+        tts = get_tts_provider()
+        audio = tts.synthesize(decision.reply_text)
+        audio_url = _save_audio(audio, tts.ext)
+        db.add(
+            Turn(
+                id=uuid.uuid4().hex,
+                session_id=session_id,
+                seq=_next_seq(db, session_id),
+                input_type="coach",
+                reply_text=decision.reply_text,
+                reply_audio_url=audio_url,
+                action_type="help",
+                help_type=help_type,
+                help_level=help_level,
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        raise
+    guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
+    return {
+        "session_id": session_id,
+        "reply_text": decision.reply_text,
+        "reply_audio_url": audio_url,
+        "action_type": "help",
+        "help_type": help_type,
+        "help_level": help_level,
+    }
 
 
 def dispute_review_improvement(db: DbSession, session_id: str, user_id: str, turn_id: str) -> dict[str, Any]:

@@ -59,6 +59,8 @@ class Turn(Base):
     eval_result: Mapped[str] = mapped_column(String(32), default="")
     revised_text: Mapped[str] = mapped_column(Text, default="")
     revision_version: Mapped[int] = mapped_column(Integer, default=0)
+    help_type: Mapped[str] = mapped_column(String(16), default="")
+    help_level: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     session: Mapped["Session"] = relationship(back_populates="turns")

@@ -108,6 +108,15 @@ export async function requestHint(sessionId: string) {
   return handle<{ reply_text: string; reply_audio_url: string; action_type: string }>(res);
 }
 
+export async function requestHelp(sessionId: string, helpType: string, helpLevel = 0) {
+  const res = await fetch(`/api/v1/sessions/${sessionId}/help`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ help_type: helpType, help_level: helpLevel }),
+  });
+  return handle<{ reply_text: string; reply_audio_url: string; help_type: string; help_level: number }>(res);
+}
+
 export async function disputeReview(sessionId: string, turnId: string): Promise<void> {
   const res = await fetch(`/api/v1/sessions/${sessionId}/review/dispute?turn_id=${encodeURIComponent(turnId)}`, {
     method: "POST",

@@ -18,6 +18,10 @@ class CoachProvider(ABC):
     def decide(self, context: dict[str, Any]) -> CoachDecision:
         """根据当前表现与上下文选择教学行动。"""
 
+    @abstractmethod
+    def help(self, context: dict[str, Any]) -> CoachDecision:
+        """按求助类型给出帮助。"""
+
 
 class MockCoachProvider(CoachProvider):
     """确定性的 mock 教练。决策只依赖 context 中的内容，供测试与离线演示。"""
@@ -90,6 +94,33 @@ class MockCoachProvider(CoachProvider):
             )
         return CoachDecision(action_type="follow_up", reply_text="Can you tell me a bit more?")
 
+    def help(self, context: dict[str, Any]) -> CoachDecision:
+        help_type = context.get("help_type", "")
+        level = int(context.get("help_level", 0) or 0)
+        question = context.get("current_question", "")
+        if help_type == "repeat":
+            return CoachDecision(action_type="help", reply_text=question or "Let me repeat the question.")
+        if help_type == "explain":
+            return CoachDecision(
+                action_type="help",
+                reply_text=f"这句话是在问：{question or '你做过的一件事'}。你可以简单说说你做过的一件事，不用完整语法。",
+            )
+        if help_type == "organize":
+            if level <= 1:
+                return CoachDecision(action_type="help", reply_text="关键词：experience / project / team（先用一个关键词开头试试）")
+            if level == 2:
+                return CoachDecision(action_type="help", reply_text="可以这样开头：'I have experience in...'")
+            return CoachDecision(
+                action_type="help",
+                reply_text="参考说法（复述不算独立表达）：I have three years of experience in software development.",
+            )
+        if help_type == "translate":
+            return CoachDecision(
+                action_type="help",
+                reply_text="参考英文（复述不算独立表达）：I have three years of experience in software development.",
+            )
+        return CoachDecision(action_type="help", reply_text="需要哪方面帮助？")
+
 
 class DashScopeCoachProvider(CoachProvider):
     """通义千问教练决策（结构化输出）。真实接入待验。"""
@@ -144,6 +175,14 @@ class DashScopeCoachProvider(CoachProvider):
             "Session context as JSON:\n"
             + __import__("json").dumps(context, ensure_ascii=False)
             + "\nChoose the next teaching action. The follow-up must be based on what the user actually said."
+        )
+        return self._to_decision(data)
+
+    def help(self, context: dict[str, Any]) -> CoachDecision:
+        data = self._call(
+            "Help request as JSON:\n"
+            + __import__("json").dumps(context, ensure_ascii=False)
+            + "\nGive the appropriate help for the requested help_type."
         )
         return self._to_decision(data)
 

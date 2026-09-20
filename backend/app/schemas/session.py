@@ -85,3 +85,8 @@ class PracticeResponse(BaseModel):
 
 class ReviseTurnRequest(BaseModel):
     revised_text: str = Field(..., min_length=1)
+
+
+class HelpRequest(BaseModel):
+    help_type: str = Field(..., description="repeat/explain/organize/translate")
+    help_level: int = Field(default=0, ge=0, le=3)

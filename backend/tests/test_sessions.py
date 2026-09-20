@@ -240,6 +240,23 @@ def test_coach_context_contains_answer_and_history(client, monkeypatch):
     assert captured.get("level") == "basic"
 
 
+def test_help_types(client):
+    s = _create_session(client)
+    r = client.post(f"/api/v1/sessions/{s['session_id']}/help", json={"help_type": "repeat"}, headers=USER)
+    assert r.status_code == 200
+    assert r.json()["help_type"] == "repeat"
+    r2 = client.post(f"/api/v1/sessions/{s['session_id']}/help", json={"help_type": "organize", "help_level": 1}, headers=USER)
+    assert r2.json()["help_level"] == 1
+
+
+def test_organize_help_marks_hinted(client):
+    s = _create_session(client)
+    client.post(f"/api/v1/sessions/{s['session_id']}/help", json={"help_type": "organize", "help_level": 3}, headers=USER)
+    done = _done(_send_text(client, s["session_id"], "I have three years of experience in software development."))
+    # 答案辅助后，即使回答很好也不判独立
+    assert done["eval_result"] == "hinted"
+
+
 def test_hint_respects_budget(client, monkeypatch):
     monkeypatch.setattr(config.settings, "budget_session", 0.10)
     s = _create_session(client)  # 占 0.10

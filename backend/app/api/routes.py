@@ -12,6 +12,7 @@ from app.schemas.memory import MemoryItem, MemoryToggleRequest, MemoryUpdateRequ
 from app.schemas.session import (
     EndRequest,
     EndResponse,
+    HelpRequest,
     PracticeResponse,
     ReviseTurnRequest,
     SessionCreateRequest,
@@ -185,6 +186,15 @@ def request_hint(session_id: str, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.request_hint(db, session_id, user_id)
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/help")
+def request_help(session_id: str, req: HelpRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return session_svc.request_help(db, session_id, user_id, req.help_type, req.help_level)
     finally:
         db.close()
 

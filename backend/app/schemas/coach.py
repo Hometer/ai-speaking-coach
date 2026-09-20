@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-ActionType = Literal["follow_up", "hint", "suggest_practice", "recheck"]
+ActionType = Literal["follow_up", "hint", "suggest_practice", "recheck", "help"]
 
 
 class CoachDecision(BaseModel):

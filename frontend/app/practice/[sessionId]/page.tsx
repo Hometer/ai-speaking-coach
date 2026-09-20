@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { disputeReview, endSession, getInviteCode, getSession, requestHint, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
+import { disputeReview, endSession, getInviteCode, getSession, requestHelp, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
 import type { TurnDone } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 
@@ -32,6 +32,8 @@ export default function PracticePage() {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [showHelp, setShowHelp] = useState(false);
+  const [organizeLevel, setOrganizeLevel] = useState(0);
   const [practiceSentence, setPracticeSentence] = useState("");
   const [practiceDemo, setPracticeDemo] = useState("");
   const [practiceResult, setPracticeResult] = useState("");
@@ -227,11 +229,17 @@ export default function PracticePage() {
     }
   }
 
-  async function handleHint() {
+  async function handleHelp(type: string) {
     setBusy(true);
     setErr("");
+    setShowHelp(false);
+    let level = 0;
+    if (type === "organize") {
+      level = Math.min(organizeLevel + 1, 3);
+      setOrganizeLevel(level);
+    }
     try {
-      const r = await requestHint(sessionId);
+      const r = await requestHelp(sessionId, type, level);
       addMsg("coach", r.reply_text, r.reply_audio_url);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -439,14 +447,24 @@ export default function PracticePage() {
                 <button onClick={cancelRecord} className="text-xs px-2 py-1 rounded-lg border" style={{ borderColor: "var(--line)", color: "var(--danger, #dc2626)" }}>取消</button>
               </>
             ) : null}
-            <button
-              onClick={handleHint}
-              disabled={busy}
-              className="rounded-xl px-3 py-2.5 text-sm border"
-              style={{ borderColor: "var(--line)", color: "var(--muted)" }}
-            >
-              💡 提示
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowHelp(!showHelp)}
+                disabled={busy}
+                className="rounded-xl px-3 py-2.5 text-sm border"
+                style={{ borderColor: "var(--line)", color: "var(--muted)" }}
+              >
+                💡 需要帮助
+              </button>
+              {showHelp ? (
+                <div className="absolute bottom-full left-0 mb-1 w-60 rounded-xl border p-2 space-y-1" style={{ background: "var(--ai-bubble)", borderColor: "var(--line)" }}>
+                  <button onClick={() => handleHelp("repeat")} className="w-full text-left text-sm px-2 py-1 rounded-lg" style={{ color: "var(--ink)" }}>没听清（重播）</button>
+                  <button onClick={() => handleHelp("explain")} className="w-full text-left text-sm px-2 py-1 rounded-lg" style={{ color: "var(--ink)" }}>没听懂（解释）</button>
+                  <button onClick={() => handleHelp("organize")} className="w-full text-left text-sm px-2 py-1 rounded-lg" style={{ color: "var(--ink)" }}>不会组织（关键词→半句→示例）</button>
+                  <button onClick={() => handleHelp("translate")} className="w-full text-left text-sm px-2 py-1 rounded-lg" style={{ color: "var(--ink)" }}>中文转英文</button>
+                </div>
+              ) : null}
+            </div>
             <button
               onClick={sendText}
               disabled={busy || !text.trim()}
