@@ -58,8 +58,12 @@ export default function PracticePage() {
         for (const t of d.turns) {
           if (t.input_type === "coach") {
             msgs.push({ who: "coach", text: t.reply_text, audioUrl: t.reply_audio_url });
+            if (t.practice_sentence) {
+              setPracticeSentence(t.practice_sentence);
+              setPracticeDemo(t.reply_audio_url);
+            }
           } else {
-            msgs.push({ who: "user", text: t.user_text || t.transcript || "（语音回答）" });
+            msgs.push({ who: "user", text: t.revised_text || t.user_text || t.transcript || "（语音回答）" });
           }
         }
         setMessages(msgs);
