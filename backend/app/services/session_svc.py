@@ -494,6 +494,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
                 "action_type": t.action_type,
                 "hint_used": t.hint_used,
                 "eval_result": t.eval_result,
+                "revised_text": t.revised_text,
             }
             for t in turns
         ],
@@ -588,6 +589,45 @@ def delete_all_sessions(db: DbSession, user_id: str) -> None:
         db.query(Evaluation).filter(Evaluation.session_id == s.id).delete()
     db.query(Session).filter(Session.user_id == user_id).delete()
     db.commit()
+
+
+def request_hint(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]:
+    session = _require_session(db, session_id, user_id)
+    if session.status == S_ENDED:
+        raise AppError("SESSION_ENDED", "会话已结束", status_code=409)
+    coach = get_coach_provider()
+    decision = coach.decide({"help_requested": True})
+    tts = get_tts_provider()
+    audio = tts.synthesize(decision.reply_text)
+    audio_url = _save_audio(audio, tts.ext)
+    db.add(
+        Turn(
+            id=uuid.uuid4().hex,
+            session_id=session_id,
+            seq=_next_seq(db, session_id),
+            input_type="coach",
+            reply_text=decision.reply_text,
+            reply_audio_url=audio_url,
+            action_type=decision.action_type,
+        )
+    )
+    db.commit()
+    return {"session_id": session_id, "reply_text": decision.reply_text, "reply_audio_url": audio_url, "action_type": decision.action_type}
+
+
+def dispute_review_improvement(db: DbSession, session_id: str, user_id: str, turn_id: str) -> dict[str, Any]:
+    session = _require_session(db, session_id, user_id)
+    review = json.loads(session.review) if session.review else {}
+    found = False
+    for imp in review.get("improvements", []):
+        if imp.get("turn_id") == turn_id:
+            imp["disputed"] = True
+            found = True
+    if not found:
+        raise AppError("NOT_FOUND", "改进建议不存在", status_code=404)
+    session.review = json.dumps(review, ensure_ascii=False)
+    db.commit()
+    return {"disputed": True}
 
 
 def revise_turn(db: DbSession, session_id: str, user_id: str, turn_id: str, revised_text: str) -> dict[str, Any]:

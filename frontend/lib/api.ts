@@ -86,6 +86,19 @@ export async function reviseTurn(sessionId: string, turnId: string, revisedText:
   await handle<unknown>(res);
 }
 
+export async function requestHint(sessionId: string) {
+  const res = await fetch(`/api/v1/sessions/${sessionId}/hint`, { method: "POST", headers: authHeaders() });
+  return handle<{ reply_text: string; reply_audio_url: string; action_type: string }>(res);
+}
+
+export async function disputeReview(sessionId: string, turnId: string): Promise<void> {
+  const res = await fetch(`/api/v1/sessions/${sessionId}/review/dispute?turn_id=${encodeURIComponent(turnId)}`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  await handle<unknown>(res);
+}
+
 export async function getMemories(): Promise<MemoryItem[]> {
   const res = await fetch("/api/v1/users/me/memories", { headers: authHeaders() });
   return handle<MemoryItem[]>(res);

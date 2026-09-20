@@ -33,6 +33,7 @@ class TurnItem(BaseModel):
     action_type: str = ""
     hint_used: bool = False
     eval_result: str = ""
+    revised_text: str = ""
 
 
 class SessionDetailResponse(BaseModel):

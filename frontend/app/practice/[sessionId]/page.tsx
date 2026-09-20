@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { endSession, getSession, skipPractice, submitTurn } from "@/lib/api";
+import { disputeReview, endSession, getSession, requestHint, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
 import type { TurnDone } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 
@@ -10,6 +10,7 @@ interface Msg {
   who: "user" | "coach";
   text: string;
   audioUrl?: string;
+  turnId?: string;
 }
 
 const STATUS_CN: Record<string, string> = {
@@ -68,8 +69,8 @@ export default function PracticePage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  function addMsg(who: Msg["who"], text: string, audioUrl?: string) {
-    setMessages((m) => [...m, { who, text, audioUrl }]);
+  function addMsg(who: Msg["who"], text: string, audioUrl?: string, turnId?: string) {
+    setMessages((m) => [...m, { who, text, audioUrl, turnId }]);
   }
 
   async function handleTurn(input: { text?: string; audio?: Blob }, typedText?: string) {
@@ -77,9 +78,9 @@ export default function PracticePage() {
     setErr("");
     try {
       const done: TurnDone = await submitTurn(sessionId, input);
-      if (typedText) addMsg("user", typedText);
-      else if (done.transcript) addMsg("user", done.transcript);
-      else addMsg("user", "（语音回答）");
+      if (typedText) addMsg("user", typedText, undefined, done.turn_id);
+      else if (done.transcript) addMsg("user", done.transcript, undefined, done.turn_id);
+      else addMsg("user", "（语音回答）", undefined, done.turn_id);
       addMsg("coach", done.reply_text, done.reply_audio_url);
       setStatus(done.status);
       if (done.action_type === "suggest_practice" && done.practice_sentence) {
@@ -226,6 +227,51 @@ export default function PracticePage() {
     }
   }
 
+  async function handleHint() {
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await requestHint(sessionId);
+      addMsg("coach", r.reply_text, r.reply_audio_url);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRevise(turnId: string) {
+    const newText = window.prompt("修改转写内容：", "");
+    if (!newText || !newText.trim()) return;
+    try {
+      await reviseTurn(sessionId, turnId, newText.trim());
+      setErr("已提交修订，该回合评分已作废。");
+      const d = await getSession(sessionId);
+      const msgs: Msg[] = [];
+      for (const t of d.turns) {
+        if (t.input_type === "coach") msgs.push({ who: "coach", text: t.reply_text });
+        else if (t.input_type === "practice") msgs.push({ who: "user", text: `（跟读：${t.practice_sentence}）` });
+        else {
+          const u = t.revised_text || t.user_text || t.transcript;
+          if (u) msgs.push({ who: "user", text: u, turnId: t.turn_id });
+          if (t.reply_text) msgs.push({ who: "coach", text: t.reply_text });
+        }
+      }
+      setMessages(msgs);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function handleDispute(turnId: string) {
+    try {
+      await disputeReview(sessionId, turnId);
+      setErr("已标记'有误'，该建议不再用于记忆。");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   async function end() {
     setBusy(true);
     setErr("");
@@ -285,6 +331,9 @@ export default function PracticePage() {
                   {m.who === "user" ? "你说的" : "AI 教练"}
                 </div>
                 {m.text}
+                {m.who === "user" && m.turnId ? (
+                  <button onClick={() => handleRevise(m.turnId!)} className="text-xs mt-1 block" style={{ color: "var(--muted)" }}>修订转写</button>
+                ) : null}
                 {m.audioUrl ? <AudioPlayer src={m.audioUrl} /> : null}
               </div>
             </div>
@@ -339,6 +388,11 @@ export default function PracticePage() {
                     <div>原句：{String(imp.original ?? "")}</div>
                     <div style={{ color: "var(--muted)" }}>{String(imp.explanation_cn ?? "")}</div>
                     <div>练习句：{String(imp.practice_sentence ?? "")}</div>
+                    {imp.disputed ? (
+                      <div className="text-xs mt-1" style={{ color: "var(--danger, #dc2626)" }}>已标记有误，待复核</div>
+                    ) : (
+                      <button onClick={() => handleDispute(String(imp.turn_id ?? ""))} className="text-xs mt-1" style={{ color: "var(--muted)" }}>有误</button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -385,6 +439,14 @@ export default function PracticePage() {
                 <button onClick={cancelRecord} className="text-xs px-2 py-1 rounded-lg border" style={{ borderColor: "var(--line)", color: "var(--danger, #dc2626)" }}>取消</button>
               </>
             ) : null}
+            <button
+              onClick={handleHint}
+              disabled={busy}
+              className="rounded-xl px-3 py-2.5 text-sm border"
+              style={{ borderColor: "var(--line)", color: "var(--muted)" }}
+            >
+              💡 提示
+            </button>
             <button
               onClick={sendText}
               disabled={busy || !text.trim()}

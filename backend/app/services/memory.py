@@ -29,6 +29,8 @@ def generate_candidates(
     """从回顾的改进建议生成候选记忆（仅记忆开启时调用）。"""
     created = 0
     for imp in review.get("improvements", []):
+        if imp.get("disputed"):
+            continue
         text = (imp.get("explanation_cn") or imp.get("suggestion") or "").strip()
         if not text:
             continue

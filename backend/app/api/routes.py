@@ -239,6 +239,31 @@ async def revise_turn(
         db.close()
 
 
+@router.post("/sessions/{session_id}/hint")
+async def request_hint(
+    session_id: str,
+    user_id: str = Depends(get_user_id),
+):
+    db = SessionLocal()
+    try:
+        return session_svc.request_hint(db, session_id, user_id)
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/review/dispute")
+async def dispute_review(
+    session_id: str,
+    turn_id: str,
+    user_id: str = Depends(get_user_id),
+):
+    db = SessionLocal()
+    try:
+        return session_svc.dispute_review_improvement(db, session_id, user_id, turn_id)
+    finally:
+        db.close()
+
+
 # ===== 学习记忆 =====
 
 

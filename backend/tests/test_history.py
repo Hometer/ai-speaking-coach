@@ -53,6 +53,24 @@ def test_review_keeps_distinct_originals(client):
     assert review["input_breakdown"]["text"] == 2
 
 
+def test_request_hint(client):
+    s = _create_session(client)
+    r = client.post(f"/api/v1/sessions/{s['session_id']}/hint", headers=USER)
+    assert r.status_code == 200
+    assert r.json()["action_type"] == "hint"
+
+
+def test_dispute_review_improvement(client):
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "just working")
+    review = _end(client, s["session_id"])["review"]
+    imp = review["improvements"][0]
+    r = client.post(f"/api/v1/sessions/{s['session_id']}/review/dispute", params={"turn_id": imp["turn_id"]}, headers=USER)
+    assert r.status_code == 200
+    detail = client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()
+    assert any(d.get("disputed") for d in detail["review"]["improvements"])
+
+
 def test_saved_review_dedups_duplicate_original(client):
     from app.models.database import SessionLocal
     from app.models.entities import Session

@@ -30,6 +30,11 @@ class MockCoachProvider(CoachProvider):
         )
 
     def decide(self, context: dict[str, Any]) -> CoachDecision:
+        if context.get("help_requested"):
+            return CoachDecision(
+                action_type="hint",
+                reply_text="Here's a hint: try starting with 'I have...' and describe one thing you did.",
+            )
         if context.get("skipped_practice"):
             return CoachDecision(
                 action_type="follow_up",

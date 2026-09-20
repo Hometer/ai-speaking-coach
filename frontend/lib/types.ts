@@ -35,6 +35,7 @@ export interface TurnItem {
   action_type: string;
   hint_used: boolean;
   eval_result: string;
+  revised_text: string;
 }
 
 export interface SessionDetail {
