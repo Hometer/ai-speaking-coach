@@ -4,24 +4,24 @@ import json
 from app.core import config
 from app.models.database import SessionLocal
 
-USER = {"X-User-Id": "u1"}
+USER = {"X-Invite-Code": "test-a"}
 
 
-def _create_session(client, user="u1", level="basic", difficulty="standard"):
+def _create_session(client, user="test-a", level="basic", difficulty="standard"):
     r = client.post(
         "/api/v1/sessions",
         json={"level": level, "difficulty": difficulty},
-        headers={"X-User-Id": user},
+        headers={"X-Invite-Code": user},
     )
     assert r.status_code == 200, r.text
     return r.json()
 
 
-def _send_text(client, session_id, text, user="u1"):
+def _send_text(client, session_id, text, user="test-a"):
     r = client.post(
         f"/api/v1/sessions/{session_id}/turns/text",
         json={"text": text},
-        headers={"X-User-Id": user},
+        headers={"X-Invite-Code": user},
     )
     assert r.status_code == 200, r.text
     return _parse_sse(r.text)
@@ -139,8 +139,8 @@ def test_practice_invalid_state_rejected(client):
 
 
 def test_cross_user_denied(client):
-    s = _create_session(client, user="u1")
-    r = client.get(f"/api/v1/sessions/{s['session_id']}", headers={"X-User-Id": "u2"})
+    s = _create_session(client, user="test-a")
+    r = client.get(f"/api/v1/sessions/{s['session_id']}", headers={"X-Invite-Code": "test-b"})
     assert r.status_code == 403
     assert r.json()["error"]["code"] == "FORBIDDEN"
 
@@ -174,7 +174,7 @@ def test_turn_after_end_rejected(client):
 
 
 def test_persistence_across_session(client):
-    s = _create_session(client, user="u1")
+    s = _create_session(client, user="test-a")
     _send_text(client, s["session_id"], "I have three years of experience in software development.")
     db = SessionLocal()
     try:
@@ -200,6 +200,18 @@ def test_budget_exceeded(client, monkeypatch):
     events = _parse_sse(r.text)
     assert events[-1][0] == "error"
     assert events[-1][1]["error"]["code"] == "BUDGET_EXCEEDED"
+
+
+def test_voice_turn_rejects_bad_magic(client):
+    s = _create_session(client)
+    r = client.post(
+        f"/api/v1/sessions/{s['session_id']}/turns/voice",
+        files={"audio": ("a.webm", b"not-an-audio", "audio/webm")},
+        headers=USER,
+    )
+    events = _parse_sse(r.text)
+    assert events[-1][0] == "error"
+    assert events[-1][1]["error"]["code"] == "UNSUPPORTED_AUDIO"
 
 
 def test_coach_context_contains_answer_and_history(client, monkeypatch):

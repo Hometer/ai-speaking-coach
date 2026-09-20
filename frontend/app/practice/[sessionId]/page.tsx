@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { endSession, getSession, submitTurn } from "@/lib/api";
 import type { TurnDone } from "@/lib/types";
+import AudioPlayer from "@/components/AudioPlayer";
 
 interface Msg {
   who: "user" | "coach";
@@ -267,7 +268,7 @@ export default function PracticePage() {
                   {m.who === "user" ? "你说的" : "AI 教练"}
                 </div>
                 {m.text}
-                {m.audioUrl ? <audio controls src={m.audioUrl} className="w-full mt-2" /> : null}
+                {m.audioUrl ? <AudioPlayer src={m.audioUrl} /> : null}
               </div>
             </div>
           ))}
@@ -281,7 +282,7 @@ export default function PracticePage() {
           >
             <div className="text-sm font-medium mb-1">跟读练习</div>
             <div className="text-base mb-2">{practiceSentence}</div>
-            {practiceDemo ? <audio controls src={practiceDemo} className="w-full mb-2" /> : null}
+            {practiceDemo ? <AudioPlayer src={practiceDemo} /> : null}
             <div className="flex items-center gap-3">
               <button
                 onClick={() => toggleRecord("practice")}

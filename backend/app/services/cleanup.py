@@ -20,3 +20,8 @@ def cleanup_old_uploads(max_age_minutes: float | None = None) -> int:
         except OSError:
             continue
     return removed
+
+
+def cleanup_stale_uploads() -> int:
+    """兑底清理：删除超过最大保留时限的录音（覆盖异常退出/失联录音）。"""
+    return cleanup_old_uploads(max_age_minutes=settings.upload_max_age_minutes)

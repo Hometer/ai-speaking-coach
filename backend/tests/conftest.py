@@ -17,8 +17,11 @@ from app.models.database import Base, engine  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _reset_db():
+    from app.core.auth import seed_invites
+
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    seed_invites()
     yield
     Base.metadata.drop_all(bind=engine)
 

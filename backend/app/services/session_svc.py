@@ -1,7 +1,9 @@
 """会话生命周期与状态机（Harness 维护状态，模型不可改写）。"""
 import json
+import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func
@@ -535,3 +537,22 @@ def delete_session(db: DbSession, session_id: str, user_id: str) -> None:
     db.query(Evaluation).filter(Evaluation.session_id == session_id).delete()
     db.delete(session)  # 级联删除 turns
     db.commit()
+
+
+def resolve_audio_for_user(db: DbSession, filename: str, user_id: str) -> Path:
+    """校验音频归属：找到引用该音频的回合→会话→用户，归属不一致拒绝。"""
+    safe_name = os.path.basename(filename)
+    if safe_name != filename or not safe_name:
+        raise AppError("BAD_FILENAME", "非法的文件名", status_code=400)
+    url = f"/api/v1/audio/{safe_name}"
+    turn = db.query(Turn).filter(Turn.reply_audio_url == url).first()
+    if turn is None:
+        raise AppError("NOT_FOUND", "音频不存在", status_code=404)
+    session = db.get(Session, turn.session_id)
+    if session is None or session.user_id != user_id:
+        raise AppError("FORBIDDEN", "无权访问该音频", status_code=403)
+    audio_dir = settings.data_dir / "audio"
+    path = (audio_dir / safe_name).resolve()
+    if not path.is_file():
+        raise AppError("NOT_FOUND", "音频不存在", status_code=404)
+    return path

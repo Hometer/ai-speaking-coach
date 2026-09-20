@@ -5,23 +5,23 @@ import time
 
 from app.core import config
 
-USER = {"X-User-Id": "u1"}
+USER = {"X-Invite-Code": "test-a"}
 
 
-def _create_session(client, user="u1"):
-    r = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard"}, headers={"X-User-Id": user})
+def _create_session(client, user="test-a"):
+    r = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard"}, headers={"X-Invite-Code": user})
     assert r.status_code == 200, r.text
     return r.json()
 
 
-def _send_text(client, session_id, text, user="u1"):
-    r = client.post(f"/api/v1/sessions/{session_id}/turns/text", json={"text": text}, headers={"X-User-Id": user})
+def _send_text(client, session_id, text, user="test-a"):
+    r = client.post(f"/api/v1/sessions/{session_id}/turns/text", json={"text": text}, headers={"X-Invite-Code": user})
     assert r.status_code == 200, r.text
     return r.text
 
 
-def _end(client, session_id, user="u1"):
-    r = client.post(f"/api/v1/sessions/{session_id}/end", json={"reason": "user_ended"}, headers={"X-User-Id": user})
+def _end(client, session_id, user="test-a"):
+    r = client.post(f"/api/v1/sessions/{session_id}/end", json={"reason": "user_ended"}, headers={"X-Invite-Code": user})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -72,9 +72,9 @@ def test_saved_review_dedups_duplicate_original(client):
 
 
 def test_history_list_only_own(client):
-    a = _create_session(client, user="u1")
-    _create_session(client, user="u2")
-    r = client.get("/api/v1/sessions", headers={"X-User-Id": "u1"})
+    a = _create_session(client, user="test-a")
+    _create_session(client, user="test-b")
+    r = client.get("/api/v1/sessions", headers={"X-Invite-Code": "test-a"})
     assert r.status_code == 200
     ids = [x["session_id"] for x in r.json()]
     assert a["session_id"] in ids

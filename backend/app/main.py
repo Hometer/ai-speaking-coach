@@ -42,3 +42,6 @@ async def index():
 
 # 启动时建表（幂等）；schema 稳定后引入 Alembic 迁移
 init_db()
+from app.core.auth import seed_invites  # noqa: E402
+
+seed_invites()

@@ -2,9 +2,10 @@
 import json
 from typing import Any
 
-from fastapi import APIRouter, File, Form, Header, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
+from app.core.auth import get_user_id
 from app.core.errors import AppError, error_body
 from app.models.database import SessionLocal
 from app.schemas.memory import MemoryItem, MemoryToggleRequest
@@ -17,10 +18,9 @@ from app.schemas.session import (
     SessionDetailResponse,
     SessionListItem,
 )
-from app.schemas.turn import TextTurnRequest, TurnResponse
+from app.schemas.turn import TextTurnRequest
 from app.services import memory as memory_svc
 from app.services import session_svc
-from app.services.turn import handle_text_turn, handle_voice_turn, resolve_audio_path
 
 router = APIRouter(prefix="/api/v1")
 
@@ -37,38 +37,31 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-# ===== 阶段 2.1 兼容：无状态快速回合 =====
-
-
-@router.post("/turn/voice", response_model=TurnResponse)
-async def voice_turn(audio: UploadFile = File(...)):
-    data = await audio.read()
-    return handle_voice_turn(data)
-
-
-@router.post("/turn/text", response_model=TurnResponse)
-async def text_turn(req: TextTurnRequest):
-    return handle_text_turn(req.text)
+# ===== 音频播放（校验归属）=====
 
 
 @router.get("/audio/{filename}")
-async def get_audio(filename: str):
-    path = resolve_audio_path(filename)
+async def get_audio(filename: str, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        path = session_svc.resolve_audio_for_user(db, filename, user_id)
+    finally:
+        db.close()
     media_type = _AUDIO_MEDIA.get(path.suffix.lstrip("."), "application/octet-stream")
     return FileResponse(path, media_type=media_type)
 
 
-# ===== 阶段 2.2：会话 =====
+# ===== 会话 =====
 
 
 @router.post("/sessions", response_model=SessionCreatedResponse)
 async def create_session(
     req: SessionCreateRequest,
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     db = SessionLocal()
     try:
-        return session_svc.create_session(db, x_user_id, req.level, req.difficulty)
+        return session_svc.create_session(db, user_id, req.level, req.difficulty)
     finally:
         db.close()
 
@@ -77,12 +70,12 @@ async def create_session(
 async def text_turn_stream(
     session_id: str,
     req: TextTurnRequest,
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     def gen():
         db = SessionLocal()
         try:
-            result = session_svc.submit_turn(db, session_id, x_user_id, "text", user_text=req.text)
+            result = session_svc.submit_turn(db, session_id, user_id, "text", user_text=req.text)
             yield _sse("chunk", {"text": result["reply_text"]})
             yield _sse("done", result)
         except AppError as exc:
@@ -99,14 +92,14 @@ async def text_turn_stream(
 async def voice_turn_stream(
     session_id: str,
     audio: UploadFile = File(...),
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     data = await audio.read()
 
     def gen():
         db = SessionLocal()
         try:
-            result = session_svc.submit_turn(db, session_id, x_user_id, "voice", audio_bytes=data)
+            result = session_svc.submit_turn(db, session_id, user_id, "voice", audio_bytes=data)
             yield _sse("chunk", {"text": result["reply_text"]})
             yield _sse("done", result)
         except AppError as exc:
@@ -124,12 +117,12 @@ async def practice(
     session_id: str,
     sentence: str = Form(...),
     audio: UploadFile = File(...),
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     data = await audio.read()
     db = SessionLocal()
     try:
-        return session_svc.submit_practice(db, session_id, x_user_id, data, sentence)
+        return session_svc.submit_practice(db, session_id, user_id, data, sentence)
     finally:
         db.close()
 
@@ -138,11 +131,11 @@ async def practice(
 async def end_session(
     session_id: str,
     req: EndRequest,
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     db = SessionLocal()
     try:
-        return session_svc.end_session(db, session_id, x_user_id, req.reason)
+        return session_svc.end_session(db, session_id, user_id, req.reason)
     finally:
         db.close()
 
@@ -150,22 +143,22 @@ async def end_session(
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
 async def session_detail(
     session_id: str,
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     db = SessionLocal()
     try:
-        return session_svc.get_session_detail(db, session_id, x_user_id)
+        return session_svc.get_session_detail(db, session_id, user_id)
     finally:
         db.close()
 
 
 @router.get("/sessions", response_model=list[SessionListItem])
 async def list_sessions(
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     db = SessionLocal()
     try:
-        return session_svc.list_sessions(db, x_user_id)
+        return session_svc.list_sessions(db, user_id)
     finally:
         db.close()
 
@@ -173,27 +166,27 @@ async def list_sessions(
 @router.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: str,
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     db = SessionLocal()
     try:
-        session_svc.delete_session(db, session_id, x_user_id)
+        session_svc.delete_session(db, session_id, user_id)
         return {"deleted": True}
     finally:
         db.close()
 
 
-# ===== 阶段 2.3：学习记忆 =====
+# ===== 学习记忆 =====
 
 
 @router.post("/users/me/memory")
 async def toggle_memory(
     req: MemoryToggleRequest,
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     db = SessionLocal()
     try:
-        enabled = memory_svc.set_memory_enabled(db, x_user_id, req.enabled)
+        enabled = memory_svc.set_memory_enabled(db, user_id, req.enabled)
         return {"enabled": enabled}
     finally:
         db.close()
@@ -201,11 +194,11 @@ async def toggle_memory(
 
 @router.get("/users/me/memories", response_model=list[MemoryItem])
 async def list_memories(
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     db = SessionLocal()
     try:
-        mems = memory_svc.list_memories(db, x_user_id)
+        mems = memory_svc.list_memories(db, user_id)
         return [
             {"id": m.id, "text": m.text, "source_session_id": m.source_session_id}
             for m in mems
@@ -217,11 +210,11 @@ async def list_memories(
 @router.delete("/users/me/memories/{memory_id}")
 async def delete_memory(
     memory_id: int,
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     db = SessionLocal()
     try:
-        memory_svc.delete_memory(db, x_user_id, memory_id)
+        memory_svc.delete_memory(db, user_id, memory_id)
         return {"deleted": True}
     finally:
         db.close()
@@ -229,11 +222,11 @@ async def delete_memory(
 
 @router.delete("/users/me/memories")
 async def clear_memories(
-    x_user_id: str = Header(default="demo-user", alias="X-User-Id"),
+    user_id: str = Depends(get_user_id),
 ):
     db = SessionLocal()
     try:
-        memory_svc.clear_memories(db, x_user_id)
+        memory_svc.clear_memories(db, user_id)
         return {"deleted": True}
     finally:
         db.close()

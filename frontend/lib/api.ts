@@ -1,6 +1,11 @@
 import type { ApiErrorBody, MemoryItem, SessionCreated, SessionDetail, SessionListItem, TurnDone } from "./types";
 
-const UID = "demo-user";
+// 内测演示邀请码（真实邀请码上线前由产品经理分发）
+const INVITE = "test-a";
+
+function authHeaders(): Record<string, string> {
+  return { "X-Invite-Code": INVITE };
+}
 
 async function handle<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => null);
@@ -14,48 +19,48 @@ async function handle<T>(res: Response): Promise<T> {
 export async function createSession(level: string, difficulty: string): Promise<SessionCreated> {
   const res = await fetch("/api/v1/sessions", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-User-Id": UID },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ level, difficulty }),
   });
   return handle<SessionCreated>(res);
 }
 
 export async function getSession(sessionId: string): Promise<SessionDetail> {
-  const res = await fetch(`/api/v1/sessions/${sessionId}`, { headers: { "X-User-Id": UID } });
+  const res = await fetch(`/api/v1/sessions/${sessionId}`, { headers: authHeaders() });
   return handle<SessionDetail>(res);
 }
 
 export async function endSession(sessionId: string) {
   const res = await fetch(`/api/v1/sessions/${sessionId}/end`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-User-Id": UID },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ reason: "user_ended" }),
   });
   return handle<{ summary: Record<string, unknown>; review: Record<string, unknown> | null }>(res);
 }
 
 export async function listSessions(): Promise<SessionListItem[]> {
-  const res = await fetch("/api/v1/sessions", { headers: { "X-User-Id": UID } });
+  const res = await fetch("/api/v1/sessions", { headers: authHeaders() });
   return handle<SessionListItem[]>(res);
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
   const res = await fetch(`/api/v1/sessions/${sessionId}`, {
     method: "DELETE",
-    headers: { "X-User-Id": UID },
+    headers: authHeaders(),
   });
   await handle<unknown>(res);
 }
 
 export async function getMemories(): Promise<MemoryItem[]> {
-  const res = await fetch("/api/v1/users/me/memories", { headers: { "X-User-Id": UID } });
+  const res = await fetch("/api/v1/users/me/memories", { headers: authHeaders() });
   return handle<MemoryItem[]>(res);
 }
 
 export async function toggleMemory(enabled: boolean): Promise<{ enabled: boolean }> {
   const res = await fetch("/api/v1/users/me/memory", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-User-Id": UID },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ enabled }),
   });
   return handle<{ enabled: boolean }>(res);
@@ -64,7 +69,7 @@ export async function toggleMemory(enabled: boolean): Promise<{ enabled: boolean
 export async function deleteMemory(id: number): Promise<void> {
   const res = await fetch(`/api/v1/users/me/memories/${id}`, {
     method: "DELETE",
-    headers: { "X-User-Id": UID },
+    headers: authHeaders(),
   });
   await handle<unknown>(res);
 }
@@ -72,7 +77,7 @@ export async function deleteMemory(id: number): Promise<void> {
 export async function clearMemories(): Promise<void> {
   const res = await fetch("/api/v1/users/me/memories", {
     method: "DELETE",
-    headers: { "X-User-Id": UID },
+    headers: authHeaders(),
   });
   await handle<unknown>(res);
 }
@@ -119,15 +124,22 @@ export async function submitTurn(
     url = `/api/v1/sessions/${sessionId}/turns/voice`;
     const fd = new FormData();
     fd.append("audio", opts.audio, "recording");
-    init = { method: "POST", headers: { "X-User-Id": UID }, body: fd };
+    init = { method: "POST", headers: authHeaders(), body: fd };
   } else {
     url = `/api/v1/sessions/${sessionId}/turns/text`;
     init = {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-User-Id": UID },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ text: opts.text ?? "" }),
     };
   }
   const res = await fetch(url, init);
   return parseSSE<TurnDone>(res);
+}
+
+export async function fetchAudio(url: string): Promise<string> {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`音频加载失败 HTTP ${res.status}`);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }

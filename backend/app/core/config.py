@@ -32,6 +32,7 @@ class Settings:
         self.max_teach_adjust = int(os.getenv("MAX_TEACH_ADJUST", "2"))
         self.nominal_cost_per_turn = float(os.getenv("NOMINAL_COST_PER_TURN", "0.10"))
         self.upload_retention_minutes = float(os.getenv("UPLOAD_RETENTION_MINUTES", "10"))
+        self.upload_max_age_minutes = float(os.getenv("UPLOAD_MAX_AGE_MINUTES", "1440"))
         self.ffmpeg_bin = os.getenv("FFMPEG_BIN", "ffmpeg")
         self.xf_appid = os.getenv("XF_APPID", "")
         self.xf_api_key = os.getenv("XF_API_KEY", "")

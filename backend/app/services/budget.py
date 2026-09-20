@@ -1,6 +1,7 @@
 """成本护栏：调用前预留、超额即拒（确定性框架，真实单价待试算）。"""
 from datetime import date
 
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import settings
@@ -43,22 +44,38 @@ class BudgetGuard:
         return (row.spent or 0.0) + (row.reserved or 0.0)
 
     def reserve(self, amount: float, session_id: str, user_id: str) -> None:
-        """预留费用；预计超额即拒绝，不等账单产生。"""
+        """原子预留：条件更新 + rowcount 校验，避免并发共同突破预算。"""
         caps = [
             ("session", session_id, settings.budget_session),
             ("user", _day_key(user_id), settings.budget_user_day),
             ("project", _day_key("all"), settings.budget_project_day),
         ]
-        rows = [(scope, key, cap, self._row(scope, key)) for scope, key, cap in caps]
-        for _, _, cap, row in rows:
-            if self._used(row) + amount > cap:
+        for scope, key, cap in caps:
+            self._row(scope, key)  # 确保行存在
+            used = func.coalesce(BudgetLedger.spent, 0) + func.coalesce(BudgetLedger.reserved, 0)
+            result = self.db.execute(
+                update(BudgetLedger)
+                .where(
+                    BudgetLedger.scope == scope,
+                    BudgetLedger.scope_key == key,
+                    used + amount <= cap,
+                )
+                .values(reserved=func.coalesce(BudgetLedger.reserved, 0) + amount)
+            )
+            if result.rowcount == 0:
+                self.db.rollback()
                 raise AppError(
                     "BUDGET_EXCEEDED",
                     "费用预算已用尽，本次练习结束",
                     status_code=402,
                 )
-        for _, _, _, row in rows:
-            row.reserved = (row.reserved or 0.0) + amount
+        self.db.commit()
+
+    def release(self, amount: float, session_id: str, user_id: str) -> None:
+        """失败时释放预留额度，不计入已花费。"""
+        for scope, key in [("session", session_id), ("user", _day_key(user_id)), ("project", _day_key("all"))]:
+            row = self._row(scope, key)
+            row.reserved = max(0.0, (row.reserved or 0.0) - amount)
         self.db.commit()
 
     def settle(self, amount: float, session_id: str, user_id: str) -> None:
