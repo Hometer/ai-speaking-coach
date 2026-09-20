@@ -20,13 +20,13 @@ class MockEvaluatorProvider(EvaluatorProvider):
     """确定性的 mock 评估器。规则：空/过短=证据不足；用过提示=提示下；含 'I have' 或足够长=独立；否则=未完成。"""
 
     def evaluate(self, context: dict[str, Any]) -> EvaluationOutput:
-        answer = (context.get("user_answer") or "").strip()
+        answer = (context.get("answer") or context.get("user_answer") or "").strip()
         hint_used = bool(context.get("hint_used", False))
         if len(answer) < 3:
             return EvaluationOutput(result="insufficient_evidence")
         if hint_used:
             return EvaluationOutput(result="hinted")
-        if "I have" in answer or len(answer) >= 25:
+        if "I have" in answer or "experience" in answer or len(answer) >= 25:
             return EvaluationOutput(result="independent")
         return EvaluationOutput(result="incomplete")
 

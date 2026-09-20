@@ -319,7 +319,7 @@ export default function PracticePage() {
               </div>
             ) : (
               <div className="text-sm" style={{ color: "var(--muted)" }}>
-                完成得不错，暂无改进建议。
+                本次未生成改进建议（证据不足或表达较好）。
               </div>
             )}
           </div>

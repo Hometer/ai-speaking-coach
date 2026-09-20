@@ -16,11 +16,11 @@ class CoachProvider(ABC):
 
     @abstractmethod
     def decide(self, context: dict[str, Any]) -> CoachDecision:
-        """根据当前表现选择教学行动。"""
+        """根据当前表现与上下文选择教学行动。"""
 
 
 class MockCoachProvider(CoachProvider):
-    """确定性的 mock 教练，规则见阶段 2.2 文档。"""
+    """确定性的 mock 教练。决策只依赖 context 中的内容，供测试与离线演示。"""
 
     def opening(self, goal_text: str, difficulty: str) -> CoachDecision:
         return CoachDecision(
@@ -30,40 +30,53 @@ class MockCoachProvider(CoachProvider):
         )
 
     def decide(self, context: dict[str, Any]) -> CoachDecision:
+        practice = context.get("practice") or {}
+        if practice:
+            if not practice.get("valid"):
+                return CoachDecision(
+                    action_type="follow_up",
+                    reply_text="I couldn't assess that recording. Let's continue with your experience.",
+                )
+            score = practice.get("score")
+            if score is not None and score < 60:
+                return CoachDecision(
+                    action_type="suggest_practice",
+                    reply_text="Let's try that sentence once more, a bit slower.",
+                    practice_sentence=practice.get("reference_sentence", ""),
+                )
+            return CoachDecision(
+                action_type="follow_up",
+                reply_text="Good practice. Now tell me more about your experience.",
+            )
+
         result = context.get("eval_result", "")
-        rechecked = context.get("rechecked", False)
+        subgoal = context.get("subgoal", "")
         if result == "insufficient_evidence":
             return CoachDecision(
                 action_type="hint",
                 reply_text="No problem. Try starting with 'I have...' and tell me one thing.",
             )
         if result == "incomplete":
-            if not context.get("practiced", False):
-                return CoachDecision(
-                    action_type="suggest_practice",
-                    reply_text="Let's practice a useful sentence. Repeat after me.",
-                    practice_sentence="I have three years of experience in software development.",
-                )
             return CoachDecision(
-                action_type="follow_up",
-                reply_text="Good. What did you learn from that experience?",
+                action_type="suggest_practice",
+                reply_text="Let's practice a useful sentence. Repeat after me.",
+                practice_sentence="I have three years of experience in software development.",
             )
         if result == "hinted":
             return CoachDecision(
                 action_type="recheck",
                 reply_text="Nice. Now try to say it again in your own words without the hint.",
-                follow_up_question="Can you say it in your own words?",
             )
         if result == "independent":
-            if not rechecked:
+            if subgoal == "intro":
                 return CoachDecision(
-                    action_type="recheck",
-                    reply_text="Great. Now describe a different experience in one or two sentences.",
-                    follow_up_question="Can you describe another experience?",
+                    action_type="follow_up",
+                    reply_text="Great. What was the most challenging part of that experience?",
+                    follow_up_question="What was the most challenging part?",
                 )
             return CoachDecision(
                 action_type="follow_up",
-                reply_text="Excellent, you expressed it clearly on your own.",
+                reply_text="Excellent, you expressed both clearly on your own.",
             )
         return CoachDecision(action_type="follow_up", reply_text="Can you tell me a bit more?")
 
@@ -120,7 +133,7 @@ class DashScopeCoachProvider(CoachProvider):
         data = self._call(
             "Session context as JSON:\n"
             + __import__("json").dumps(context, ensure_ascii=False)
-            + "\nChoose the next teaching action."
+            + "\nChoose the next teaching action. The follow-up must be based on what the user actually said."
         )
         return self._to_decision(data)
 

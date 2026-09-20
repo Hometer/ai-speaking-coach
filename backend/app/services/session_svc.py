@@ -18,7 +18,7 @@ from app.services.coach import get_coach_provider
 from app.services.evaluator import get_evaluator_provider
 from app.services.practice import get_practice_eval_provider
 from app.services.asr import get_asr_provider
-from app.services.review import build_review
+from app.services.review import build_review, dedupe_improvements
 from app.services.tts import get_tts_provider
 from app.services.turn import _validate_audio
 
@@ -88,6 +88,64 @@ def _has_practice(db: DbSession, session_id: str) -> bool:
     )
 
 
+def _load_subgoals(session: Session) -> dict[str, Any]:
+    try:
+        subgoals = json.loads(session.subgoals) if session.subgoals else {}
+    except json.JSONDecodeError:
+        subgoals = {}
+    if not isinstance(subgoals, dict):
+        subgoals = {}
+    subgoals.setdefault("intro", {"status": "", "evidence": []})
+    subgoals.setdefault("followup", {"status": "", "evidence": []})
+    return subgoals
+
+
+def _current_subgoal(subgoals: dict[str, Any]) -> str:
+    if subgoals.get("intro", {}).get("status") == "independent":
+        return "followup"
+    return "intro"
+
+
+def _last_coach_text(db: DbSession, session_id: str) -> str:
+    last = (
+        db.query(Turn)
+        .filter(Turn.session_id == session_id, Turn.input_type == "coach")
+        .order_by(Turn.seq.desc())
+        .first()
+    )
+    return last.reply_text if last else ""
+
+
+def _recent_history(db: DbSession, session_id: str, limit: int = 5) -> list[dict[str, str]]:
+    turns = (
+        db.query(Turn)
+        .filter(Turn.session_id == session_id)
+        .order_by(Turn.seq.desc())
+        .limit(limit)
+        .all()
+    )
+    history: list[dict[str, str]] = []
+    for t in reversed(turns):
+        if t.input_type == "coach":
+            history.append({"who": "coach", "text": t.reply_text})
+        elif t.input_type == "practice":
+            history.append({"who": "user", "text": f"(跟读：{t.practice_sentence})"})
+        else:
+            history.append({"who": "user", "text": t.user_text or t.transcript})
+    return history
+
+
+def finalize_session(db: DbSession, session: Session) -> None:
+    """幂等收尾：生成回顾并保存，按记忆开关生成候选记忆。"""
+    if session.review:
+        return
+    review = build_review(db, session, session.end_reason or "user_ended")
+    session.review = json.dumps(review, ensure_ascii=False)
+    db.commit()
+    if memory_svc.is_memory_enabled(db, session.user_id):
+        memory_svc.generate_candidates(db, session.user_id, session.id, review)
+
+
 def create_session(db: DbSession, user_id: str, level: str, difficulty: str) -> dict[str, Any]:
     _get_or_create_user(db, user_id, level)
     session_id = uuid.uuid4().hex
@@ -100,6 +158,7 @@ def create_session(db: DbSession, user_id: str, level: str, difficulty: str) -> 
         status=S_PREPARING,
         goal_text=GOAL_TEXT,
         difficulty=difficulty,
+        subgoals="{}",
         rechecked=False,
     )
     db.add(session)
@@ -170,31 +229,60 @@ def submit_turn(
 
     hint_used = _last_action_type(db, session_id) == "hint"
 
+    # 当前子目标 + 题目
+    subgoals = _load_subgoals(session)
+    subgoal = _current_subgoal(subgoals)
+    question = _last_coach_text(db, session_id)
+
     # 独立评估（与生成分离）
     tool_budget.consume()
     evaluator = get_evaluator_provider()
     eval_out = evaluator.evaluate(
-        {"user_answer": text_for_eval, "hint_used": hint_used, "goal": session.goal_text}
+        {
+            "question": question,
+            "answer": text_for_eval,
+            "hint_used": hint_used,
+            "input_type": input_type,
+            "goal": session.goal_text,
+        }
     )
     db.add(
         Evaluation(
             session_id=session_id,
             turn_id=turn_id,
             result=eval_out.result,
+            subgoal=subgoal,
+            input_type=input_type,
+            question=question,
             evidence_turn_ids=",".join(eval_out.evidence_turn_ids),
             standard_version=eval_out.standard_version,
         )
     )
 
-    # 教练决策
+    # 更新子目标状态与证据
+    if eval_out.result == "independent":
+        subgoals[subgoal] = {"status": "independent", "evidence": [turn_id]}
+    else:
+        subgoals[subgoal] = {"status": eval_out.result, "evidence": []}
+    session.subgoals = json.dumps(subgoals, ensure_ascii=False)
+
+    # 教练决策（丰富上下文）
     tool_budget.consume()
     coach = get_coach_provider()
-    was_rechecked = session.rechecked  # 本回合之前的复测状态
+    user = db.get(User, session.user_id)
     decision = coach.decide(
         {
+            "goal": session.goal_text,
+            "difficulty": session.difficulty,
+            "level": user.level if user else "basic",
+            "current_question": question,
+            "current_answer": text_for_eval,
+            "input_type": input_type,
+            "hint_used": hint_used,
             "eval_result": eval_out.result,
+            "subgoal": subgoal,
+            "history": _recent_history(db, session_id),
             "rechecked": session.rechecked,
-            "practiced": _has_practice(db, session_id),
         }
     )
 
@@ -206,13 +294,17 @@ def submit_turn(
     audio_url = _save_audio(audio, tts.ext)
 
     # 状态迁移
+    both_done = (
+        subgoals.get("intro", {}).get("status") == "independent"
+        and subgoals.get("followup", {}).get("status") == "independent"
+    )
     new_status = S_WAITING
     if decision.action_type == "suggest_practice":
         new_status = S_PRACTICE
     elif decision.action_type == "recheck":
         session.rechecked = True
         new_status = S_RECHECK
-    if eval_out.result == "independent" and was_rechecked:
+    if both_done:
         new_status = S_ENDED
         session.end_reason = "goal_reached"
         session.ended_at = _now()
@@ -235,6 +327,10 @@ def submit_turn(
     db.add(turn)
     db.commit()
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
+
+    # 统一收尾（自动达标时）
+    if new_status == S_ENDED:
+        finalize_session(db, session)
 
     return {
         "turn_id": turn_id,
@@ -268,10 +364,25 @@ def submit_practice(
     provider = get_practice_eval_provider()
     eval_result = provider.evaluate(audio_path, sentence)
 
+    score = eval_result.get("score")
+    valid = score is not None
+
     coach = get_coach_provider()
-    recheck = coach.decide({"practice_done": True})
+    decision = coach.decide(
+        {
+            "goal": session.goal_text,
+            "difficulty": session.difficulty,
+            "subgoal": _current_subgoal(_load_subgoals(session)),
+            "practice": {
+                "score": score,
+                "valid": valid,
+                "reference_sentence": sentence,
+            },
+            "history": _recent_history(db, session_id),
+        }
+    )
     tts = get_tts_provider()
-    audio = tts.synthesize(recheck.reply_text)
+    audio = tts.synthesize(decision.reply_text)
     audio_url = _save_audio(audio, tts.ext)
 
     turn = Turn(
@@ -281,21 +392,28 @@ def submit_practice(
         input_type="practice",
         practice_sentence=sentence,
         practice_eval=json.dumps(eval_result, ensure_ascii=False),
-        reply_text=recheck.reply_text,
+        reply_text=decision.reply_text,
         reply_audio_url=audio_url,
-        action_type="recheck",
+        action_type=decision.action_type,
     )
     db.add(turn)
-    session.rechecked = True
-    session.status = S_RECHECK
+
+    # 状态迁移
+    new_status = S_WAITING
+    if decision.action_type == "suggest_practice":
+        new_status = S_PRACTICE
+    elif decision.action_type == "recheck":
+        session.rechecked = True
+        new_status = S_RECHECK
+    session.status = new_status
     db.commit()
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
 
     return {
         "session_id": session_id,
-        "status": S_RECHECK,
+        "status": new_status,
         "eval": eval_result,
-        "recheck_reply_text": recheck.reply_text,
+        "recheck_reply_text": decision.reply_text,
         "recheck_audio_url": audio_url,
     }
 
@@ -303,7 +421,7 @@ def submit_practice(
 def _review_of(session: Session) -> dict[str, Any]:
     if session.review:
         try:
-            return json.loads(session.review)
+            return dedupe_improvements(json.loads(session.review))
         except json.JSONDecodeError:
             return {}
     return {}
@@ -338,16 +456,12 @@ def _summary(db: DbSession, session: Session) -> dict[str, Any]:
 
 def end_session(db: DbSession, session_id: str, user_id: str, reason: str) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
-    if session.status == S_ENDED:
-        return _end_result(db, session)
-    session.status = S_ENDED
-    session.end_reason = reason or "user_ended"
-    session.ended_at = _now()
-    review = build_review(db, session, session.end_reason)
-    session.review = json.dumps(review, ensure_ascii=False)
-    db.commit()
-    if memory_svc.is_memory_enabled(db, user_id):
-        memory_svc.generate_candidates(db, user_id, session_id, review)
+    if session.status != S_ENDED:
+        session.status = S_ENDED
+        session.end_reason = reason or "user_ended"
+        session.ended_at = _now()
+        db.commit()
+    finalize_session(db, session)  # 幂等：已生成则跳过
     cleanup_old_uploads()
     return _end_result(db, session)
 

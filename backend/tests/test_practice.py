@@ -66,3 +66,15 @@ def test_parse_result_error():
 def test_parse_result_no_score():
     with pytest.raises(AppError):
         parse_result([{"code": 0, "data": {}}])
+
+
+def test_mock_coach_practice_decisions():
+    from app.services.coach import MockCoachProvider
+
+    coach = MockCoachProvider()
+    # 有效高分 → 继续原目标
+    assert coach.decide({"practice": {"score": 85, "valid": True, "reference_sentence": "x"}}).action_type == "follow_up"
+    # 有效低分 → 建议重试
+    assert coach.decide({"practice": {"score": 40, "valid": True, "reference_sentence": "x"}}).action_type == "suggest_practice"
+    # 无效/无分数 → 不可评估，继续原目标
+    assert coach.decide({"practice": {"score": None, "valid": False, "reference_sentence": "x"}}).action_type == "follow_up"

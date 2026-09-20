@@ -41,6 +41,36 @@ def test_end_generates_review(client):
     assert data2["review"] == review
 
 
+def test_review_keeps_distinct_originals(client):
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "heii I")
+    _send_text(client, s["session_id"], "heiil")
+    review = _end(client, s["session_id"])["review"]
+    # 不同原句各自保留证据，不因模板相同而合并
+    assert len(review["improvements"]) == 2
+    originals = {imp["original"] for imp in review["improvements"]}
+    assert originals == {"heii I", "heiil"}
+    assert review["input_breakdown"]["text"] == 2
+
+
+def test_saved_review_dedups_duplicate_original(client):
+    from app.models.database import SessionLocal
+    from app.models.entities import Session
+
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "heii I")
+    review = _end(client, s["session_id"])["review"]
+    imp = review["improvements"][0]
+    # 保存一份含重复原句的旧回顾，展示时应合并
+    with SessionLocal() as db:
+        session = db.get(Session, s["session_id"])
+        session.review = json.dumps({**review, "improvements": [imp, dict(imp)]})
+        db.commit()
+
+    detail = client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()
+    assert len(detail["review"]["improvements"]) == 1
+
+
 def test_history_list_only_own(client):
     a = _create_session(client, user="u1")
     _create_session(client, user="u2")

@@ -55,15 +55,15 @@ def test_create_session_returns_goal_and_opening(client):
     assert s["reply_audio_url"].startswith("/api/v1/audio/")
 
 
-def test_turn_independent_leads_to_recheck(client):
+def test_turn_independent_leads_to_followup(client):
     s = _create_session(client)
     events = _send_text(client, s["session_id"], "I have three years of experience in software development.")
     types = [e for e, _ in events]
     assert "chunk" in types and "done" in types
     done = _done(events)
     assert done["eval_result"] == "independent"
-    assert done["action_type"] == "recheck"
-    assert done["status"] == "RECHECK"
+    assert done["action_type"] == "follow_up"
+    assert done["status"] == "WAITING_INPUT"
 
 
 def test_insufficient_answer_gets_hint(client):
@@ -73,17 +73,32 @@ def test_insufficient_answer_gets_hint(client):
     assert done["action_type"] == "hint"
 
 
-def test_hinted_then_independent_recheck_ends_session(client):
+def test_two_subgoals_complete_ends_session(client):
+    s = _create_session(client)
+    # 子目标 1：介绍经历
+    e1 = _send_text(client, s["session_id"], "I have three years of experience in software development.")
+    done1 = _done(e1)
+    assert done1["eval_result"] == "independent"
+    assert done1["status"] == "WAITING_INPUT"
+    # 子目标 2：回答追问 → 均独立 → 结束
+    e2 = _send_text(client, s["session_id"], "I have five years of experience in marketing and I enjoy it.")
+    done2 = _done(e2)
+    assert done2["eval_result"] == "independent"
+    assert done2["status"] == "ENDED"
+
+
+def test_hinted_requires_recheck_then_followup(client):
     s = _create_session(client)
     _send_text(client, s["session_id"], "hi")  # → hint
     e2 = _send_text(client, s["session_id"], "I have worked as a teacher for two years.")
     done2 = _done(e2)
     assert done2["eval_result"] == "hinted"
     assert done2["action_type"] == "recheck"
+    # 复测独立回答 → 子目标 1 完成，进入追问
     e3 = _send_text(client, s["session_id"], "I have five years of experience in marketing and I enjoy it.")
     done3 = _done(e3)
     assert done3["eval_result"] == "independent"
-    assert done3["status"] == "ENDED"
+    assert done3["status"] == "WAITING_INPUT"
 
 
 def test_incomplete_answer_suggests_practice(client):
@@ -106,7 +121,7 @@ def test_practice_flow(client):
     )
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data["status"] == "RECHECK"
+    assert data["status"] == "WAITING_INPUT"  # 有效评分后继续原目标
     assert "score" in data["eval"]
     assert data["recheck_reply_text"]
 
@@ -185,3 +200,29 @@ def test_budget_exceeded(client, monkeypatch):
     events = _parse_sse(r.text)
     assert events[-1][0] == "error"
     assert events[-1][1]["error"]["code"] == "BUDGET_EXCEEDED"
+
+
+def test_coach_context_contains_answer_and_history(client, monkeypatch):
+    from app.schemas.coach import CoachDecision
+    from app.services import session_svc
+
+    captured: dict = {}
+
+    class SpyCoach:
+        def opening(self, goal_text, difficulty):
+            return CoachDecision(action_type="follow_up", reply_text="Welcome.")
+
+        def decide(self, context):
+            captured.update(context)
+            return CoachDecision(action_type="follow_up", reply_text="Nice, tell me more.")
+
+    monkeypatch.setattr(session_svc, "get_coach_provider", lambda: SpyCoach())
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "I have three years of experience in software development.")
+
+    assert captured.get("current_answer") == "I have three years of experience in software development."
+    assert captured.get("current_question")
+    assert captured.get("history")
+    assert captured.get("input_type") == "text"
+    assert captured.get("subgoal") == "intro"
+    assert captured.get("level") == "basic"
