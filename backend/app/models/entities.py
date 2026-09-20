@@ -97,6 +97,24 @@ class Memory(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     text: Mapped[str] = mapped_column(Text, default="")
     source_session_id: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(16), default="candidate")
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class EventLog(Base):
+    __tablename__ = "event_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), default="")
+    action_type: Mapped[str] = mapped_column(String(32), default="")
+    basis: Mapped[str] = mapped_column(String(32), default="")
+    input_type: Mapped[str] = mapped_column(String(16), default="")
+    tool_result: Mapped[str] = mapped_column(String(32), default="")
+    error: Mapped[str] = mapped_column(String(64), default="")
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    usage: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "scene": "job_interview_self_intro",
+  "levels": {
+    "beginner": {
+      "opening": "Welcome. Tell me one simple thing about yourself, like your name and what you do.",
+      "follow_ups": ["What do you do at work?", "Where are you from?"],
+      "practice_sentences": ["I am a software engineer.", "I have two years of work experience."]
+    },
+    "basic": {
+      "opening": "Welcome. Tell me about one experience you are proud of.",
+      "follow_ups": ["What was the most challenging part of that experience?", "What did you learn from it?"],
+      "practice_sentences": ["I have three years of experience in software development.", "I am good at solving technical problems."]
+    },
+    "intermediate": {
+      "opening": "Welcome. Walk me through one achievement and how you contributed to it.",
+      "follow_ups": ["How did you measure the impact of that achievement?", "What would you do differently next time?"],
+      "practice_sentences": ["I led a team that improved delivery speed by thirty percent.", "I resolved a critical production issue that saved the company time and money."]
+    }
+  }
+}

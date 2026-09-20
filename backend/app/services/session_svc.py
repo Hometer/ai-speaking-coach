@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.models.entities import Evaluation, Session, Turn, User
+from app.models.entities import Evaluation, EventLog, Session, Turn, User
 from app.schemas.coach import CoachDecision
 from app.services import memory as memory_svc
 from app.services.budget import BudgetGuard, ToolBudget
@@ -87,6 +87,33 @@ def _has_practice(db: DbSession, session_id: str) -> bool:
         .filter(Turn.session_id == session_id, Turn.input_type == "practice")
         .first()
         is not None
+    )
+
+
+def _log_event(
+    db: DbSession,
+    session_id: str,
+    turn_id: str = "",
+    action_type: str = "",
+    basis: str = "",
+    input_type: str = "",
+    tool_result: str = "",
+    error: str = "",
+    duration_ms: int = 0,
+    usage: str = "",
+) -> None:
+    db.add(
+        EventLog(
+            session_id=session_id,
+            turn_id=turn_id,
+            action_type=action_type,
+            basis=basis,
+            input_type=input_type,
+            tool_result=tool_result,
+            error=error,
+            duration_ms=duration_ms,
+            usage=usage,
+        )
     )
 
 
@@ -273,6 +300,9 @@ def submit_turn(
     tool_budget.consume()
     coach = get_coach_provider()
     user = db.get(User, session.user_id)
+    memories = []
+    if memory_svc.is_memory_enabled(db, user_id):
+        memories = [m.text for m in memory_svc.get_usable_memories(db, user_id)]
     decision = coach.decide(
         {
             "goal": session.goal_text,
@@ -286,6 +316,7 @@ def submit_turn(
             "subgoal": subgoal,
             "history": _recent_history(db, session_id),
             "rechecked": session.rechecked,
+            "memories": memories,
         }
     )
 
@@ -328,6 +359,7 @@ def submit_turn(
         eval_result=eval_out.result,
     )
     db.add(turn)
+    _log_event(db, session_id, turn_id=turn_id, action_type=decision.action_type, basis=eval_out.result, input_type=input_type, tool_result=eval_out.result)
     db.commit()
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
 

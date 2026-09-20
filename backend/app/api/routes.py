@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from app.core.auth import get_user_id
 from app.core.errors import AppError, error_body
 from app.models.database import SessionLocal
-from app.schemas.memory import MemoryItem, MemoryToggleRequest
+from app.schemas.memory import MemoryItem, MemoryToggleRequest, MemoryUpdateRequest
 from app.schemas.session import (
     EndRequest,
     EndResponse,
@@ -288,9 +288,29 @@ async def list_memories(
     try:
         mems = memory_svc.list_memories(db, user_id)
         return [
-            {"id": m.id, "text": m.text, "source_session_id": m.source_session_id}
+            {
+                "id": m.id,
+                "text": m.text,
+                "source_session_id": m.source_session_id,
+                "status": m.status,
+                "evidence_count": m.evidence_count,
+            }
             for m in mems
         ]
+    finally:
+        db.close()
+
+
+@router.patch("/users/me/memories/{memory_id}")
+async def update_memory(
+    memory_id: int,
+    req: MemoryUpdateRequest,
+    user_id: str = Depends(get_user_id),
+):
+    db = SessionLocal()
+    try:
+        m = memory_svc.update_memory_text(db, user_id, memory_id, req.text)
+        return {"id": m.id, "text": m.text, "status": m.status}
     finally:
         db.close()
 

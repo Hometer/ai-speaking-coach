@@ -23,10 +23,14 @@ def set_memory_enabled(db: DbSession, user_id: str, enabled: bool) -> bool:
     return bool(user.memory_enabled)
 
 
+def _dedup_key(text: str) -> str:
+    return " ".join(str(text).split()).casefold()
+
+
 def generate_candidates(
     db: DbSession, user_id: str, session_id: str, review: dict[str, Any]
 ) -> int:
-    """从回顾的改进建议生成候选记忆（仅记忆开启时调用）。"""
+    """从回顾生成候选记忆（仅记忆开启时调用）；同文本跨会话重复出现才升为可用。"""
     created = 0
     for imp in review.get("improvements", []):
         if imp.get("disputed"):
@@ -34,8 +38,29 @@ def generate_candidates(
         text = (imp.get("explanation_cn") or imp.get("suggestion") or "").strip()
         if not text:
             continue
-        db.add(Memory(user_id=user_id, text=text, source_session_id=session_id))
-        created += 1
+        key = _dedup_key(text)
+        existing = (
+            db.query(Memory)
+            .filter(Memory.user_id == user_id, Memory.source_session_id != session_id)
+            .all()
+        )
+        match = next((m for m in existing if _dedup_key(m.text) == key), None)
+        if match:
+            match.evidence_count = (match.evidence_count or 0) + 1
+            if match.evidence_count >= 2:
+                match.status = "usable"
+            created += 1
+        else:
+            db.add(
+                Memory(
+                    user_id=user_id,
+                    text=text,
+                    source_session_id=session_id,
+                    status="candidate",
+                    evidence_count=1,
+                )
+            )
+            created += 1
     if created:
         db.commit()
     return created
@@ -45,6 +70,24 @@ def list_memories(db: DbSession, user_id: str) -> list[Memory]:
     return (
         db.query(Memory).filter(Memory.user_id == user_id).order_by(Memory.created_at.desc()).all()
     )
+
+
+def get_usable_memories(db: DbSession, user_id: str) -> list[Memory]:
+    return (
+        db.query(Memory)
+        .filter(Memory.user_id == user_id, Memory.status == "usable")
+        .order_by(Memory.created_at.desc())
+        .all()
+    )
+
+
+def update_memory_text(db: DbSession, user_id: str, memory_id: int, text: str) -> Memory:
+    m = db.get(Memory, memory_id)
+    if m is None or m.user_id != user_id:
+        raise AppError("MEMORY_NOT_FOUND", "记忆不存在", status_code=404)
+    m.text = text.strip()
+    db.commit()
+    return m
 
 
 def delete_memory(db: DbSession, user_id: str, memory_id: int) -> None:
