@@ -133,7 +133,7 @@ export default function HistoryPage() {
               if (t.input_type === "practice") {
                 return <div key={t.turn_id} className="text-sm rounded-lg p-2" style={{ background: "var(--brand-soft)" }}>跟读：{t.practice_sentence || "（短句）"}</div>;
               }
-              const u = t.user_text || t.transcript;
+              const u = t.revised_text || t.user_text || t.transcript;
               return (
                 <div key={t.turn_id} className="space-y-1">
                   {u ? <div className="text-sm rounded-lg p-2" style={{ background: "var(--user-bubble)" }}>你：{u}</div> : null}

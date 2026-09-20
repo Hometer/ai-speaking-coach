@@ -138,7 +138,7 @@ def _current_subgoal(subgoals: dict[str, Any]) -> str:
 def _last_coach_text(db: DbSession, session_id: str) -> str:
     last = (
         db.query(Turn)
-        .filter(Turn.session_id == session_id, Turn.input_type == "coach")
+        .filter(Turn.session_id == session_id)
         .order_by(Turn.seq.desc())
         .first()
     )
@@ -160,7 +160,11 @@ def _recent_history(db: DbSession, session_id: str, limit: int = 5) -> list[dict
         elif t.input_type == "practice":
             history.append({"who": "user", "text": f"(跟读：{t.practice_sentence})"})
         else:
-            history.append({"who": "user", "text": t.user_text or t.transcript})
+            u = t.revised_text or t.user_text or t.transcript
+            if u:
+                history.append({"who": "user", "text": u})
+            if t.reply_text:
+                history.append({"who": "coach", "text": t.reply_text})
     return history
 
 
@@ -238,82 +242,101 @@ def submit_turn(
     if session.status not in (S_WAITING, S_PRACTICE, S_RECHECK):
         raise AppError("INVALID_STATE", "当前状态不能提交回合", status_code=409)
 
+    # 时长校验（F-07A）：墙钟近似；精确累计非暂停时长由部署阶段定时任务接入
+    if session.started_at:
+        started = session.started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        elapsed_min = (datetime.now(timezone.utc) - started).total_seconds() / 60
+        if elapsed_min > session.duration_minutes:
+            session.status = S_ENDED
+            session.end_reason = "time_limit"
+            session.ended_at = _now()
+            db.commit()
+            finalize_session(db, session)
+            raise AppError("TIME_LIMIT", "练习时间已到，本次练习结束", status_code=409)
+
     guard = BudgetGuard(db)
     guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
     tool_budget = ToolBudget()
 
-    turn_id = uuid.uuid4().hex
-    transcript = ""
-    if input_type == "voice":
-        if not audio_bytes:
-            raise AppError("EMPTY_AUDIO", "音频内容为空")
-        fmt = _validate_audio(audio_bytes)
-        uploads_dir = settings.data_dir / "uploads"
-        uploads_dir.mkdir(parents=True, exist_ok=True)
-        audio_path = uploads_dir / f"{turn_id}.{fmt}"
-        audio_path.write_bytes(audio_bytes)
-        transcript = get_asr_provider().transcribe(audio_path)
-        text_for_eval = transcript
-    else:
-        text_for_eval = user_text or ""
+    try:
+        turn_id = uuid.uuid4().hex
+        transcript = ""
+        if input_type == "voice":
+            if not audio_bytes:
+                raise AppError("EMPTY_AUDIO", "音频内容为空")
+            fmt = _validate_audio(audio_bytes)
+            uploads_dir = settings.data_dir / "uploads"
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            audio_path = uploads_dir / f"{turn_id}.{fmt}"
+            audio_path.write_bytes(audio_bytes)
+            transcript = get_asr_provider().transcribe(audio_path)
+            text_for_eval = transcript
+        else:
+            text_for_eval = user_text or ""
 
-    hint_used = _last_action_type(db, session_id) == "hint"
+        hint_used = _last_action_type(db, session_id) == "hint"
 
-    # 当前子目标 + 题目
-    subgoals = _load_subgoals(session)
-    subgoal = _current_subgoal(subgoals)
-    question = _last_coach_text(db, session_id)
+        # 当前子目标 + 题目
+        subgoals = _load_subgoals(session)
+        subgoal = _current_subgoal(subgoals)
+        question = _last_coach_text(db, session_id)
 
-    # 独立评估（与生成分离）
-    tool_budget.consume()
-    evaluator = get_evaluator_provider()
-    eval_out = evaluator.evaluate(
-        {
-            "question": question,
-            "answer": text_for_eval,
-            "hint_used": hint_used,
-            "input_type": input_type,
-            "goal": session.goal_text,
-        }
-    )
+        # 独立评估（与生成分离）
+        tool_budget.consume()
+        evaluator = get_evaluator_provider()
+        eval_out = evaluator.evaluate(
+            {
+                "question": question,
+                "answer": text_for_eval,
+                "hint_used": hint_used,
+                "input_type": input_type,
+                "goal": session.goal_text,
+            }
+        )
 
-    # 更新子目标（先算到局部变量，提交前统一应用）
-    new_subgoals = dict(subgoals)
-    if eval_out.result == "independent":
-        new_subgoals[subgoal] = {"status": "independent", "evidence": [turn_id]}
-    else:
-        new_subgoals[subgoal] = {"status": eval_out.result, "evidence": []}
+        # 更新子目标（先算到局部变量，提交前统一应用）
+        new_subgoals = dict(subgoals)
+        if eval_out.result == "independent":
+            new_subgoals[subgoal] = {"status": "independent", "evidence": [turn_id]}
+        else:
+            new_subgoals[subgoal] = {"status": eval_out.result, "evidence": []}
 
-    # 教练决策（丰富上下文）
-    tool_budget.consume()
-    coach = get_coach_provider()
-    user = db.get(User, session.user_id)
-    memories = []
-    if memory_svc.is_memory_enabled(db, user_id):
-        memories = [m.text for m in memory_svc.get_usable_memories(db, user_id)]
-    decision = coach.decide(
-        {
-            "goal": session.goal_text,
-            "difficulty": session.difficulty,
-            "level": user.level if user else "basic",
-            "current_question": question,
-            "current_answer": text_for_eval,
-            "input_type": input_type,
-            "hint_used": hint_used,
-            "eval_result": eval_out.result,
-            "subgoal": subgoal,
-            "history": _recent_history(db, session_id),
-            "rechecked": session.rechecked,
-            "memories": memories,
-        }
-    )
+        # 教练决策（丰富上下文）
+        tool_budget.consume()
+        coach = get_coach_provider()
+        user = db.get(User, session.user_id)
+        memories = []
+        if memory_svc.is_memory_enabled(db, user_id):
+            memories = [m.text for m in memory_svc.get_usable_memories(db, user_id)]
+        decision = coach.decide(
+            {
+                "goal": session.goal_text,
+                "difficulty": session.difficulty,
+                "level": user.level if user else "basic",
+                "current_question": question,
+                "current_answer": text_for_eval,
+                "input_type": input_type,
+                "hint_used": hint_used,
+                "eval_result": eval_out.result,
+                "subgoal": subgoal,
+                "history": _recent_history(db, session_id),
+                "rechecked": session.rechecked,
+                "memories": memories,
+            }
+        )
 
-    tts = get_tts_provider()
-    if decision.action_type == "suggest_practice" and decision.practice_sentence:
-        audio = tts.synthesize(decision.practice_sentence)
-    else:
-        audio = tts.synthesize(decision.reply_text)
-    audio_url = _save_audio(audio, tts.ext)
+        tts = get_tts_provider()
+        if decision.action_type == "suggest_practice" and decision.practice_sentence:
+            audio = tts.synthesize(decision.practice_sentence)
+        else:
+            audio = tts.synthesize(decision.reply_text)
+        audio_url = _save_audio(audio, tts.ext)
+    except Exception:
+        db.rollback()
+        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        raise
 
     # 状态迁移（先算到局部变量）
     both_done = (
@@ -736,6 +759,25 @@ def revise_turn(db: DbSession, session_id: str, user_id: str, turn_id: str, revi
     turn.revision_version = (turn.revision_version or 0) + 1
     if turn.eval_result:
         turn.eval_result = "revised"  # 旧评价失效，待重算
+    # 撤销相关评估与子目标、标回顾待重算（F-06）
+    db.query(Evaluation).filter(Evaluation.turn_id == turn_id).update({"result": "revised"})
+    subgoals = _load_subgoals(session)
+    changed = False
+    for name in ("intro", "followup"):
+        sg = subgoals.get(name, {})
+        if turn_id in sg.get("evidence", []):
+            sg["status"] = "revised"
+            sg["evidence"] = []
+            changed = True
+    if changed:
+        session.subgoals = json.dumps(subgoals, ensure_ascii=False)
+    if session.review:
+        try:
+            review = json.loads(session.review)
+            review["stale"] = True
+            session.review = json.dumps(review, ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
     db.commit()
     return {"turn_id": turn_id, "revised_text": turn.revised_text, "revision_version": turn.revision_version}
 

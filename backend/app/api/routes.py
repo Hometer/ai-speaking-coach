@@ -1,4 +1,4 @@
-"""API 路由。"""
+"""API 路由（同步 def，由 FastAPI 线程池执行，避免阻塞事件循环）。"""
 import json
 from typing import Any
 
@@ -38,11 +38,8 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-# ===== 音频播放（校验归属）=====
-
-
 @router.get("/audio/{filename}")
-async def get_audio(filename: str, user_id: str = Depends(get_user_id)):
+def get_audio(filename: str, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         path = session_svc.resolve_audio_for_user(db, filename, user_id)
@@ -52,14 +49,8 @@ async def get_audio(filename: str, user_id: str = Depends(get_user_id)):
     return FileResponse(path, media_type=media_type)
 
 
-# ===== 会话 =====
-
-
 @router.post("/sessions", response_model=SessionCreatedResponse)
-async def create_session(
-    req: SessionCreateRequest,
-    user_id: str = Depends(get_user_id),
-):
+def create_session(req: SessionCreateRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes)
@@ -68,11 +59,7 @@ async def create_session(
 
 
 @router.post("/sessions/{session_id}/turns/text")
-async def text_turn_stream(
-    session_id: str,
-    req: TextTurnRequest,
-    user_id: str = Depends(get_user_id),
-):
+def text_turn_stream(session_id: str, req: TextTurnRequest, user_id: str = Depends(get_user_id)):
     def gen():
         db = SessionLocal()
         try:
@@ -90,12 +77,8 @@ async def text_turn_stream(
 
 
 @router.post("/sessions/{session_id}/turns/voice")
-async def voice_turn_stream(
-    session_id: str,
-    audio: UploadFile = File(...),
-    user_id: str = Depends(get_user_id),
-):
-    data = await audio.read()
+def voice_turn_stream(session_id: str, audio: UploadFile = File(...), user_id: str = Depends(get_user_id)):
+    data = audio.file.read()
 
     def gen():
         db = SessionLocal()
@@ -114,13 +97,8 @@ async def voice_turn_stream(
 
 
 @router.post("/sessions/{session_id}/practice", response_model=PracticeResponse)
-async def practice(
-    session_id: str,
-    sentence: str = Form(...),
-    audio: UploadFile = File(...),
-    user_id: str = Depends(get_user_id),
-):
-    data = await audio.read()
+def practice(session_id: str, sentence: str = Form(...), audio: UploadFile = File(...), user_id: str = Depends(get_user_id)):
+    data = audio.file.read()
     db = SessionLocal()
     try:
         return session_svc.submit_practice(db, session_id, user_id, data, sentence)
@@ -129,11 +107,7 @@ async def practice(
 
 
 @router.post("/sessions/{session_id}/end", response_model=EndResponse)
-async def end_session(
-    session_id: str,
-    req: EndRequest,
-    user_id: str = Depends(get_user_id),
-):
+def end_session(session_id: str, req: EndRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.end_session(db, session_id, user_id, req.reason)
@@ -142,10 +116,7 @@ async def end_session(
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
-async def session_detail(
-    session_id: str,
-    user_id: str = Depends(get_user_id),
-):
+def session_detail(session_id: str, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.get_session_detail(db, session_id, user_id)
@@ -154,9 +125,7 @@ async def session_detail(
 
 
 @router.get("/sessions", response_model=list[SessionListItem])
-async def list_sessions(
-    user_id: str = Depends(get_user_id),
-):
+def list_sessions(user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.list_sessions(db, user_id)
@@ -165,10 +134,7 @@ async def list_sessions(
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(
-    session_id: str,
-    user_id: str = Depends(get_user_id),
-):
+def delete_session(session_id: str, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         session_svc.delete_session(db, session_id, user_id)
@@ -178,9 +144,7 @@ async def delete_session(
 
 
 @router.delete("/sessions")
-async def delete_all_sessions(
-    user_id: str = Depends(get_user_id),
-):
+def delete_all_sessions(user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         session_svc.delete_all_sessions(db, user_id)
@@ -190,10 +154,7 @@ async def delete_all_sessions(
 
 
 @router.post("/sessions/{session_id}/pause")
-async def pause_session(
-    session_id: str,
-    user_id: str = Depends(get_user_id),
-):
+def pause_session(session_id: str, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.set_paused(db, session_id, user_id, True)
@@ -202,10 +163,7 @@ async def pause_session(
 
 
 @router.post("/sessions/{session_id}/resume")
-async def resume_session(
-    session_id: str,
-    user_id: str = Depends(get_user_id),
-):
+def resume_session(session_id: str, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.set_paused(db, session_id, user_id, False)
@@ -214,10 +172,7 @@ async def resume_session(
 
 
 @router.post("/sessions/{session_id}/skip-practice")
-async def skip_practice(
-    session_id: str,
-    user_id: str = Depends(get_user_id),
-):
+def skip_practice(session_id: str, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.skip_practice(db, session_id, user_id)
@@ -225,25 +180,8 @@ async def skip_practice(
         db.close()
 
 
-@router.patch("/sessions/{session_id}/turns/{turn_id}")
-async def revise_turn(
-    session_id: str,
-    turn_id: str,
-    req: ReviseTurnRequest,
-    user_id: str = Depends(get_user_id),
-):
-    db = SessionLocal()
-    try:
-        return session_svc.revise_turn(db, session_id, user_id, turn_id, req.revised_text)
-    finally:
-        db.close()
-
-
 @router.post("/sessions/{session_id}/hint")
-async def request_hint(
-    session_id: str,
-    user_id: str = Depends(get_user_id),
-):
+def request_hint(session_id: str, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.request_hint(db, session_id, user_id)
@@ -251,12 +189,17 @@ async def request_hint(
         db.close()
 
 
+@router.patch("/sessions/{session_id}/turns/{turn_id}")
+def revise_turn(session_id: str, turn_id: str, req: ReviseTurnRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return session_svc.revise_turn(db, session_id, user_id, turn_id, req.revised_text)
+    finally:
+        db.close()
+
+
 @router.post("/sessions/{session_id}/review/dispute")
-async def dispute_review(
-    session_id: str,
-    turn_id: str,
-    user_id: str = Depends(get_user_id),
-):
+def dispute_review(session_id: str, turn_id: str, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return session_svc.dispute_review_improvement(db, session_id, user_id, turn_id)
@@ -264,14 +207,8 @@ async def dispute_review(
         db.close()
 
 
-# ===== 学习记忆 =====
-
-
 @router.post("/users/me/memory")
-async def toggle_memory(
-    req: MemoryToggleRequest,
-    user_id: str = Depends(get_user_id),
-):
+def toggle_memory(req: MemoryToggleRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         enabled = memory_svc.set_memory_enabled(db, user_id, req.enabled)
@@ -281,20 +218,12 @@ async def toggle_memory(
 
 
 @router.get("/users/me/memories", response_model=list[MemoryItem])
-async def list_memories(
-    user_id: str = Depends(get_user_id),
-):
+def list_memories(user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         mems = memory_svc.list_memories(db, user_id)
         return [
-            {
-                "id": m.id,
-                "text": m.text,
-                "source_session_id": m.source_session_id,
-                "status": m.status,
-                "evidence_count": m.evidence_count,
-            }
+            {"id": m.id, "text": m.text, "source_session_id": m.source_session_id, "status": m.status, "evidence_count": m.evidence_count}
             for m in mems
         ]
     finally:
@@ -302,11 +231,7 @@ async def list_memories(
 
 
 @router.patch("/users/me/memories/{memory_id}")
-async def update_memory(
-    memory_id: int,
-    req: MemoryUpdateRequest,
-    user_id: str = Depends(get_user_id),
-):
+def update_memory(memory_id: int, req: MemoryUpdateRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         m = memory_svc.update_memory_text(db, user_id, memory_id, req.text)
@@ -316,10 +241,7 @@ async def update_memory(
 
 
 @router.delete("/users/me/memories/{memory_id}")
-async def delete_memory(
-    memory_id: int,
-    user_id: str = Depends(get_user_id),
-):
+def delete_memory(memory_id: int, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         memory_svc.delete_memory(db, user_id, memory_id)
@@ -329,9 +251,7 @@ async def delete_memory(
 
 
 @router.delete("/users/me/memories")
-async def clear_memories(
-    user_id: str = Depends(get_user_id),
-):
+def clear_memories(user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         memory_svc.clear_memories(db, user_id)
