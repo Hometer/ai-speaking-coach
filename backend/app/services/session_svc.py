@@ -276,25 +276,13 @@ def submit_turn(
             "goal": session.goal_text,
         }
     )
-    db.add(
-        Evaluation(
-            session_id=session_id,
-            turn_id=turn_id,
-            result=eval_out.result,
-            subgoal=subgoal,
-            input_type=input_type,
-            question=question,
-            evidence_turn_ids=",".join(eval_out.evidence_turn_ids),
-            standard_version=eval_out.standard_version,
-        )
-    )
 
-    # 更新子目标状态与证据
+    # 更新子目标（先算到局部变量，提交前统一应用）
+    new_subgoals = dict(subgoals)
     if eval_out.result == "independent":
-        subgoals[subgoal] = {"status": "independent", "evidence": [turn_id]}
+        new_subgoals[subgoal] = {"status": "independent", "evidence": [turn_id]}
     else:
-        subgoals[subgoal] = {"status": eval_out.result, "evidence": []}
-    session.subgoals = json.dumps(subgoals, ensure_ascii=False)
+        new_subgoals[subgoal] = {"status": eval_out.result, "evidence": []}
 
     # 教练决策（丰富上下文）
     tool_budget.consume()
@@ -327,19 +315,50 @@ def submit_turn(
         audio = tts.synthesize(decision.reply_text)
     audio_url = _save_audio(audio, tts.ext)
 
-    # 状态迁移
+    # 状态迁移（先算到局部变量）
     both_done = (
-        subgoals.get("intro", {}).get("status") == "independent"
-        and subgoals.get("followup", {}).get("status") == "independent"
+        new_subgoals.get("intro", {}).get("status") == "independent"
+        and new_subgoals.get("followup", {}).get("status") == "independent"
     )
     new_status = S_WAITING
     if decision.action_type == "suggest_practice":
         new_status = S_PRACTICE
     elif decision.action_type == "recheck":
-        session.rechecked = True
         new_status = S_RECHECK
     if both_done:
         new_status = S_ENDED
+
+    # 终态再校验（F-03）：外部调用期间会话可能已被并发结束/删除
+    try:
+        db.refresh(session)
+    except Exception:
+        db.rollback()
+        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        raise AppError("SESSION_NOT_FOUND", "会话已被删除", status_code=404)
+    if session.status == S_ENDED or session.status == S_PAUSED:
+        code = "SESSION_ENDED" if session.status == S_ENDED else "SESSION_PAUSED"
+        msg = "会话已结束" if session.status == S_ENDED else "会话已暂停"
+        db.rollback()
+        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        raise AppError(code, msg, status_code=409)
+
+    # 统一应用变更
+    db.add(
+        Evaluation(
+            session_id=session_id,
+            turn_id=turn_id,
+            result=eval_out.result,
+            subgoal=subgoal,
+            input_type=input_type,
+            question=question,
+            evidence_turn_ids=",".join(eval_out.evidence_turn_ids),
+            standard_version=eval_out.standard_version,
+        )
+    )
+    session.subgoals = json.dumps(new_subgoals, ensure_ascii=False)
+    if decision.action_type == "recheck":
+        session.rechecked = True
+    if both_done:
         session.end_reason = "goal_reached"
         session.ended_at = _now()
     session.status = new_status
@@ -566,12 +585,37 @@ def list_sessions(db: DbSession, user_id: str) -> list[dict[str, Any]]:
     return result
 
 
+def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
+    """删除会话及其关联数据（记忆/评估/事件/回合级联），返回需删除的音频文件名。"""
+    memory_svc.delete_by_session(db, session.id)
+    db.query(Evaluation).filter(Evaluation.session_id == session.id).delete()
+    db.query(EventLog).filter(EventLog.session_id == session.id).delete()
+    audio_filenames: set[str] = set()
+    for t in db.query(Turn).filter(Turn.session_id == session.id).all():
+        if t.reply_audio_url:
+            audio_filenames.add(os.path.basename(t.reply_audio_url))
+    db.delete(session)  # ORM 级联删除 turns
+    return audio_filenames
+
+
+def _delete_audio_files(filenames: set[str]) -> None:
+    audio_dir = settings.data_dir / "audio"
+    for fname in filenames:
+        if not fname:
+            continue
+        p = audio_dir / fname
+        try:
+            if p.is_file():
+                p.unlink()
+        except OSError:
+            continue
+
+
 def delete_session(db: DbSession, session_id: str, user_id: str) -> None:
     session = _require_session(db, session_id, user_id)
-    memory_svc.delete_by_session(db, session_id)
-    db.query(Evaluation).filter(Evaluation.session_id == session_id).delete()
-    db.delete(session)  # 级联删除 turns
+    files = _collect_and_delete_session(db, session)
     db.commit()
+    _delete_audio_files(files)
 
 
 def set_paused(db: DbSession, session_id: str, user_id: str, paused: bool) -> dict[str, Any]:
@@ -592,58 +636,75 @@ def skip_practice(db: DbSession, session_id: str, user_id: str) -> dict[str, Any
     session = _require_session(db, session_id, user_id)
     if session.status != S_PRACTICE:
         raise AppError("INVALID_STATE", "当前状态不能跳过跟读", status_code=409)
-    session.status = S_WAITING
-    db.commit()
-    coach = get_coach_provider()
-    decision = coach.decide({"skipped_practice": True})
-    tts = get_tts_provider()
-    audio = tts.synthesize(decision.reply_text)
-    audio_url = _save_audio(audio, tts.ext)
-    db.add(
-        Turn(
-            id=uuid.uuid4().hex,
-            session_id=session_id,
-            seq=_next_seq(db, session_id),
-            input_type="coach",
-            reply_text=decision.reply_text,
-            reply_audio_url=audio_url,
-            action_type=decision.action_type,
+    guard = BudgetGuard(db)
+    guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
+    try:
+        session.status = S_WAITING
+        db.commit()
+        coach = get_coach_provider()
+        decision = coach.decide({"skipped_practice": True})
+        tts = get_tts_provider()
+        audio = tts.synthesize(decision.reply_text)
+        audio_url = _save_audio(audio, tts.ext)
+        db.add(
+            Turn(
+                id=uuid.uuid4().hex,
+                session_id=session_id,
+                seq=_next_seq(db, session_id),
+                input_type="coach",
+                reply_text=decision.reply_text,
+                reply_audio_url=audio_url,
+                action_type=decision.action_type,
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        raise
+    guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
     return {"session_id": session_id, "status": S_WAITING, "reply_text": decision.reply_text, "reply_audio_url": audio_url}
 
 
 def delete_all_sessions(db: DbSession, user_id: str) -> None:
     sessions = db.query(Session).filter(Session.user_id == user_id).all()
+    files: set[str] = set()
     for s in sessions:
-        memory_svc.delete_by_session(db, s.id)
-        db.query(Evaluation).filter(Evaluation.session_id == s.id).delete()
-    db.query(Session).filter(Session.user_id == user_id).delete()
+        files |= _collect_and_delete_session(db, s)
     db.commit()
+    _delete_audio_files(files)
+    cleanup_old_uploads()
 
 
 def request_hint(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
     if session.status == S_ENDED:
         raise AppError("SESSION_ENDED", "会话已结束", status_code=409)
-    coach = get_coach_provider()
-    decision = coach.decide({"help_requested": True})
-    tts = get_tts_provider()
-    audio = tts.synthesize(decision.reply_text)
-    audio_url = _save_audio(audio, tts.ext)
-    db.add(
-        Turn(
-            id=uuid.uuid4().hex,
-            session_id=session_id,
-            seq=_next_seq(db, session_id),
-            input_type="coach",
-            reply_text=decision.reply_text,
-            reply_audio_url=audio_url,
-            action_type=decision.action_type,
+    guard = BudgetGuard(db)
+    guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
+    try:
+        coach = get_coach_provider()
+        decision = coach.decide({"help_requested": True})
+        tts = get_tts_provider()
+        audio = tts.synthesize(decision.reply_text)
+        audio_url = _save_audio(audio, tts.ext)
+        db.add(
+            Turn(
+                id=uuid.uuid4().hex,
+                session_id=session_id,
+                seq=_next_seq(db, session_id),
+                input_type="coach",
+                reply_text=decision.reply_text,
+                reply_audio_url=audio_url,
+                action_type=decision.action_type,
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        raise
+    guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
     return {"session_id": session_id, "reply_text": decision.reply_text, "reply_audio_url": audio_url, "action_type": decision.action_type}
 
 

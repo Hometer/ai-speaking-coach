@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { disputeReview, endSession, getSession, requestHint, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
+import { disputeReview, endSession, getInviteCode, getSession, requestHint, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
 import type { TurnDone } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 
@@ -189,7 +189,7 @@ export default function PracticePage() {
       fd.append("sentence", practiceSentence);
       const res = await fetch(`/api/v1/sessions/${sessionId}/practice`, {
         method: "POST",
-        headers: { "X-Invite-Code": "test-a" },
+        headers: { "X-Invite-Code": getInviteCode() },
         body: fd,
       });
       const data = await res.json();

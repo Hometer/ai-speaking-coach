@@ -2,15 +2,33 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createSession } from "@/lib/api";
+import { clearInviteCode, createSession, hasInviteCode, setInviteCode } from "@/lib/api";
 
 export default function Home() {
   const router = useRouter();
+  const [invite, setInvite] = useState("");
+  const [loggedIn, setLoggedIn] = useState(hasInviteCode());
   const [level, setLevel] = useState("basic");
   const [difficulty, setDifficulty] = useState("standard");
   const [duration, setDuration] = useState(5);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+
+  function login() {
+    if (!invite.trim()) {
+      setErr("请输入邀请码");
+      return;
+    }
+    setErr("");
+    setInviteCode(invite);
+    setLoggedIn(true);
+  }
+
+  function logout() {
+    clearInviteCode();
+    setInvite("");
+    setLoggedIn(false);
+  }
 
   async function start() {
     setLoading(true);
@@ -34,64 +52,60 @@ export default function Home() {
           </p>
         </div>
 
-        <div
-          className="rounded-2xl border p-6 shadow-sm"
-          style={{ background: "var(--ai-bubble)", borderColor: "var(--line)" }}
-        >
-          <div className="text-sm font-medium mb-1">选择你的水平</div>
-          <select
-            value={level}
-            onChange={(e) => setLevel(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2 mb-4"
-            style={{ borderColor: "var(--line)" }}
-          >
-            <option value="beginner">入门</option>
-            <option value="basic">基础</option>
-            <option value="intermediate">中级</option>
-          </select>
+        {!loggedIn ? (
+          <div className="rounded-2xl border p-6 shadow-sm" style={{ background: "var(--ai-bubble)", borderColor: "var(--line)" }}>
+            <div className="text-sm font-medium mb-2">输入你的邀请码</div>
+            <input
+              value={invite}
+              onChange={(e) => setInvite(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") login(); }}
+              placeholder="例如 test-a"
+              className="w-full rounded-lg border px-3 py-2 mb-4"
+              style={{ borderColor: "var(--line)" }}
+            />
+            <button onClick={login} className="w-full rounded-xl px-4 py-3 font-semibold text-white" style={{ background: "var(--brand)" }}>
+              进入
+            </button>
+            {err ? <p className="mt-3 text-sm" style={{ color: "var(--danger, #dc2626)" }}>{err}</p> : null}
+          </div>
+        ) : (
+          <>
+            <div className="rounded-2xl border p-6 shadow-sm" style={{ background: "var(--ai-bubble)", borderColor: "var(--line)" }}>
+              <div className="text-sm font-medium mb-1">选择你的水平</div>
+              <select value={level} onChange={(e) => setLevel(e.target.value)} className="w-full rounded-lg border px-3 py-2 mb-4" style={{ borderColor: "var(--line)" }}>
+                <option value="beginner">入门</option>
+                <option value="basic">基础</option>
+                <option value="intermediate">中级</option>
+              </select>
 
-          <div className="text-sm font-medium mb-1">任务难度</div>
-          <select
-            value={difficulty}
-            onChange={(e) => setDifficulty(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2 mb-4"
-            style={{ borderColor: "var(--line)" }}
-          >
-            <option value="simple">简单</option>
-            <option value="standard">标准</option>
-          </select>
+              <div className="text-sm font-medium mb-1">任务难度</div>
+              <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} className="w-full rounded-lg border px-3 py-2 mb-4" style={{ borderColor: "var(--line)" }}>
+                <option value="simple">简单</option>
+                <option value="standard">标准</option>
+              </select>
 
-          <div className="text-sm font-medium mb-1">练习时长</div>
-          <select
-            value={duration}
-            onChange={(e) => setDuration(Number(e.target.value))}
-            className="w-full rounded-lg border px-3 py-2 mb-6"
-            style={{ borderColor: "var(--line)" }}
-          >
-            <option value={5}>5 分钟（默认）</option>
-            <option value={10}>10 分钟</option>
-            <option value={15}>15 分钟（上限）</option>
-          </select>
+              <div className="text-sm font-medium mb-1">练习时长</div>
+              <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className="w-full rounded-lg border px-3 py-2 mb-6" style={{ borderColor: "var(--line)" }}>
+                <option value={5}>5 分钟（默认）</option>
+                <option value={10}>10 分钟</option>
+                <option value={15}>15 分钟（上限）</option>
+              </select>
 
-          <button
-            onClick={start}
-            disabled={loading}
-            className="w-full rounded-xl px-4 py-3 font-semibold text-white disabled:opacity-50"
-            style={{ background: "var(--brand)" }}
-          >
-            {loading ? "正在开始…" : "开始练习"}
-          </button>
+              <button onClick={start} disabled={loading} className="w-full rounded-xl px-4 py-3 font-semibold text-white disabled:opacity-50" style={{ background: "var(--brand)" }}>
+                {loading ? "正在开始…" : "开始练习"}
+              </button>
+              {err ? <p className="mt-3 text-sm" style={{ color: "var(--danger, #dc2626)" }}>{err}</p> : null}
+            </div>
 
-          {err ? (
-            <p className="mt-3 text-sm" style={{ color: "var(--danger, #dc2626)" }}>
-              {err}
+            <div className="mt-4 text-center">
+              <button onClick={logout} className="text-sm" style={{ color: "var(--muted)" }}>退出 / 切换邀请码</button>
+            </div>
+
+            <p className="mt-4 text-center text-xs" style={{ color: "var(--muted)" }}>
+              首期仅开放「英文面试自我介绍」一个场景
             </p>
-          ) : null}
-        </div>
-
-        <p className="mt-6 text-center text-xs" style={{ color: "var(--muted)" }}>
-          首期仅开放「英文面试自我介绍」一个场景
-        </p>
+          </>
+        )}
       </div>
     </main>
   );

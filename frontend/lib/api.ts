@@ -1,10 +1,27 @@
 import type { ApiErrorBody, MemoryItem, SessionCreated, SessionDetail, SessionListItem, TurnDone } from "./types";
 
-// 内测演示邀请码（真实邀请码上线前由产品经理分发）
-const INVITE = "test-a";
+// 邀请码存本地，由用户输入，不再前端硬编码共享凭证
+const INVITE_KEY = "invite_code";
+
+export function getInviteCode(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(INVITE_KEY) || "";
+}
+
+export function setInviteCode(code: string): void {
+  localStorage.setItem(INVITE_KEY, code.trim());
+}
+
+export function clearInviteCode(): void {
+  localStorage.removeItem(INVITE_KEY);
+}
+
+export function hasInviteCode(): boolean {
+  return !!getInviteCode();
+}
 
 function authHeaders(): Record<string, string> {
-  return { "X-Invite-Code": INVITE };
+  return { "X-Invite-Code": getInviteCode() };
 }
 
 async function handle<T>(res: Response): Promise<T> {

@@ -120,6 +120,23 @@ def test_delete_session_cascades(client):
     assert r2.status_code == 404
 
 
+def test_delete_all_removes_all_records(client):
+    from app.models.database import SessionLocal
+    from app.models.entities import EventLog, Evaluation, Turn
+
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "I have three years of experience in software development.")
+    _end(client, s["session_id"])
+    assert client.delete("/api/v1/sessions", headers=USER).status_code == 200
+    db = SessionLocal()
+    try:
+        assert db.query(Turn).filter(Turn.session_id == s["session_id"]).count() == 0
+        assert db.query(Evaluation).filter(Evaluation.session_id == s["session_id"]).count() == 0
+        assert db.query(EventLog).filter(EventLog.session_id == s["session_id"]).count() == 0
+    finally:
+        db.close()
+
+
 def test_memory_default_off(client):
     s = _create_session(client)
     _send_text(client, s["session_id"], "just working")

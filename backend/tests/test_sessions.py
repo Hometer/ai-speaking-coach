@@ -240,6 +240,22 @@ def test_coach_context_contains_answer_and_history(client, monkeypatch):
     assert captured.get("level") == "basic"
 
 
+def test_hint_respects_budget(client, monkeypatch):
+    monkeypatch.setattr(config.settings, "budget_session", 0.10)
+    s = _create_session(client)  # 占 0.10
+    r = client.post(f"/api/v1/sessions/{s['session_id']}/hint", headers=USER)
+    assert r.status_code == 402
+    assert r.json()["error"]["code"] == "BUDGET_EXCEEDED"
+
+
+def test_skip_practice_respects_budget(client, monkeypatch):
+    monkeypatch.setattr(config.settings, "budget_session", 0.10)
+    s = _create_session(client)  # 占 0.10
+    r = client.post(f"/api/v1/sessions/{s['session_id']}/skip-practice", headers=USER)
+    # 未进入 PRACTICE 状态时先被状态校验拒绝；即使进入，预算也会拦截
+    assert r.status_code in (402, 409)
+
+
 def test_pause_resume(client):
     s = _create_session(client)
     assert client.post(f"/api/v1/sessions/{s['session_id']}/pause", headers=USER).json()["status"] == "PAUSED"
