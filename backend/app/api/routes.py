@@ -13,6 +13,7 @@ from app.schemas.session import (
     EndRequest,
     EndResponse,
     PracticeResponse,
+    ReviseTurnRequest,
     SessionCreateRequest,
     SessionCreatedResponse,
     SessionDetailResponse,
@@ -61,7 +62,7 @@ async def create_session(
 ):
     db = SessionLocal()
     try:
-        return session_svc.create_session(db, user_id, req.level, req.difficulty)
+        return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes)
     finally:
         db.close()
 
@@ -172,6 +173,68 @@ async def delete_session(
     try:
         session_svc.delete_session(db, session_id, user_id)
         return {"deleted": True}
+    finally:
+        db.close()
+
+
+@router.delete("/sessions")
+async def delete_all_sessions(
+    user_id: str = Depends(get_user_id),
+):
+    db = SessionLocal()
+    try:
+        session_svc.delete_all_sessions(db, user_id)
+        return {"deleted": True}
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/pause")
+async def pause_session(
+    session_id: str,
+    user_id: str = Depends(get_user_id),
+):
+    db = SessionLocal()
+    try:
+        return session_svc.set_paused(db, session_id, user_id, True)
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/resume")
+async def resume_session(
+    session_id: str,
+    user_id: str = Depends(get_user_id),
+):
+    db = SessionLocal()
+    try:
+        return session_svc.set_paused(db, session_id, user_id, False)
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/skip-practice")
+async def skip_practice(
+    session_id: str,
+    user_id: str = Depends(get_user_id),
+):
+    db = SessionLocal()
+    try:
+        return session_svc.skip_practice(db, session_id, user_id)
+    finally:
+        db.close()
+
+
+@router.patch("/sessions/{session_id}/turns/{turn_id}")
+async def revise_turn(
+    session_id: str,
+    turn_id: str,
+    req: ReviseTurnRequest,
+    user_id: str = Depends(get_user_id),
+):
+    db = SessionLocal()
+    try:
+        return session_svc.revise_turn(db, session_id, user_id, turn_id, req.revised_text)
     finally:
         db.close()
 

@@ -31,6 +31,7 @@ class Session(Base):
     end_reason: Mapped[str] = mapped_column(String(32), nullable=True)
     review: Mapped[str] = mapped_column(Text, default="")
     subgoals: Mapped[str] = mapped_column(Text, default="{}")
+    duration_minutes: Mapped[float] = mapped_column(Float, default=5.0)
     rechecked: Mapped[bool] = mapped_column(default=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -56,6 +57,8 @@ class Turn(Base):
     practice_sentence: Mapped[str] = mapped_column(Text, default="")
     practice_eval: Mapped[str] = mapped_column(Text, default="")
     eval_result: Mapped[str] = mapped_column(String(32), default="")
+    revised_text: Mapped[str] = mapped_column(Text, default="")
+    revision_version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     session: Mapped["Session"] = relationship(back_populates="turns")

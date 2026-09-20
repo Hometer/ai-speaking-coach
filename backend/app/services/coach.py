@@ -30,6 +30,11 @@ class MockCoachProvider(CoachProvider):
         )
 
     def decide(self, context: dict[str, Any]) -> CoachDecision:
+        if context.get("skipped_practice"):
+            return CoachDecision(
+                action_type="follow_up",
+                reply_text="OK, let's continue with your experience.",
+            )
         practice = context.get("practice") or {}
         if practice:
             if not practice.get("valid"):

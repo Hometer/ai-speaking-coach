@@ -148,7 +148,7 @@ def finalize_session(db: DbSession, session: Session) -> None:
         memory_svc.generate_candidates(db, session.user_id, session.id, review)
 
 
-def create_session(db: DbSession, user_id: str, level: str, difficulty: str) -> dict[str, Any]:
+def create_session(db: DbSession, user_id: str, level: str, difficulty: str, duration_minutes: float = 5.0) -> dict[str, Any]:
     _get_or_create_user(db, user_id, level)
     session_id = uuid.uuid4().hex
     guard = BudgetGuard(db)
@@ -161,6 +161,7 @@ def create_session(db: DbSession, user_id: str, level: str, difficulty: str) -> 
         goal_text=GOAL_TEXT,
         difficulty=difficulty,
         subgoals="{}",
+        duration_minutes=duration_minutes,
         rechecked=False,
     )
     db.add(session)
@@ -489,6 +490,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
                 "transcript": t.transcript,
                 "reply_text": t.reply_text,
                 "reply_audio_url": t.reply_audio_url,
+                "practice_sentence": t.practice_sentence,
                 "action_type": t.action_type,
                 "hint_used": t.hint_used,
                 "eval_result": t.eval_result,
@@ -537,6 +539,72 @@ def delete_session(db: DbSession, session_id: str, user_id: str) -> None:
     db.query(Evaluation).filter(Evaluation.session_id == session_id).delete()
     db.delete(session)  # 级联删除 turns
     db.commit()
+
+
+def set_paused(db: DbSession, session_id: str, user_id: str, paused: bool) -> dict[str, Any]:
+    session = _require_session(db, session_id, user_id)
+    if paused:
+        if session.status == S_ENDED:
+            raise AppError("SESSION_ENDED", "会话已结束", status_code=409)
+        if session.status != S_PAUSED:
+            session.status = S_PAUSED
+    else:
+        if session.status == S_PAUSED:
+            session.status = S_WAITING
+    db.commit()
+    return {"session_id": session_id, "status": session.status}
+
+
+def skip_practice(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]:
+    session = _require_session(db, session_id, user_id)
+    if session.status != S_PRACTICE:
+        raise AppError("INVALID_STATE", "当前状态不能跳过跟读", status_code=409)
+    session.status = S_WAITING
+    db.commit()
+    coach = get_coach_provider()
+    decision = coach.decide({"skipped_practice": True})
+    tts = get_tts_provider()
+    audio = tts.synthesize(decision.reply_text)
+    audio_url = _save_audio(audio, tts.ext)
+    db.add(
+        Turn(
+            id=uuid.uuid4().hex,
+            session_id=session_id,
+            seq=_next_seq(db, session_id),
+            input_type="coach",
+            reply_text=decision.reply_text,
+            reply_audio_url=audio_url,
+            action_type=decision.action_type,
+        )
+    )
+    db.commit()
+    return {"session_id": session_id, "status": S_WAITING, "reply_text": decision.reply_text, "reply_audio_url": audio_url}
+
+
+def delete_all_sessions(db: DbSession, user_id: str) -> None:
+    sessions = db.query(Session).filter(Session.user_id == user_id).all()
+    for s in sessions:
+        memory_svc.delete_by_session(db, s.id)
+        db.query(Evaluation).filter(Evaluation.session_id == s.id).delete()
+    db.query(Session).filter(Session.user_id == user_id).delete()
+    db.commit()
+
+
+def revise_turn(db: DbSession, session_id: str, user_id: str, turn_id: str, revised_text: str) -> dict[str, Any]:
+    session = _require_session(db, session_id, user_id)
+    turn = db.get(Turn, turn_id)
+    if turn is None or turn.session_id != session_id:
+        raise AppError("TURN_NOT_FOUND", "回合不存在", status_code=404)
+    if turn.input_type not in ("voice", "text"):
+        raise AppError("INVALID_STATE", "该回合不能修订", status_code=409)
+    if not revised_text or not revised_text.strip():
+        raise AppError("INVALID_INPUT", "修订文本不能为空", status_code=422)
+    turn.revised_text = revised_text.strip()
+    turn.revision_version = (turn.revision_version or 0) + 1
+    if turn.eval_result:
+        turn.eval_result = "revised"  # 旧评价失效，待重算
+    db.commit()
+    return {"turn_id": turn_id, "revised_text": turn.revised_text, "revision_version": turn.revision_version}
 
 
 def resolve_audio_for_user(db: DbSession, filename: str, user_id: str) -> Path:

@@ -31,6 +31,7 @@ export interface TurnItem {
   transcript: string;
   reply_text: string;
   reply_audio_url: string;
+  practice_sentence: string;
   action_type: string;
   hint_used: boolean;
   eval_result: string;

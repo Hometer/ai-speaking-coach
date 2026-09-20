@@ -10,6 +10,7 @@ Difficulty = Literal["simple", "standard"]
 class SessionCreateRequest(BaseModel):
     level: Level = "basic"
     difficulty: Difficulty = "standard"
+    duration_minutes: float = Field(default=5.0, ge=3.0, le=15.0)
 
 
 class SessionCreatedResponse(BaseModel):
@@ -28,6 +29,7 @@ class TurnItem(BaseModel):
     transcript: str = ""
     reply_text: str = ""
     reply_audio_url: str = ""
+    practice_sentence: str = ""
     action_type: str = ""
     hint_used: bool = False
     eval_result: str = ""
@@ -78,3 +80,7 @@ class PracticeResponse(BaseModel):
     eval: dict = Field(default_factory=dict)
     recheck_reply_text: str
     recheck_audio_url: str
+
+
+class ReviseTurnRequest(BaseModel):
+    revised_text: str = Field(..., min_length=1)

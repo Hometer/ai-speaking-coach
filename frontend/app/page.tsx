@@ -8,6 +8,7 @@ export default function Home() {
   const router = useRouter();
   const [level, setLevel] = useState("basic");
   const [difficulty, setDifficulty] = useState("standard");
+  const [duration, setDuration] = useState(5);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
@@ -15,7 +16,7 @@ export default function Home() {
     setLoading(true);
     setErr("");
     try {
-      const s = await createSession(level, difficulty);
+      const s = await createSession(level, difficulty, duration);
       router.push(`/practice/${s.session_id}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -49,15 +50,27 @@ export default function Home() {
             <option value="intermediate">中级</option>
           </select>
 
-          <div className="text-sm font-medium mb-1">练习时长</div>
+          <div className="text-sm font-medium mb-1">任务难度</div>
           <select
             value={difficulty}
             onChange={(e) => setDifficulty(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2 mb-4"
+            style={{ borderColor: "var(--line)" }}
+          >
+            <option value="simple">简单</option>
+            <option value="standard">标准</option>
+          </select>
+
+          <div className="text-sm font-medium mb-1">练习时长</div>
+          <select
+            value={duration}
+            onChange={(e) => setDuration(Number(e.target.value))}
             className="w-full rounded-lg border px-3 py-2 mb-6"
             style={{ borderColor: "var(--line)" }}
           >
-            <option value="simple">简单（约 3 分钟）</option>
-            <option value="standard">标准（约 5 分钟）</option>
+            <option value={5}>5 分钟（默认）</option>
+            <option value={10}>10 分钟</option>
+            <option value={15}>15 分钟（上限）</option>
           </select>
 
           <button

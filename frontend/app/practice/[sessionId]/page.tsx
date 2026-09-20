@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { endSession, getSession, submitTurn } from "@/lib/api";
+import { endSession, getSession, skipPractice, submitTurn } from "@/lib/api";
 import type { TurnDone } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 
@@ -188,7 +188,7 @@ export default function PracticePage() {
       fd.append("sentence", practiceSentence);
       const res = await fetch(`/api/v1/sessions/${sessionId}/practice`, {
         method: "POST",
-        headers: { "X-User-Id": "demo-user" },
+        headers: { "X-Invite-Code": "test-a" },
         body: fd,
       });
       const data = await res.json();
@@ -196,10 +196,27 @@ export default function PracticePage() {
         setErr(data?.error?.message ?? `HTTP ${res.status}`);
         return;
       }
-      const score = typeof data.eval?.score === "number" ? data.eval.score : "-";
-      setPracticeResult(`评测得分 ${score}（当前为示例）`);
+      const score = typeof data.eval?.score === "number" ? data.eval.score : null;
+      const isMock = !!data.eval?.mock;
+      setPracticeResult(score === null ? "本次无法评估" : `评测得分 ${score}${isMock ? "（示例）" : "（实测）"}`);
       addMsg("coach", data.recheck_reply_text, data.recheck_audio_url);
       setStatus(data.status);
+      setPracticeSentence("");
+      setPracticeDemo("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSkipPractice() {
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await skipPractice(sessionId);
+      addMsg("coach", r.reply_text, r.reply_audio_url);
+      setStatus(r.status);
       setPracticeSentence("");
       setPracticeDemo("");
     } catch (e) {
@@ -292,6 +309,7 @@ export default function PracticePage() {
               >
                 {recording && recordMode === "practice" ? "停止" : "录音跟读"}
               </button>
+              <button onClick={handleSkipPractice} disabled={busy} className="text-xs px-2 py-1 rounded-lg border" style={{ borderColor: "var(--line)", color: "var(--muted)" }}>跳过</button>
               {recording && recordMode === "practice" ? (
                 <>
                   <span className="text-xs" style={{ color: elapsed >= 50 ? "var(--danger, #dc2626)" : "var(--muted)" }}>{timerText()}</span>
@@ -302,6 +320,12 @@ export default function PracticePage() {
                 {practiceResult}
               </span>
             </div>
+          </div>
+        ) : null}
+
+        {!practiceSentence && practiceResult ? (
+          <div className="text-xs mb-3" style={{ color: "var(--muted)" }}>
+            上次跟读：{practiceResult}
           </div>
         ) : null}
 

@@ -238,3 +238,39 @@ def test_coach_context_contains_answer_and_history(client, monkeypatch):
     assert captured.get("input_type") == "text"
     assert captured.get("subgoal") == "intro"
     assert captured.get("level") == "basic"
+
+
+def test_pause_resume(client):
+    s = _create_session(client)
+    assert client.post(f"/api/v1/sessions/{s['session_id']}/pause", headers=USER).json()["status"] == "PAUSED"
+    # 暂停中不能提交
+    events = _parse_sse(client.post(f"/api/v1/sessions/{s['session_id']}/turns/text", json={"text": "hello"}, headers=USER).text)
+    assert events[-1][1]["error"]["code"] == "SESSION_PAUSED"
+    # 恢复后可提交
+    client.post(f"/api/v1/sessions/{s['session_id']}/resume", headers=USER)
+    events2 = _parse_sse(client.post(f"/api/v1/sessions/{s['session_id']}/turns/text", json={"text": "I have three years of experience."}, headers=USER).text)
+    assert events2[-1][0] == "done"
+
+
+def test_delete_all_sessions(client):
+    _create_session(client)
+    _create_session(client)
+    assert client.delete("/api/v1/sessions", headers=USER).status_code == 200
+    assert client.get("/api/v1/sessions", headers=USER).json() == []
+
+
+def test_revise_turn_invalidates_eval(client):
+    s = _create_session(client)
+    turn_id = _done(_send_text(client, s["session_id"], "I have three years of experience in software development."))["turn_id"]
+    r = client.patch(
+        f"/api/v1/sessions/{s['session_id']}/turns/{turn_id}",
+        json={"revised_text": "I have two years of experience."},
+        headers=USER,
+    )
+    assert r.status_code == 200
+    assert r.json()["revision_version"] == 1
+    detail = client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()
+    for t in detail["turns"]:
+        if t["turn_id"] == turn_id:
+            assert t["eval_result"] == "revised"
+            break
