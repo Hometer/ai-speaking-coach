@@ -44,6 +44,8 @@ export interface SessionDetail {
   goal_text: string;
   difficulty: string;
   end_reason: string | null;
+  practice_type: string;
+  source_invalid: boolean;
   review: Record<string, unknown> | null;
   turns: TurnItem[];
 }

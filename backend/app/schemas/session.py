@@ -42,6 +42,8 @@ class SessionDetailResponse(BaseModel):
     goal_text: str
     difficulty: str
     end_reason: str | None = None
+    practice_type: str = "interview"
+    source_invalid: bool = False
     review: dict | None = None
     turns: list[TurnItem] = []
 

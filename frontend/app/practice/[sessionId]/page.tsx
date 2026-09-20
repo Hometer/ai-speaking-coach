@@ -41,6 +41,7 @@ export default function PracticePage() {
   const [recordMode, setRecordMode] = useState<"answer" | "practice" | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
+  const [sourceInvalid, setSourceInvalid] = useState(false);
 
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -54,6 +55,7 @@ export default function PracticePage() {
       .then((d) => {
         setGoal(d.goal_text);
         setStatus(d.status);
+        setSourceInvalid(!!d.source_invalid);
         const msgs: Msg[] = [];
         for (const t of d.turns) {
           if (t.input_type === "coach") {
@@ -339,6 +341,12 @@ export default function PracticePage() {
           </div>
           <div className="text-sm font-medium">{goal}</div>
         </div>
+
+        {sourceInvalid ? (
+          <div className="text-xs mb-3 px-3 py-2 rounded-lg" style={{ background: "#fdecea", color: "var(--danger, #dc2626)" }}>
+            该练习的来源建议已失效，请以新反馈为准。
+          </div>
+        ) : null}
 
         <div className="flex-1 space-y-3 mb-4">
           {messages.map((m, i) => (

@@ -142,6 +142,21 @@ def test_create_sentence_practice(client):
     assert r2.json()["session_id"] == data["session_id"]
 
 
+def test_source_dispute_invalidates_sentence_practice(client):
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "just working")
+    review = _end(client, s["session_id"])["review"]
+    imp = review["improvements"][0]
+    sp = client.post(
+        "/api/v1/sessions/practice-sentence",
+        json={"source_session_id": s["session_id"], "turn_id": imp["turn_id"]},
+        headers=USER,
+    ).json()
+    client.post(f"/api/v1/sessions/{s['session_id']}/review/dispute", params={"turn_id": imp["turn_id"]}, headers=USER)
+    detail = client.get(f"/api/v1/sessions/{sp['session_id']}", headers=USER).json()
+    assert detail["source_invalid"] is True
+
+
 def test_delete_all_removes_all_records(client):
     from app.models.database import SessionLocal
     from app.models.entities import EventLog, Evaluation, Turn

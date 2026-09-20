@@ -37,6 +37,7 @@ class Session(Base):
     source_turn_id: Mapped[str] = mapped_column(String(64), default="")
     practice_sentence: Mapped[str] = mapped_column(Text, default="")
     practice_goal: Mapped[str] = mapped_column(Text, default="")
+    source_invalid: Mapped[bool] = mapped_column(default=False)
     rechecked: Mapped[bool] = mapped_column(default=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)

@@ -652,6 +652,8 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
         "goal_text": session.goal_text,
         "difficulty": session.difficulty,
         "end_reason": session.end_reason,
+        "practice_type": session.practice_type,
+        "source_invalid": session.source_invalid,
         "review": _review_of(session),
         "turns": [
             {
@@ -715,6 +717,14 @@ def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
     for t in db.query(Turn).filter(Turn.session_id == session.id).all():
         if t.reply_audio_url:
             audio_filenames.add(os.path.basename(t.reply_audio_url))
+    # 删除传播：以本会话为来源的单句复练标失效并清空复制文本
+    for sp in (
+        db.query(Session)
+        .filter(Session.practice_type == "sentence_practice", Session.source_session_id == session.id)
+        .all()
+    ):
+        sp.source_invalid = True
+        sp.practice_sentence = ""
     db.delete(session)  # ORM 级联删除 turns
     return audio_filenames
 
@@ -888,6 +898,13 @@ def dispute_review_improvement(db: DbSession, session_id: str, user_id: str, tur
     if not found:
         raise AppError("NOT_FOUND", "改进建议不存在", status_code=404)
     session.review = json.dumps(review, ensure_ascii=False)
+    # 争议传播：以该建议为来源的单句复练标来源失效
+    for sp in (
+        db.query(Session)
+        .filter(Session.practice_type == "sentence_practice", Session.source_turn_id == turn_id)
+        .all()
+    ):
+        sp.source_invalid = True
     db.commit()
     return {"disputed": True}
 
