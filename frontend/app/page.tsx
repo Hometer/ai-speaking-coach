@@ -1,18 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { clearInviteCode, createSession, hasInviteCode, setInviteCode } from "@/lib/api";
 
 export default function Home() {
   const router = useRouter();
   const [invite, setInvite] = useState("");
-  const [loggedIn, setLoggedIn] = useState(hasInviteCode());
+  // null = 尚未完成挂载读取；服务端与浏览器首次渲染都保持一致，避免 hydration mismatch
+  const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [level, setLevel] = useState("basic");
   const [difficulty, setDifficulty] = useState("standard");
   const [duration, setDuration] = useState(5);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    // 延迟到微任务读取 localStorage，避免在 effect 内同步 setState
+    Promise.resolve().then(() => {
+      if (mounted) setLoggedIn(hasInviteCode());
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   function login() {
     if (!invite.trim()) {
@@ -52,7 +64,9 @@ export default function Home() {
           </p>
         </div>
 
-        {!loggedIn ? (
+        {loggedIn === null ? (
+          <p className="text-sm text-center" style={{ color: "var(--muted)" }}>加载中…</p>
+        ) : !loggedIn ? (
           <div className="rounded-2xl border p-6 shadow-sm" style={{ background: "var(--ai-bubble)", borderColor: "var(--line)" }}>
             <div className="text-sm font-medium mb-2">输入你的邀请码</div>
             <input
