@@ -46,6 +46,15 @@ export async function createSession(
   return handle<SessionCreated>(res);
 }
 
+export async function createPracticeSentence(sourceSessionId: string, turnId: string): Promise<SessionCreated> {
+  const res = await fetch("/api/v1/sessions/practice-sentence", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ source_session_id: sourceSessionId, turn_id: turnId }),
+  });
+  return handle<SessionCreated>(res);
+}
+
 export async function getSession(sessionId: string): Promise<SessionDetail> {
   const res = await fetch(`/api/v1/sessions/${sessionId}`, { headers: authHeaders() });
   return handle<SessionDetail>(res);

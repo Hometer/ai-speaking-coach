@@ -90,3 +90,8 @@ class ReviseTurnRequest(BaseModel):
 class HelpRequest(BaseModel):
     help_type: str = Field(..., description="repeat/explain/organize/translate")
     help_level: int = Field(default=0, ge=0, le=3)
+
+
+class PracticeSentenceRequest(BaseModel):
+    source_session_id: str
+    turn_id: str

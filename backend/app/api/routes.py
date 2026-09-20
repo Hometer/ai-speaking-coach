@@ -14,6 +14,7 @@ from app.schemas.session import (
     EndResponse,
     HelpRequest,
     PracticeResponse,
+    PracticeSentenceRequest,
     ReviseTurnRequest,
     SessionCreateRequest,
     SessionCreatedResponse,
@@ -55,6 +56,15 @@ def create_session(req: SessionCreateRequest, user_id: str = Depends(get_user_id
     db = SessionLocal()
     try:
         return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes)
+    finally:
+        db.close()
+
+
+@router.post("/sessions/practice-sentence", response_model=SessionCreatedResponse)
+def create_practice_sentence(req: PracticeSentenceRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return session_svc.create_sentence_practice(db, user_id, req.source_session_id, req.turn_id)
     finally:
         db.close()
 

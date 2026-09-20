@@ -236,6 +236,94 @@ def create_session(db: DbSession, user_id: str, level: str, difficulty: str, dur
     }
 
 
+def create_sentence_practice(
+    db: DbSession, user_id: str, source_session_id: str, source_turn_id: str
+) -> dict[str, Any]:
+    source = db.get(Session, source_session_id)
+    if source is None or source.user_id != user_id:
+        raise AppError("FORBIDDEN", "无权使用该来源", status_code=403)
+    if source.status != S_ENDED:
+        raise AppError("INVALID_STATE", "源会话尚未结束", status_code=409)
+    review = json.loads(source.review) if source.review else {}
+    imp = next(
+        (i for i in review.get("improvements", []) if i.get("turn_id") == source_turn_id),
+        None,
+    )
+    if imp is None:
+        raise AppError("NOT_FOUND", "改进建议不存在或已失效", status_code=404)
+    if imp.get("disputed") or review.get("stale"):
+        raise AppError("INVALID_STATE", "该建议已争议或失效，不能练这一句", status_code=409)
+    sentence = imp.get("practice_sentence") or ""
+    goal = imp.get("explanation_cn") or imp.get("suggestion") or ""
+    if not sentence:
+        raise AppError("INVALID_STATE", "该建议没有可练的句子", status_code=409)
+
+    # 幂等：同一来源 turn_id 只创建一个有效记录
+    existing = (
+        db.query(Session)
+        .filter(
+            Session.user_id == user_id,
+            Session.practice_type == "sentence_practice",
+            Session.source_turn_id == source_turn_id,
+        )
+        .first()
+    )
+    if existing:
+        return {
+            "session_id": existing.id,
+            "status": existing.status,
+            "goal_text": existing.goal_text,
+            "reply_text": existing.practice_sentence,
+            "reply_audio_url": "",
+        }
+
+    session_id = uuid.uuid4().hex
+    guard = BudgetGuard(db)
+    guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
+    session = Session(
+        id=session_id,
+        user_id=user_id,
+        status=S_PREPARING,
+        goal_text="Practice this sentence and see evidence-based feedback.",
+        difficulty="standard",
+        subgoals="{}",
+        duration_minutes=5.0,
+        practice_type="sentence_practice",
+        source_session_id=source_session_id,
+        source_turn_id=source_turn_id,
+        practice_sentence=sentence,
+        practice_goal=goal,
+        rechecked=False,
+    )
+    db.add(session)
+    tts = get_tts_provider()
+    audio = tts.synthesize(sentence)
+    audio_url = _save_audio(audio, tts.ext)
+    opening_text = f"Let's practice this sentence: {sentence}"
+    db.add(
+        Turn(
+            id=uuid.uuid4().hex,
+            session_id=session_id,
+            seq=0,
+            input_type="coach",
+            reply_text=opening_text,
+            reply_audio_url=audio_url,
+            action_type="suggest_practice",
+            practice_sentence=sentence,
+        )
+    )
+    session.status = S_PRACTICE
+    db.commit()
+    guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
+    return {
+        "session_id": session_id,
+        "status": S_PRACTICE,
+        "goal_text": session.goal_text,
+        "reply_text": opening_text,
+        "reply_audio_url": audio_url,
+    }
+
+
 def submit_turn(
     db: DbSession,
     session_id: str,

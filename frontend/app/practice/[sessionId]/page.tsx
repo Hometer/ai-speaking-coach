@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { disputeReview, endSession, getInviteCode, getSession, requestHelp, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
+import { createPracticeSentence, disputeReview, endSession, getInviteCode, getSession, requestHelp, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
 import type { TurnDone } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 
@@ -280,6 +280,17 @@ export default function PracticePage() {
     }
   }
 
+  async function handlePracticeSentence(turnId: string) {
+    if (!window.confirm("练这一句会创建一次单句练习（不开启长期记忆），继续？")) return;
+    setErr("");
+    try {
+      const s = await createPracticeSentence(sessionId, turnId);
+      router.push(`/practice/${s.session_id}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   async function end() {
     setBusy(true);
     setErr("");
@@ -399,7 +410,10 @@ export default function PracticePage() {
                     {imp.disputed ? (
                       <div className="text-xs mt-1" style={{ color: "var(--danger, #dc2626)" }}>已标记有误，待复核</div>
                     ) : (
-                      <button onClick={() => handleDispute(String(imp.turn_id ?? ""))} className="text-xs mt-1" style={{ color: "var(--muted)" }}>有误</button>
+                      <div className="flex gap-3 mt-1">
+                        <button onClick={() => handleDispute(String(imp.turn_id ?? ""))} className="text-xs" style={{ color: "var(--muted)" }}>有误</button>
+                        <button onClick={() => handlePracticeSentence(String(imp.turn_id ?? ""))} className="text-xs" style={{ color: "var(--brand)" }}>练这一句</button>
+                      </div>
                     )}
                   </div>
                 ))}

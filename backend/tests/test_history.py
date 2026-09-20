@@ -120,6 +120,28 @@ def test_delete_session_cascades(client):
     assert r2.status_code == 404
 
 
+def test_create_sentence_practice(client):
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "just working")
+    review = _end(client, s["session_id"])["review"]
+    imp = review["improvements"][0]
+    r = client.post(
+        "/api/v1/sessions/practice-sentence",
+        json={"source_session_id": s["session_id"], "turn_id": imp["turn_id"]},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["status"] == "PRACTICE"
+    # 幂等：重复创建返回同一会话
+    r2 = client.post(
+        "/api/v1/sessions/practice-sentence",
+        json={"source_session_id": s["session_id"], "turn_id": imp["turn_id"]},
+        headers=USER,
+    )
+    assert r2.json()["session_id"] == data["session_id"]
+
+
 def test_delete_all_removes_all_records(client):
     from app.models.database import SessionLocal
     from app.models.entities import EventLog, Evaluation, Turn
