@@ -6,6 +6,10 @@ class MemoryToggleRequest(BaseModel):
     enabled: bool
 
 
+class MemorySettingsResponse(BaseModel):
+    enabled: bool
+
+
 class MemoryUpdateRequest(BaseModel):
     text: str = Field(..., min_length=1)
 

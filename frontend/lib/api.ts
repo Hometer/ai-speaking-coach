@@ -139,6 +139,10 @@ export async function getMemories(): Promise<MemoryItem[]> {
   return handle<MemoryItem[]>(res);
 }
 
+export async function getMemorySettings(): Promise<{ enabled: boolean }> {
+  return handle(await fetch("/api/v1/users/me/memory", { headers: authHeaders() }));
+}
+
 export async function toggleMemory(enabled: boolean): Promise<{ enabled: boolean }> {
   const res = await fetch("/api/v1/users/me/memory", {
     method: "POST",

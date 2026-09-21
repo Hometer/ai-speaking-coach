@@ -174,6 +174,18 @@ def test_delete_all_removes_all_records(client):
         db.close()
 
 
+def test_memory_settings_persist_and_are_user_scoped(client):
+    other = {"X-Invite-Code": "test-b"}
+    assert client.get("/api/v1/users/me/memory").status_code == 401
+    assert client.get("/api/v1/users/me/memory", headers=USER).json() == {"enabled": False}
+    client.post("/api/v1/users/me/memory", json={"enabled": True}, headers=USER)
+    # A fresh request/database session reads the saved setting, not a UI default.
+    assert client.get("/api/v1/users/me/memory", headers=USER).json() == {"enabled": True}
+    assert client.get("/api/v1/users/me/memory", headers=other).json() == {"enabled": False}
+    client.post("/api/v1/users/me/memory", json={"enabled": False}, headers=USER)
+    assert client.get("/api/v1/users/me/memory", headers=USER).json() == {"enabled": False}
+
+
 def test_memory_default_off(client):
     s = _create_session(client)
     _send_text(client, s["session_id"], "just working")

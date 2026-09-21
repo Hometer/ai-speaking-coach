@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from app.core.auth import get_user_id
 from app.core.errors import AppError, error_body
 from app.models.database import SessionLocal
-from app.schemas.memory import MemoryItem, MemoryToggleRequest, MemoryUpdateRequest
+from app.schemas.memory import MemoryItem, MemorySettingsResponse, MemoryToggleRequest, MemoryUpdateRequest
 from app.schemas.session import (
     EndRequest,
     EndResponse,
@@ -227,7 +227,17 @@ def dispute_review(session_id: str, turn_id: str, user_id: str = Depends(get_use
         db.close()
 
 
-@router.post("/users/me/memory")
+@router.get("/users/me/memory", response_model=MemorySettingsResponse)
+def memory_settings(user_id: str = Depends(get_user_id)):
+    """读取已持久化的个人设置，刷新页面不改变用户选择。"""
+    db = SessionLocal()
+    try:
+        return {"enabled": memory_svc.is_memory_enabled(db, user_id)}
+    finally:
+        db.close()
+
+
+@router.post("/users/me/memory", response_model=MemorySettingsResponse)
 def toggle_memory(req: MemoryToggleRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:

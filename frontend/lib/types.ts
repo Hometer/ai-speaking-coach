@@ -65,6 +65,8 @@ export interface MemoryItem {
   id: number;
   text: string;
   source_session_id: string;
+  status: string;
+  evidence_count: number;
 }
 
 export interface ApiErrorBody {

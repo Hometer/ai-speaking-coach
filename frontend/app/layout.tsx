@@ -11,8 +11,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
+        <a href="#main-content" className="skip-link">跳到主要内容</a>
         <NavBar />
-        <div className="flex-1">{children}</div>
+        <div className="app-content" id="main-content" tabIndex={-1}>{children}</div>
       </body>
     </html>
   );

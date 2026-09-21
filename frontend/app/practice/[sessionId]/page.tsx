@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { createPracticeSentence, disputeReview, endSession, getInviteCode, getSession, requestHelp, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
+import { createPracticeSentence, disputeReview, endSession, getInviteCode, getSession, pauseSession, resumeSession, requestHelp, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
 import type { TurnDone } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
+import Icon from "@/components/Icon";
+import styles from "./page.module.css";
 
 interface Msg {
   who: "user" | "coach";
@@ -42,6 +44,7 @@ export default function PracticePage() {
   const [elapsed, setElapsed] = useState(0);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
   const [sourceInvalid, setSourceInvalid] = useState(false);
+  const [sessionLoading, setSessionLoading] = useState(true);
 
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -51,31 +54,51 @@ export default function PracticePage() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    let active = true;
     getSession(sessionId)
       .then((d) => {
+        if (!active) return;
         setGoal(d.goal_text);
         setStatus(d.status);
+        setReview(d.review);
         setSourceInvalid(!!d.source_invalid);
         const msgs: Msg[] = [];
         for (const t of d.turns) {
           if (t.input_type === "coach") {
             msgs.push({ who: "coach", text: t.reply_text, audioUrl: t.reply_audio_url });
-            if (t.practice_sentence) {
+            if (t.practice_sentence && d.status === "PRACTICE") {
               setPracticeSentence(t.practice_sentence);
               setPracticeDemo(t.reply_audio_url);
             }
+          } else if (t.input_type === "practice") {
+            msgs.push({ who: "user", text: `（跟读：${t.practice_sentence || "短句练习"}）` });
+            if (t.reply_text) msgs.push({ who: "coach", text: t.reply_text, audioUrl: t.reply_audio_url });
           } else {
-            msgs.push({ who: "user", text: t.revised_text || t.user_text || t.transcript || "（语音回答）" });
+            msgs.push({ who: "user", text: t.revised_text || t.user_text || t.transcript || "（语音回答）", turnId: t.turn_id });
+            if (t.reply_text) msgs.push({ who: "coach", text: t.reply_text, audioUrl: t.reply_audio_url });
+            if (t.practice_sentence && d.status === "PRACTICE") { setPracticeSentence(t.practice_sentence); setPracticeDemo(t.reply_audio_url); }
           }
         }
         setMessages(msgs);
       })
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+      .catch((e) => { if (active) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (active) setSessionLoading(false); });
+    return () => { active = false; };
   }, [sessionId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length > 1) bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages]);
+
+  useEffect(() => () => {
+    cancelRef.current = true;
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (recRef.current) {
+      recRef.current.onstop = null;
+      if (recRef.current.state === "recording") recRef.current.stop();
+    }
+    streamRef.current?.getTracks().forEach(track => track.stop());
+  }, []);
 
   function addMsg(who: Msg["who"], text: string, audioUrl?: string, turnId?: string) {
     setMessages((m) => [...m, { who, text, audioUrl, turnId }]);
@@ -86,6 +109,7 @@ export default function PracticePage() {
     setErr("");
     try {
       const done: TurnDone = await submitTurn(sessionId, input);
+      if (typedText) setText("");
       if (typedText) addMsg("user", typedText, undefined, done.turn_id);
       else if (done.transcript) addMsg("user", done.transcript, undefined, done.turn_id);
       else addMsg("user", "（语音回答）", undefined, done.turn_id);
@@ -100,7 +124,8 @@ export default function PracticePage() {
         setPracticeDemo("");
       }
       if (done.status === "ENDED") {
-        setErr("目标已达成，可点「结束练习」查看回顾。");
+        const detail = await getSession(sessionId);
+        setReview(detail.review);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -111,8 +136,7 @@ export default function PracticePage() {
 
   function sendText() {
     const t = text.trim();
-    if (!t) return;
-    setText("");
+    if (!t || busy || recording || status === "ENDED" || status === "PAUSED" || sessionLoading) return;
     handleTurn({ text: t }, t);
   }
 
@@ -130,12 +154,14 @@ export default function PracticePage() {
   }
 
   async function toggleRecord(mode: "answer" | "practice") {
+    if (busy || sessionLoading || status === "ENDED" || status === "PAUSED") return;
     if (recRef.current && recRef.current.state === "recording") {
       cancelRef.current = false;
       recRef.current.stop();
       return;
     }
     try {
+      document.querySelectorAll("audio").forEach(audio => audio.pause());
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       chunksRef.current = [];
@@ -280,6 +306,8 @@ export default function PracticePage() {
   async function handleDispute(turnId: string) {
     try {
       await disputeReview(sessionId, turnId);
+      const detail = await getSession(sessionId);
+      setReview(detail.review);
       setErr("已标记'有误'，该建议不再用于记忆。");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -287,22 +315,45 @@ export default function PracticePage() {
   }
 
   async function handlePracticeSentence(turnId: string) {
-    if (!window.confirm("练这一句会创建一次单句练习（不开启长期记忆），继续？")) return;
+    if (busy) return;
+    const selected = improvements.find(imp => String(imp.turn_id ?? "") === turnId);
+    if (!selected || selected.disputed || sourceInvalid) return;
+    if (!window.confirm(`即将练习：${String(selected.practice_sentence ?? "")}\n${String(selected.explanation_cn ?? "")}\n最长 5 分钟，一次性用于本次练习，不开启长期记忆。确认开始？`)) return;
+    setBusy(true);
     setErr("");
     try {
       const s = await createPracticeSentence(sessionId, turnId);
       router.push(`/practice/${s.session_id}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   }
 
+  async function togglePause() {
+    if (busy || sessionLoading || status === "ENDED") return;
+    cancelRecord();
+    document.querySelectorAll("audio").forEach(audio => audio.pause());
+    setBusy(true); setErr(""); setShowHelp(false);
+    try {
+      if (status === "PAUSED") await resumeSession(sessionId); else await pauseSession(sessionId);
+      const d = await getSession(sessionId); setStatus(d.status);
+    } catch(e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
   async function end() {
+    if (busy || sessionLoading) return;
+    cancelRecord();
+    document.querySelectorAll("audio").forEach(audio => audio.pause());
+    setShowHelp(false);
     setBusy(true);
     setErr("");
     try {
       const r = await endSession(sessionId);
       setStatus("ENDED");
+      setPracticeSentence("");
       setReview(r.review);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -313,203 +364,69 @@ export default function PracticePage() {
 
   const improvements = Array.isArray(review?.improvements) ? (review.improvements as Record<string, unknown>[]) : [];
 
+  const ended = status === "ENDED";
+  const paused = status === "PAUSED";
+  const inputDisabled = busy || sessionLoading || ended || paused || !status;
+  const answerCount = messages.filter(m => m.who === "user").length;
+
   return (
-    <main className="min-h-full flex flex-col items-center px-4 py-6">
-      <div className="w-full max-w-2xl flex flex-col" style={{ minHeight: "calc(100vh - 48px)" }}>
-        <div className="flex items-center justify-between mb-3">
-          <button
-            onClick={() => router.push("/")}
-            className="text-sm px-3 py-1.5 rounded-lg border"
-            style={{ borderColor: "var(--line)", color: "var(--muted)" }}
-          >
-            ← 返回
-          </button>
-          <span
-            className="text-xs px-2.5 py-1 rounded-full"
-            style={{ background: "var(--brand-soft)", color: "var(--brand-strong)" }}
-          >
-            {STATUS_CN[status] || status || "加载中"}
-          </span>
-        </div>
-
-        <div
-          className="rounded-xl border px-4 py-3 mb-4"
-          style={{ background: "var(--brand-soft)", borderColor: "var(--brand-soft)" }}
-        >
-          <div className="text-xs mb-1" style={{ color: "var(--muted)" }}>
-            本次目标
-          </div>
-          <div className="text-sm font-medium">{goal}</div>
-        </div>
-
-        {sourceInvalid ? (
-          <div className="text-xs mb-3 px-3 py-2 rounded-lg" style={{ background: "#fdecea", color: "var(--danger, #dc2626)" }}>
-            该练习的来源建议已失效，请以新反馈为准。
-          </div>
-        ) : null}
-
-        <div className="flex-1 space-y-3 mb-4">
-          {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.who === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className="max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-6 whitespace-pre-wrap"
-                style={{
-                  background: m.who === "user" ? "var(--user-bubble)" : "var(--ai-bubble)",
-                  border: m.who === "coach" ? "1px solid var(--line)" : "none",
-                }}
-              >
-                <div className="text-xs mb-1" style={{ color: "var(--muted)" }}>
-                  {m.who === "user" ? "你说的" : "AI 教练"}
-                </div>
-                {m.text}
-                {m.who === "user" && m.turnId ? (
-                  <button onClick={() => handleRevise(m.turnId!)} className="text-xs mt-1 block" style={{ color: "var(--muted)" }}>修订转写</button>
-                ) : null}
-                {m.audioUrl ? <AudioPlayer src={m.audioUrl} /> : null}
+    <main className="page">
+      <div className="topline"><button onClick={() => router.push("/")} className="text-link"><Icon name="back" size={16} /> 返回练习首页</button><span className="subtle-tag">英文面试 · 自我介绍</span></div>
+      <div className={styles.titleRow}><div><div className="eyebrow">ONE CONVERSATION AT A TIME</div><h1 className="page-title">{ended ? "给这次练习，留一点回味。" : "慢慢说，教练在听。"}</h1><p className="page-description">{ended ? "重看你的表达，找到下一次想尝试的小改变。" : "不必急着说得完美，先把你的想法说出来。"}</p></div><span className="badge" role="status"><span className={styles.statusDot} />{busy ? "正在处理…" : STATUS_CN[status] || (sessionLoading ? "加载中" : "暂不可用")}</span></div>
+      <div className={styles.practiceLayout}>
+        <div className={styles.conversation}>
+          <div className={styles.conversationHeading}><span className="icon-tile"><Icon name="spark" size={20} /></span><div><h2>AI 口语教练</h2><p>专注你的表达，一起把话说清楚</p></div><span className={styles.turnCount}>{answerCount} 轮回答</span></div>
+          {sourceInvalid && <div role="status" className="error-banner">该练习的来源建议已失效，请以新反馈为准。</div>}
+          <div className={styles.messages} role="log" aria-label="练习对话">
+            {sessionLoading && <div role="status" aria-label="加载对话"><div className="skeleton" /><div className="skeleton" /></div>}
+            {messages.map((m,i) => <div key={i} className={`${styles.messageRow} ${m.who === "user" ? styles.userRow : ""}`}>
+              {m.who === "coach" && <span className={styles.coachAvatar}><Icon name="spark" size={16} /></span>}
+              <div className={`${styles.bubble} ${m.who === "user" ? styles.userBubble : ""}`}><div className={styles.messageLabel}>{m.who === "user" ? "你的回答" : "AI 教练"}</div><p>{m.text}</p>
+                {m.who === "user" && m.turnId && <button disabled={busy} onClick={() => handleRevise(m.turnId!)} className={styles.revise}>修订转写</button>}
+                {m.audioUrl && !ended && <AudioPlayer key={m.audioUrl} src={m.audioUrl} />}
               </div>
+            </div>)}
+            {busy && <div className={styles.thinking} role="status"><span /><span /><span /> 教练正在处理，请稍候…</div>}
+            <div ref={bottomRef} />
+          </div>
+
+          {practiceSentence && !ended && <section className={styles.readingCard}>
+            <div className="section-head mt-0 mb-3"><h2><Icon name="headphones" size={19} /> 试着练这一句</h2><span className="badge">有参考文本的短练</span></div>
+            <p className={styles.practiceSentence}>{practiceSentence}</p>{practiceDemo && <AudioPlayer key={practiceDemo} src={practiceDemo} />}
+            <div className="flex items-center gap-2 flex-wrap mt-4"><button onClick={() => toggleRecord("practice")} disabled={inputDisabled} className="btn btn-primary"><Icon name={recording && recordMode === "practice" ? "stop" : "mic"} size={16} />{recording && recordMode === "practice" ? "停止并提交" : "录音跟读"}</button><button onClick={handleSkipPractice} disabled={inputDisabled || recording} className="btn btn-ghost">跳过这次跟读</button>{recording && recordMode === "practice" && <><span className={styles.recordingTimer}>{timerText()}</span><button onClick={cancelRecord} className="btn btn-ghost">取消录音</button></>}</div>
+            <p className="text-xs muted mt-3">可以直接尝试，也可以先听示范。跟读不等同于独立表达。</p>
+          </section>}
+          {practiceResult && <div className="notice mb-4"><Icon name="check" size={17} /><p>上次跟读：{practiceResult}<br /><span className="text-xs">仅供练习参考，不代表语言能力认证。</span></p></div>}
+          {err && <p className="error-banner" role="alert">{err}</p>}
+
+          {ended ? <div className={styles.finished}><Icon name="check" size={22} /><div><strong>本次练习已结束</strong><p>对话已保留。你可以查看回顾，或回首页开始新练习。</p></div><button onClick={() => router.push("/history")} className="btn btn-secondary btn-small">查看历史<Icon name="arrow" size={14} /></button></div> : <div className={styles.composer}>
+            {paused && <div className="notice mb-3"><Icon name="pause" size={16} /> 练习已暂停，点击“继续练习”后再回答。</div>}
+            <label htmlFor="answer" className="sr-only">你的英文回答</label><textarea id="answer" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); sendText(); } }} placeholder={paused ? "练习已暂停…" : "用英文写下你的回答，或点击下方录音…"} disabled={inputDisabled || recording} maxLength={2000} />
+            <div className={styles.composerTools}><button onClick={() => toggleRecord("answer")} disabled={inputDisabled || (recording && recordMode !== "answer")} className={`btn btn-primary ${recording && recordMode === "answer" ? styles.recording : ""}`}><Icon name={recording && recordMode === "answer" ? "stop" : "mic"} size={17} />{recording && recordMode === "answer" ? "停止并提交" : "录音回答"}</button>
+              <button onClick={() => setShowHelp(!showHelp)} disabled={inputDisabled || recording} aria-expanded={showHelp} aria-controls="help-options" className="btn btn-secondary"><Icon name="help" size={16} />需要帮助</button>
+              <button onClick={sendText} disabled={inputDisabled || recording || !text.trim()} className={`btn btn-secondary ${styles.send}`}><span>发送</span><Icon name="send" size={16} /></button>
             </div>
-          ))}
-          <div ref={bottomRef} />
+            {recording && recordMode === "answer" ? <div className={styles.recordingInfo}><span className={styles.recordingTimer}>{timerText()}</span><button onClick={cancelRecord} className="text-link">取消录音，不提交</button></div> : <div className={styles.inputNote}><span>每段录音最长 60 秒</span><span>Enter 发送 · Shift + Enter 换行</span></div>}
+            {showHelp && <div id="help-options" className={styles.helpOptions}>
+              <div className={styles.helpHeader}><span>在哪一步卡住了？</span><button onClick={() => setShowHelp(false)} aria-label="收起帮助" className="btn btn-ghost btn-small"><Icon name="close" size={15} /></button></div>
+              {[{type:"repeat",title:"没听清",desc:"再听一次当前问题",icon:"headphones" as const},{type:"explain",title:"没听懂",desc:"用中文解释问题",icon:"chat" as const},{type:"organize",title:"不知道怎么组织",desc:"从关键词开始，逐步获得提示",icon:"spark" as const},{type:"translate",title:"中文转英文",desc:"尝试表达自己的中文意思",icon:"book" as const}].map(option => <button key={option.type} onClick={() => handleHelp(option.type)} disabled={inputDisabled} className={styles.helpOption}><Icon name={option.icon} size={18} /><span>{option.title}<small>{option.desc}</small></span><Icon name="chevron" size={14} /></button>)}
+            </div>}
+          </div>}
         </div>
 
-        {practiceSentence ? (
-          <div
-            className="rounded-xl border p-4 mb-4"
-            style={{ background: "var(--ai-bubble)", borderColor: "var(--brand)" }}
-          >
-            <div className="text-sm font-medium mb-1">跟读练习</div>
-            <div className="text-base mb-2">{practiceSentence}</div>
-            {practiceDemo ? <AudioPlayer src={practiceDemo} /> : null}
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => toggleRecord("practice")}
-                disabled={busy}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                style={{ background: recording && recordMode === "practice" ? "var(--brand-strong)" : "var(--brand)" }}
-              >
-                {recording && recordMode === "practice" ? "停止" : "录音跟读"}
-              </button>
-              <button onClick={handleSkipPractice} disabled={busy} className="text-xs px-2 py-1 rounded-lg border" style={{ borderColor: "var(--line)", color: "var(--muted)" }}>跳过</button>
-              {recording && recordMode === "practice" ? (
-                <>
-                  <span className="text-xs" style={{ color: elapsed >= 50 ? "var(--danger, #dc2626)" : "var(--muted)" }}>{timerText()}</span>
-                  <button onClick={cancelRecord} className="text-xs px-2 py-1 rounded-lg border" style={{ borderColor: "var(--line)", color: "var(--danger, #dc2626)" }}>取消</button>
-                </>
-              ) : null}
-              <span className="text-xs" style={{ color: "var(--muted)" }}>
-                {practiceResult}
-              </span>
-            </div>
-          </div>
-        ) : null}
-
-        {!practiceSentence && practiceResult ? (
-          <div className="text-xs mb-3" style={{ color: "var(--muted)" }}>
-            上次跟读：{practiceResult}
-          </div>
-        ) : null}
-
-        {review ? (
-          <div className="rounded-xl border p-4 mb-4" style={{ background: "var(--ai-bubble)", borderColor: "var(--line)" }}>
-            <div className="text-sm font-medium mb-2">练习回顾</div>
-            {improvements.length ? (
-              <div className="space-y-2 text-sm">
-                {improvements.map((imp, i) => (
-                  <div key={i} className="border-l-2 pl-3" style={{ borderColor: "var(--brand)" }}>
-                    <div>原句：{String(imp.original ?? "")}</div>
-                    <div style={{ color: "var(--muted)" }}>{String(imp.explanation_cn ?? "")}</div>
-                    <div>练习句：{String(imp.practice_sentence ?? "")}</div>
-                    {imp.disputed ? (
-                      <div className="text-xs mt-1" style={{ color: "var(--danger, #dc2626)" }}>已标记有误，待复核</div>
-                    ) : (
-                      <div className="flex gap-3 mt-1">
-                        <button onClick={() => handleDispute(String(imp.turn_id ?? ""))} className="text-xs" style={{ color: "var(--muted)" }}>有误</button>
-                        <button onClick={() => handlePracticeSentence(String(imp.turn_id ?? ""))} className="text-xs" style={{ color: "var(--brand)" }}>练这一句</button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm" style={{ color: "var(--muted)" }}>
-                本次未生成改进建议（证据不足或表达较好）。
-              </div>
-            )}
-          </div>
-        ) : null}
-
-        {err ? (
-          <p className="text-sm mb-2" style={{ color: "var(--danger, #dc2626)" }}>
-            {err}
-          </p>
-        ) : null}
-
-        <div className="border-t pt-3" style={{ borderColor: "var(--line)" }}>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendText();
-              }
-            }}
-            placeholder="Type your answer in English…"
-            className="w-full rounded-xl border px-3 py-2 text-sm mb-2"
-            style={{ borderColor: "var(--line)", minHeight: "56px" }}
-          />
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => toggleRecord("answer")}
-              disabled={busy}
-              className="rounded-xl px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-              style={{ background: recording && recordMode === "answer" ? "var(--brand-strong)" : "var(--brand)" }}
-            >
-              {recording && recordMode === "answer" ? "停止" : "🎤 录音回答"}
-            </button>
-            {recording && recordMode === "answer" ? (
-              <>
-                <span className="text-xs" style={{ color: elapsed >= 50 ? "var(--danger, #dc2626)" : "var(--muted)" }}>{timerText()}</span>
-                <button onClick={cancelRecord} className="text-xs px-2 py-1 rounded-lg border" style={{ borderColor: "var(--line)", color: "var(--danger, #dc2626)" }}>取消</button>
-              </>
-            ) : null}
-            <div className="relative">
-              <button
-                onClick={() => setShowHelp(!showHelp)}
-                disabled={busy}
-                className="rounded-xl px-3 py-2.5 text-sm border"
-                style={{ borderColor: "var(--line)", color: "var(--muted)" }}
-              >
-                💡 需要帮助
-              </button>
-              {showHelp ? (
-                <div className="absolute bottom-full left-0 mb-1 w-60 rounded-xl border p-2 space-y-1" style={{ background: "var(--ai-bubble)", borderColor: "var(--line)" }}>
-                  <button onClick={() => handleHelp("repeat")} className="w-full text-left text-sm px-2 py-1 rounded-lg" style={{ color: "var(--ink)" }}>没听清（重播）</button>
-                  <button onClick={() => handleHelp("explain")} className="w-full text-left text-sm px-2 py-1 rounded-lg" style={{ color: "var(--ink)" }}>没听懂（解释）</button>
-                  <button onClick={() => handleHelp("organize")} className="w-full text-left text-sm px-2 py-1 rounded-lg" style={{ color: "var(--ink)" }}>不会组织（关键词→半句→示例）</button>
-                  <button onClick={() => handleHelp("translate")} className="w-full text-left text-sm px-2 py-1 rounded-lg" style={{ color: "var(--ink)" }}>中文转英文</button>
-                </div>
-              ) : null}
-            </div>
-            <button
-              onClick={sendText}
-              disabled={busy || !text.trim()}
-              className="rounded-xl px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-              style={{ background: "var(--ink)" }}
-            >
-              发送
-            </button>
-            <button
-              onClick={end}
-              disabled={busy}
-              className="ml-auto rounded-xl px-3 py-2.5 text-sm border"
-              style={{ borderColor: "var(--line)", color: "var(--muted)" }}
-            >
-              结束练习
-            </button>
-          </div>
-        </div>
+        <aside className={styles.sessionAside}>
+          <section className={`panel ${styles.goalCard}`}><span className="icon-tile"><Icon name="target" /></span><div className="eyebrow mt-4">TODAY’S FOCUS</div><h2>本次小目标</h2><p className={styles.goalText}>{goal || (sessionLoading ? "正在准备目标…" : "目标暂不可用")}</p><div className={styles.goalDivider} /><p className="text-xs muted">围绕真实经历组织表达。暂时想不到时，可以向教练求助。</p></section>
+          <section className={styles.tipCard}><Icon name="leaf" size={22} /><h3>给自己一点思考时间</h3><p>先说重点，再补充细节。<br />停顿不是问题，开口就是开始。</p></section>
+          {!ended && <div className={styles.sessionActions}><button onClick={togglePause} disabled={busy || sessionLoading || !status} className="btn btn-secondary"><Icon name={paused ? "play" : "pause"} size={15} />{paused ? "继续练习" : "暂停练习"}</button><button onClick={end} disabled={busy || sessionLoading || !status} className="btn btn-ghost">结束练习</button></div>}
+          <p className={styles.sessionNote}><Icon name="shield" size={13} /> 文字回答不参与发音评分</p>
+        </aside>
       </div>
+
+      {ended && <section className={`panel ${styles.review}`} aria-label="练习回顾">
+        <div className="section-head mt-0"><div><div className="eyebrow">A MOMENT TO REFLECT</div><h2>练习回顾</h2></div><span className="icon-tile"><Icon name="book" /></span></div>
+        {review ? improvements.length ? <div className={styles.reviewGrid}>{improvements.map((imp,i) => <article key={i} className={styles.reviewItem}><span className="badge badge-neutral">表达建议 {String(i+1).padStart(2,"0")}</span><div className={styles.reviewOriginal}><small>你的原句</small><p>{String(imp.original ?? "")}</p></div><p className="muted text-sm">{String(imp.explanation_cn ?? "")}</p><div className={styles.reviewSuggestion}><small>可以试着这样说</small><p>{String(imp.practice_sentence ?? imp.suggestion ?? "")}</p></div>{imp.disputed || sourceInvalid ? <p className="text-xs muted">已标记有误或来源已失效，待复核。</p> : <div className="flex gap-3 mt-3"><button onClick={() => handlePracticeSentence(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-primary btn-small"><Icon name="mic" size={14} />练这一句</button><button onClick={() => handleDispute(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small">评价有误</button></div>}</article>)}</div> : <div className="notice"><Icon name="book" size={19} /><p>本次暂无可展示的改进建议。<br />这不代表整体能力已达标；可以回看对话，再尝试一段新的表达。</p></div> : <div className="notice"><Icon name="help" size={19} /><p>回顾暂未就绪，已提交的对话仍然保留。<button className="text-link ml-2" onClick={end} disabled={busy}>重新获取回顾</button></p></div>}
+        <p className="text-xs muted mt-5">反馈仅供练习参考，不代表考试成绩或真实语言能力认证。</p>
+      </section>}
     </main>
   );
 }

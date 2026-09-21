@@ -41,7 +41,9 @@
 
 ## 🎙️ 当前项目：AI 口语练习（开发中）
 
-当前处于 **阶段 3 正式前端（子阶段 2：第一条真实闭环）**，进度与决策见 `docs/项目状态.md`。后端 MVP 三个子阶段已完成，前端骨架 + 首页 + 对话页已可用。
+当前已实现首页准备、对话/跟读、练习回顾、历史和学习记忆。2026-09-21 提交了 **阶段 3.5 视觉完善**：奶油白与森林绿的学习空间、统一导航与卡片、桌面/手机布局。真实教学质检与内测准入仍待验，进度见 `docs/项目状态.md`。
+
+本批视觉参考、修改范围见 [阶段3-5视觉完善](docs/阶段文档/阶段3-5视觉完善.md)，截图和操作步骤见 [阶段3-5证据包](docs/evidence/阶段3-5/照着点-验收步骤.md)。
 
 ### 启动后端（本地）
 
@@ -57,6 +59,31 @@ cd frontend
 npm install   # 首次
 npm run dev   # http://localhost:3000
 ```
+
+访问开发版时使用 `http://localhost:3000`。若当前受限运行环境无法启动 Turbopack 的子进程，可用 `npm run dev -- --webpack`。不要同时启动两份同目录的开发服务。
+
+### 检查前端与生产预览
+
+在 `frontend/` 目录执行：
+
+```bash
+npm run typecheck
+npm run lint
+npm run build
+npm run start -- -p 3100
+```
+
+生产预览地址为 `http://localhost:3100`，需要同时运行 8000 端口的后端。当前未配置独立前端单元测试脚本；本批浏览器验证结果和复现步骤记录在证据包中。2026-09-21：类型检查、Lint、默认 Turbopack 生产构建均通过，后端 Mock 回归 51/51。
+
+### 前端代码位置
+
+- `frontend/app/page.tsx`、`page.module.css`：首页准备与设置。
+- `frontend/app/practice/[sessionId]/`：对话、录音、跟读与回顾及页面样式。
+- `frontend/app/history/page.tsx`、`memory/page.tsx`：历史与学习记忆。
+- `frontend/components/`：导航、图标、音频组件；`frontend/app/globals.css`：共享设计变量和界面样式。
+- `frontend/lib/api.ts`、`types.ts`：统一 API 请求与类型。
+
+记忆设置新增只读 `GET /api/v1/users/me/memory`，沿用邀请凭证鉴权，返回 `{ "enabled": boolean }`；错误沿用 `{ "error": { "code", "message" } }`。刷新页面直接读取数据库中保存的选择，不再重置为前端默认值。
 
 ### 运行 mock 自动化测试（后端，离线）
 
