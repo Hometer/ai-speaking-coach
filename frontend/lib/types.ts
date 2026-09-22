@@ -92,3 +92,26 @@ export interface Scenario {
   levels?: string[];
   openings?: Record<string, string>;
 }
+
+export interface QueueItem {
+  id: number;
+  source_session_id: string;
+  source_turn_id: string;
+  target_ability: string;
+  suggestion_sentence: string;
+  status: string;
+  success_count: number;
+  due_at: string | null;
+  last_practiced_at: string | null;
+  retest_result: string;
+}
+
+export interface Progress {
+  completed_count: number;
+  independent_rate: number;
+  help_usage_rate: number;
+  due_retest_done_rate: number;
+  mastered_count: number;
+  voice_evaluable_rate: number;
+  calc_version: string;
+}

@@ -26,8 +26,11 @@ from app.schemas.session import (
     SessionListItem,
 )
 from app.schemas.turn import TextTurnRequest
+from app.schemas.review_queue import AddToQueueRequest, QueueItemResponse, RetestRequest
 from app.services import memory as memory_svc
 from app.services import session_svc
+from app.services import review_queue as queue_svc
+from app.services import progress as progress_svc
 from app.services.prompts import scenarios as scenarios_mod
 
 router = APIRouter(prefix="/api/v1")
@@ -337,5 +340,78 @@ def clear_memories(user_id: str = Depends(get_user_id)):
     try:
         memory_svc.clear_memories(db, user_id)
         return {"deleted": True}
+    finally:
+        db.close()
+
+
+@router.post("/review-queue", response_model=QueueItemResponse)
+def add_to_queue(req: AddToQueueRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return queue_svc.add_to_queue(db, user_id, req.source_session_id, req.source_turn_id)
+    finally:
+        db.close()
+
+
+@router.get("/review-queue", response_model=list[QueueItemResponse])
+def list_queue(user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return queue_svc.list_queue(db, user_id)
+    finally:
+        db.close()
+
+
+@router.get("/review-queue/due", response_model=QueueItemResponse | None)
+def due_item(user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return queue_svc.get_due_item(db, user_id)
+    finally:
+        db.close()
+
+
+@router.post("/review-queue/{item_id}/retest", response_model=QueueItemResponse)
+def retest(item_id: int, req: RetestRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return queue_svc.submit_retest(db, user_id, item_id, req.answer, req.hint_used)
+    finally:
+        db.close()
+
+
+@router.post("/review-queue/{item_id}/dispute", response_model=QueueItemResponse)
+def dispute_queue_item(item_id: int, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return queue_svc.mark_disputed(db, user_id, item_id)
+    finally:
+        db.close()
+
+
+@router.post("/review-queue/{item_id}/skip", response_model=QueueItemResponse)
+def skip_queue_item(item_id: int, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return queue_svc.skip_item(db, user_id, item_id)
+    finally:
+        db.close()
+
+
+@router.delete("/review-queue/{item_id}")
+def delete_queue_item(item_id: int, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        queue_svc.delete_item(db, user_id, item_id)
+        return {"deleted": True}
+    finally:
+        db.close()
+
+
+@router.get("/progress")
+def progress(user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return progress_svc.get_progress(db, user_id)
     finally:
         db.close()

@@ -148,3 +148,32 @@ class DeviceCheck(Base):
     summary: Mapped[str] = mapped_column(String(255), default="")
     status: Mapped[str] = mapped_column(String(16), default="ok")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ReviewQueueItem(Base):
+    __tablename__ = "review_queue_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_session_id: Mapped[str] = mapped_column(String(64), default="")
+    source_turn_id: Mapped[str] = mapped_column(String(64), default="")
+    target_ability: Mapped[str] = mapped_column(String(32), default="")
+    suggestion_sentence: Mapped[str] = mapped_column(Text, default="")
+    evidence_status: Mapped[str] = mapped_column(String(16), default="active")
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    success_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    due_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    last_practiced_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    retest_result: Mapped[str] = mapped_column(String(16), default="")
+
+
+class ProgressSnapshot(Base):
+    __tablename__ = "progress_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    window: Mapped[str] = mapped_column(String(16), default="7d")
+    metrics_json: Mapped[str] = mapped_column(Text, default="{}")
+    calc_version: Mapped[str] = mapped_column(String(16), default="v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

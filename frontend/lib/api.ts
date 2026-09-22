@@ -1,4 +1,4 @@
-import type { ApiErrorBody, MemoryItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TurnDone } from "./types";
+import type { ApiErrorBody, MemoryItem, Progress, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TurnDone } from "./types";
 
 // 邀请码存本地，由用户输入，不再前端硬编码共享凭证
 const INVITE_KEY = "invite_code";
@@ -186,6 +186,54 @@ export async function clearMemories(): Promise<void> {
     headers: authHeaders(),
   });
   await handle<unknown>(res);
+}
+
+export async function addToQueue(sourceSessionId: string, sourceTurnId: string): Promise<QueueItem> {
+  const res = await fetch("/api/v1/review-queue", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ source_session_id: sourceSessionId, source_turn_id: sourceTurnId }),
+  });
+  return handle<QueueItem>(res);
+}
+
+export async function listQueue(): Promise<QueueItem[]> {
+  const res = await fetch("/api/v1/review-queue", { headers: authHeaders() });
+  return handle<QueueItem[]>(res);
+}
+
+export async function dueQueueItem(): Promise<QueueItem | null> {
+  const res = await fetch("/api/v1/review-queue/due", { headers: authHeaders() });
+  return handle<QueueItem | null>(res);
+}
+
+export async function retestQueueItem(id: number, answer: string, hintUsed = false): Promise<QueueItem> {
+  const res = await fetch(`/api/v1/review-queue/${id}/retest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ answer, hint_used: hintUsed }),
+  });
+  return handle<QueueItem>(res);
+}
+
+export async function disputeQueueItem(id: number): Promise<QueueItem> {
+  const res = await fetch(`/api/v1/review-queue/${id}/dispute`, { method: "POST", headers: authHeaders() });
+  return handle<QueueItem>(res);
+}
+
+export async function skipQueueItem(id: number): Promise<QueueItem> {
+  const res = await fetch(`/api/v1/review-queue/${id}/skip`, { method: "POST", headers: authHeaders() });
+  return handle<QueueItem>(res);
+}
+
+export async function deleteQueueItem(id: number): Promise<void> {
+  const res = await fetch(`/api/v1/review-queue/${id}`, { method: "DELETE", headers: authHeaders() });
+  await handle<unknown>(res);
+}
+
+export async function getProgress(): Promise<Progress> {
+  const res = await fetch("/api/v1/progress", { headers: authHeaders() });
+  return handle<Progress>(res);
 }
 
 async function parseSSE<T>(res: Response): Promise<T> {

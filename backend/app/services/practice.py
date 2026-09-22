@@ -151,10 +151,11 @@ class PracticeEvalProvider(ABC):
 
 class MockPracticeEvalProvider(PracticeEvalProvider):
     def evaluate(self, audio_path: Path, reference_text: str) -> dict[str, Any]:
+        # mock 只返回整句总分；无真实词级证据，word_items 恒为空（零容忍无证据词级结论）
         return {
             "score": 85,
-            "dimension": "word/phrase",
-            "notes": [{"word": "experience", "suggestion": "stress the second syllable"}],
+            "dimension": "sentence",
+            "word_items": [],
             "mock": True,
         }
 

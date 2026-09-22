@@ -6,6 +6,8 @@ import Icon, { type IconName } from "./Icon";
 
 const items: { href: string; label: string; icon: IconName }[] = [
   { href: "/", label: "开始练习", icon: "home" },
+  { href: "/queue", label: "待复练", icon: "check" },
+  { href: "/progress", label: "进步中心", icon: "spark" },
   { href: "/history", label: "练习历史", icon: "history" },
   { href: "/memory", label: "学习记忆", icon: "book" },
 ];
