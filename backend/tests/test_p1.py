@@ -77,13 +77,34 @@ def test_add_to_queue_and_retest_mastery(client):
     assert r1.json()["success_count"] == 1
     assert r1.json()["status"] == "awaiting_retest"
 
-    # 第二次复测独立成功 -> mastered
+    # AC07-08：未到期立即第二次复测 -> 409 拒绝，成功次数保持 1
     r2 = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
         json={"answer": "I have a reservation under the name Li, please confirm it again."},
         headers=USER,
     )
-    assert r2.json()["status"] == "mastered"
+    assert r2.status_code == 409
+    assert r2.json()["error"]["code"] == "NOT_DUE"
+
+    # 到期后（due_at 改为过去）再复测 -> mastered
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.database import SessionLocal
+    from app.models.entities import ReviewQueueItem
+
+    db = SessionLocal()
+    qi = db.get(ReviewQueueItem, item["id"])
+    qi.due_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+    db.close()
+
+    r3 = client.post(
+        f"/api/v1/review-queue/{item['id']}/retest",
+        json={"answer": "I have a reservation under the name Li, please confirm it again."},
+        headers=USER,
+    )
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["status"] == "mastered"
 
 
 def test_queue_duplicate_is_idempotent(client):
