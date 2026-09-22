@@ -68,3 +68,97 @@ def test_record_device_check(client):
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"recorded": True}
+
+
+# ===== v0.7 P0 多场景收口回归 =====
+import json
+
+
+def _create_scene_session(client, scene_id, level="basic"):
+    r = client.post(
+        "/api/v1/sessions",
+        json={"level": level, "difficulty": "standard", "scene_id": scene_id},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _send_text_turn(client, session_id, text):
+    r = client.post(
+        f"/api/v1/sessions/{session_id}/turns/text",
+        json={"text": text},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    done = None
+    for block in r.text.split("\n\n"):
+        if not block.strip():
+            continue
+        event, data = None, None
+        for line in block.split("\n"):
+            if line.startswith("event:"):
+                event = line[6:].strip()
+            elif line.startswith("data:"):
+                data = json.loads(line[5:].strip())
+        if event == "done" and data is not None:
+            done = data
+    assert done is not None, r.text
+    return done
+
+
+def test_hotel_checkin_followup_and_completion_stay_on_scene(client):
+    s = _create_scene_session(client, "hotel_checkin")
+    r1 = _send_text_turn(client, s["session_id"], "I have a reservation under the name Li.")
+    assert r1["eval_result"] == "independent"
+    assert "experience" not in r1["reply_text"].lower()
+    assert "software" not in r1["reply_text"].lower()
+    r2 = _send_text_turn(client, s["session_id"], "What time does breakfast start?")
+    assert r2["eval_result"] == "independent"
+    assert r2["status"] == "ENDED"
+
+
+def test_hotel_checkin_help_is_scene_specific(client):
+    s = _create_scene_session(client, "hotel_checkin")
+    r = client.post(
+        f"/api/v1/sessions/{s['session_id']}/help",
+        json={"help_type": "organize", "help_level": 0},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert ("reservation" in body["reply_text"]) or ("breakfast" in body["reply_text"])
+
+
+def test_meeting_opinion_uses_opinion_and_reason(client):
+    s = _create_scene_session(client, "meeting_opinion")
+    r1 = _send_text_turn(client, s["session_id"], "I think we should launch the smaller version first.")
+    assert r1["eval_result"] == "independent"
+    r2 = _send_text_turn(client, s["session_id"], "Because it is faster to test and cheaper to fix.")
+    assert r2["status"] == "ENDED"
+
+
+def test_new_friend_requires_two_rounds(client):
+    s = _create_scene_session(client, "new_friend")
+    r1 = _send_text_turn(client, s["session_id"], "I am Alex and I work in marketing and I like hiking.")
+    assert r1["eval_result"] == "independent"
+    assert r1["status"] != "ENDED"
+    r2 = _send_text_turn(client, s["session_id"], "In my free time I like hiking.")
+    assert r2["status"] == "ENDED"
+
+
+def test_job_interview_still_works(client):
+    s = _create_scene_session(client, "job_interview")
+    r1 = _send_text_turn(client, s["session_id"], "I have three years of experience in software development.")
+    assert r1["eval_result"] == "independent"
+    assert ("experience" in r1["reply_text"].lower()) or ("challenging" in r1["reply_text"].lower())
+
+
+def test_list_sessions_returns_scene_info(client):
+    s = _create_scene_session(client, "hotel_checkin")
+    r = client.get("/api/v1/sessions", headers=USER)
+    assert r.status_code == 200, r.text
+    items = r.json()
+    item = next(x for x in items if x["session_id"] == s["session_id"])
+    assert item["scene_id"] == "hotel_checkin"
+    assert item["scene_label"] == "酒店入住"

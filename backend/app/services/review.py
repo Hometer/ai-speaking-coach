@@ -6,16 +6,15 @@ from sqlalchemy.orm import Session as DbSession
 from app.models.entities import Turn
 
 
-def _improvement(t: Turn) -> dict[str, Any]:
+def _improvement(t: Turn, scene: dict) -> dict[str, Any]:
     original = t.user_text or t.transcript
+    refs = scene.get("reference_expressions") or []
+    goal_zh = scene.get("goal_zh", "本次目标")
     return {
         "original": original,
-        "suggestion": (
-            f"Complete the sentence '{original}' with more detail about what "
-            "you did and the result."
-        ),
-        "explanation_cn": "表达可以更完整：补充做了什么、结果如何。",
-        "practice_sentence": "I have X years of experience in Y, and I am good at Z.",
+        "suggestion": f"Complete the sentence '{original}' with more detail about {goal_zh}.",
+        "explanation_cn": f"围绕「{goal_zh}」把表达补得更完整。",
+        "practice_sentence": refs[0] if refs else "",
         "turn_id": t.id,
     }
 
@@ -42,7 +41,10 @@ def dedupe_improvements(review: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_review(db: DbSession, session, end_reason: str) -> dict[str, Any]:
-    """根据会话真实数据生成结构化回顾（mock 为确定性聚合）。"""
+    """根据会话真实数据生成结构化回顾（mock 为确定性聚合，按场景）。"""
+    from app.services.prompts.scenarios import SCENARIOS
+
+    scene = SCENARIOS.get(getattr(session, "scene_id", ""), {})
     turns = (
         db.query(Turn).filter(Turn.session_id == session.id).order_by(Turn.seq).all()
     )
@@ -66,7 +68,7 @@ def build_review(db: DbSession, session, end_reason: str) -> dict[str, Any]:
     ]
 
     improvements = [
-        _improvement(t)
+        _improvement(t, scene)
         for t in user_turns
         if t.eval_result in ("incomplete", "hinted") and (t.user_text or t.transcript)
     ][:3]
@@ -83,10 +85,7 @@ def build_review(db: DbSession, session, end_reason: str) -> dict[str, Any]:
         "good_fragments": good_fragments,
         "improvements": improvements,
         "ratings": _ratings(goal_status, len(good_fragments)),
-        "next_suggestion": (
-            "Practice introducing one more experience and answer one follow-up "
-            "question on your own."
-        ),
+        "next_suggestion": f"Practice {scene.get('goal_zh', 'this scene')} again on your own.",
         "end_reason": end_reason,
         "input_breakdown": breakdown,
     })

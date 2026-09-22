@@ -62,6 +62,8 @@ class SessionListItem(BaseModel):
     turn_count: int = 0
     goal_status: str = ""
     end_reason: str | None = None
+    scene_id: str = "job_interview"
+    scene_label: str = ""
 
 
 class EndRequest(BaseModel):

@@ -39,7 +39,7 @@ class MockCoachProvider(CoachProvider):
         if context.get("help_requested"):
             return CoachDecision(
                 action_type="hint",
-                reply_text="Here's a hint: try starting with 'I have...' and describe one thing you did.",
+                reply_text="Here's a hint: try a short, simple sentence about the question, and ask for more help if you need it.",
             )
         if context.get("skipped_practice"):
             return CoachDecision(
@@ -67,16 +67,18 @@ class MockCoachProvider(CoachProvider):
 
         result = context.get("eval_result", "")
         subgoal = context.get("subgoal", "")
+        follow_ups = context.get("follow_ups") or {}
+        references = context.get("reference_expressions") or []
         if result == "insufficient_evidence":
             return CoachDecision(
                 action_type="hint",
-                reply_text="No problem. Try starting with 'I have...' and tell me one thing.",
+                reply_text="No problem. Try a short sentence, and ask for help if you are stuck.",
             )
         if result == "incomplete":
             return CoachDecision(
                 action_type="suggest_practice",
                 reply_text="Let's practice a useful sentence. Repeat after me.",
-                practice_sentence="I have three years of experience in software development.",
+                practice_sentence=references[0] if references else "",
             )
         if result == "hinted":
             return CoachDecision(
@@ -84,15 +86,11 @@ class MockCoachProvider(CoachProvider):
                 reply_text="Nice. Now try to say it again in your own words without the hint.",
             )
         if result == "independent":
-            if subgoal == "intro":
-                return CoachDecision(
-                    action_type="follow_up",
-                    reply_text="Great. What was the most challenging part of that experience?",
-                    follow_up_question="What was the most challenging part?",
-                )
+            next_q = (follow_ups.get(subgoal) or [""])[0]
             return CoachDecision(
                 action_type="follow_up",
-                reply_text="Excellent, you expressed both clearly on your own.",
+                reply_text=next_q or "Good, let's continue.",
+                follow_up_question=next_q,
             )
         return CoachDecision(action_type="follow_up", reply_text="Can you tell me a bit more?")
 
@@ -100,26 +98,27 @@ class MockCoachProvider(CoachProvider):
         help_type = context.get("help_type", "")
         level = int(context.get("help_level", 0) or 0)
         question = context.get("current_question", "")
+        materials = context.get("help_materials") or {}
         if help_type == "repeat":
             return CoachDecision(action_type="help", reply_text=question or "Let me repeat the question.")
         if help_type == "explain":
             return CoachDecision(
                 action_type="help",
-                reply_text=f"这句话是在问：{question or '你做过的一件事'}。你可以简单说说你做过的一件事，不用完整语法。",
+                reply_text=f"这句话是在问：{question or '你的一件事'}。你可以简单回答，不用完整语法。",
             )
         if help_type == "organize":
             if level <= 1:
-                return CoachDecision(action_type="help", reply_text="关键词：experience / project / team（先用一个关键词开头试试）")
+                return CoachDecision(action_type="help", reply_text=f"关键词：{materials.get('keywords', '先用一个关键词开头试试')}")
             if level == 2:
-                return CoachDecision(action_type="help", reply_text="可以这样开头：'I have experience in...'")
+                return CoachDecision(action_type="help", reply_text=materials.get("half", "可以这样开头试试"))
             return CoachDecision(
                 action_type="help",
-                reply_text="参考说法（复述不算独立表达）：I have three years of experience in software development.",
+                reply_text=f"参考说法（复述不算独立表达）：{materials.get('full', '')}",
             )
         if help_type == "translate":
             return CoachDecision(
                 action_type="help",
-                reply_text="参考英文（复述不算独立表达）：I have three years of experience in software development.",
+                reply_text=f"参考英文（复述不算独立表达）：{materials.get('full', '')}",
             )
         return CoachDecision(action_type="help", reply_text="需要哪方面帮助？")
 

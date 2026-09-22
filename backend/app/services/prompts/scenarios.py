@@ -1,7 +1,7 @@
 """v0.7 场景配置（版本化 + 审核状态）。
 
 场景由版本化配置驱动；会话创建时只读取 review_status == "approved" 的场景。
-本模块是「已审核版本」的唯一事实来源，前端列表与后端开场都从这里取。
+本模块是「已审核版本」的唯一事实来源，教练、评估、求助、完成判断、回顾都从这里取。
 """
 
 from app.core.errors import AppError
@@ -12,7 +12,13 @@ SERIES = {
     "daily": "日常交流",
 }
 
-# scene_id -> 配置。goal_text 用于评估器与教练（英文，即完成条件）。
+# 每个场景：
+# - subgoals：子目标 key 列表，全部 independent 才算完成
+# - acceptable_points：评估器判断 independent 的关键词
+# - follow_ups：各子目标完成后的确定性追问（mock 教练使用）
+# - help_materials：四类求助中「组织」类帮助的逐级材料
+# - reference_expressions：参考表达（跟读建议 / 回顾建议句）
+# - variations / stop_conditions / completion_criteria：PRD 6.2 要求字段
 SCENARIOS: dict[str, dict] = {
     "job_interview": {
         "scene_id": "job_interview",
@@ -30,6 +36,24 @@ SCENARIOS: dict[str, dict] = {
             "intermediate": "Welcome. Walk me through one achievement and how you contributed to it.",
         },
         "coach_context": "an English interview coach helping an adult practice a job-interview self-introduction",
+        "subgoals": ["intro", "followup"],
+        "acceptable_points": ["i have", "experience", "worked", "project", "years", "achieved", "led"],
+        "follow_ups": {
+            "intro": ["What was the most challenging part of that experience?", "What did you learn from it?"],
+            "followup": ["What was the result of that work?", "How did it affect your team?"],
+        },
+        "help_materials": {
+            "keywords": "experience / project / result",
+            "half": "你可以这样开头：'I have experience in...'",
+            "full": "I have three years of experience in software development, and I led a project that improved delivery speed.",
+        },
+        "reference_expressions": [
+            "I have three years of experience in software development.",
+            "I led a project that improved delivery speed by thirty percent.",
+        ],
+        "variations": ["介绍在校经历", "介绍实习经历", "介绍一段项目经历"],
+        "stop_conditions": "两个子目标均独立完成，或用户主动结束，或到时收尾",
+        "completion_criteria": "介绍一段经历（intro）+ 回答一个相关追问（followup）均独立完成",
     },
     "new_colleague": {
         "scene_id": "new_colleague",
@@ -47,6 +71,24 @@ SCENARIOS: dict[str, dict] = {
             "intermediate": "Great to meet you. Tell me a bit about your role, and feel free to ask me one question too.",
         },
         "coach_context": "a friendly new colleague chatting with an adult on their first day at work",
+        "subgoals": ["self_intro", "ask_question"],
+        "acceptable_points": ["i am", "i work", "my name", "my role", "i do", "what about you", "how about you", "what do you"],
+        "follow_ups": {
+            "self_intro": ["Nice to meet you. What do you enjoy about your work?"],
+            "ask_question": ["Good question! Let me tell you a bit about that."],
+        },
+        "help_materials": {
+            "keywords": "name / role / what about you",
+            "half": "可以先说：'I am..., I work on...'，再问 'What about you?'",
+            "full": "I am a designer on the product team, and I focus on the mobile app. What about you?",
+        },
+        "reference_expressions": [
+            "I am a designer on the product team.",
+            "What about you? What do you do here?",
+        ],
+        "variations": ["第一天上班自我介绍", "团队欢迎会", "茶水间偶遇"],
+        "stop_conditions": "自我介绍 + 向对方提一个问题均完成，或用户主动结束，或到时收尾",
+        "completion_criteria": "自我介绍（self_intro）+ 向对方提问（ask_question）均独立完成",
     },
     "meeting_opinion": {
         "scene_id": "meeting_opinion",
@@ -64,6 +106,24 @@ SCENARIOS: dict[str, dict] = {
             "intermediate": "The team is split on how to prioritize. What's your view, and how would you respond to a different opinion?",
         },
         "coach_context": "a meeting host inviting an adult to share and defend an opinion in English",
+        "subgoals": ["state_opinion", "give_reason"],
+        "acceptable_points": ["i think", "in my opinion", "i believe", "we should", "because", "the reason", "i agree", "i disagree"],
+        "follow_ups": {
+            "state_opinion": ["Why do you think so?", "Could you explain your reasoning?"],
+            "give_reason": ["How would you respond if someone disagreed?"],
+        },
+        "help_materials": {
+            "keywords": "I think / because / reason",
+            "half": "可以先说观点：'I think we should...'，再补理由 'because...'",
+            "full": "I think we should launch the smaller version first, because it is faster to test and cheaper to fix.",
+        },
+        "reference_expressions": [
+            "I think we should launch the smaller version first.",
+            "Because it is faster to test and cheaper to fix.",
+        ],
+        "variations": ["讨论排期", "讨论优先级", "回应不同意见"],
+        "stop_conditions": "观点 + 理由均独立完成，或用户主动结束，或到时收尾",
+        "completion_criteria": "表明观点（state_opinion）+ 给出理由（give_reason）均独立完成",
     },
     "hotel_checkin": {
         "scene_id": "hotel_checkin",
@@ -81,6 +141,24 @@ SCENARIOS: dict[str, dict] = {
             "intermediate": "Welcome. I see your booking for two nights. Is there anything else you'd like to ask about our services?",
         },
         "coach_context": "a hotel front-desk clerk checking in an adult guest in English",
+        "subgoals": ["confirm_booking", "ask_service"],
+        "acceptable_points": ["reservation", "booking", "my name", "check in", "room", "breakfast", "wifi", "gym", "what time", "where is"],
+        "follow_ups": {
+            "confirm_booking": ["May I see your ID, please?", "Is it two nights, correct?"],
+            "ask_service": ["Sure. Breakfast is from 7 to 10 on the second floor.", "The wifi password is on your key card."],
+        },
+        "help_materials": {
+            "keywords": "reservation / breakfast / wifi",
+            "half": "可以先确认：'I have a reservation under...'，再问一项服务",
+            "full": "I have a reservation under the name Li. What time does breakfast start?",
+        },
+        "reference_expressions": [
+            "I have a reservation under the name Li.",
+            "What time does breakfast start?",
+        ],
+        "variations": ["预订姓名确认", "询问早餐时间", "询问 wifi 密码"],
+        "stop_conditions": "确认预订 + 询问一项服务均完成，或用户主动结束，或到时收尾",
+        "completion_criteria": "确认预订（confirm_booking）+ 询问服务信息（ask_service）均独立完成",
     },
     "restaurant_order": {
         "scene_id": "restaurant_order",
@@ -98,6 +176,24 @@ SCENARIOS: dict[str, dict] = {
             "intermediate": "Welcome. Can I take your order, or would you like a moment to look at the menu?",
         },
         "coach_context": "a restaurant waiter taking an adult customer's order in English",
+        "subgoals": ["place_order", "handle_followup"],
+        "acceptable_points": ["i would like", "i will have", "order", "please", "menu", "no sugar", "spicy", "no onions", "no ice"],
+        "follow_ups": {
+            "place_order": ["Would you like anything to drink with that?"],
+            "handle_followup": ["Any allergies or preferences I should know about?"],
+        },
+        "help_materials": {
+            "keywords": "I would like / please",
+            "half": "点餐可以这样：'I would like...'，特殊要求补 'no...' 或 'without...'",
+            "full": "I would like the grilled chicken, please. No spicy food, please.",
+        },
+        "reference_expressions": [
+            "I would like the grilled chicken, please.",
+            "No spicy food, please.",
+        ],
+        "variations": ["点主菜", "点饮料", "说明忌口"],
+        "stop_conditions": "完成点餐 + 处理补充问题均完成，或用户主动结束，或到时收尾",
+        "completion_criteria": "完成点餐（place_order）+ 处理补充问题（handle_followup）均独立完成",
     },
     "new_friend": {
         "scene_id": "new_friend",
@@ -115,6 +211,24 @@ SCENARIOS: dict[str, dict] = {
             "intermediate": "Nice to meet you. What do you like to do in your free time?",
         },
         "coach_context": "a friendly new acquaintance making small talk with an adult in English",
+        "subgoals": ["round1", "round2"],
+        "acceptable_points": ["my name", "i am", "i do", "i work", "i like", "i enjoy", "in my free time"],
+        "follow_ups": {
+            "round1": ["Nice. What do you like to do in your free time?"],
+            "round2": ["That sounds interesting. Tell me a bit more about it."],
+        },
+        "help_materials": {
+            "keywords": "name / I like / free time",
+            "half": "可以先说 'I am...'，再聊一件你喜欢做的事",
+            "full": "I am Alex, and I work in marketing. In my free time I like hiking.",
+        },
+        "reference_expressions": [
+            "I am Alex, and I work in marketing.",
+            "In my free time I like hiking.",
+        ],
+        "variations": ["初次见面", "聚会闲聊", "介绍兴趣爱好"],
+        "stop_conditions": "两轮简单交流均完成，或用户主动结束，或到时收尾",
+        "completion_criteria": "两轮交流（round1 + round2）均独立完成，一段长回答不能绕过两轮要求",
     },
     "hobby": {
         "scene_id": "hobby",
@@ -132,6 +246,24 @@ SCENARIOS: dict[str, dict] = {
             "intermediate": "What's a hobby you're really into, and why do you enjoy it so much?",
         },
         "coach_context": "a friend asking an adult about their hobbies in English",
+        "subgoals": ["describe_hobby", "explain_reason"],
+        "acceptable_points": ["i like", "i enjoy", "i love", "hobby", "because", "it helps", "relax", "fun"],
+        "follow_ups": {
+            "describe_hobby": ["What do you like about it?", "How did you get into it?"],
+            "explain_reason": ["How often do you do it?"],
+        },
+        "help_materials": {
+            "keywords": "I like / because",
+            "half": "先说自己喜欢什么：'I like...'，再补原因 'because...'",
+            "full": "I like painting in my free time, because it helps me relax.",
+        },
+        "reference_expressions": [
+            "I like painting in my free time.",
+            "Because it helps me relax.",
+        ],
+        "variations": ["运动类爱好", "艺术类爱好", "阅读/观影"],
+        "stop_conditions": "描述兴趣 + 说明原因均完成，或用户主动结束，或到时收尾",
+        "completion_criteria": "描述兴趣（describe_hobby）+ 说明原因（explain_reason）均独立完成",
     },
 }
 

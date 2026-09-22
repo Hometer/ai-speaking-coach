@@ -63,6 +63,8 @@ export interface SessionListItem {
   turn_count: number;
   goal_status: string;
   end_reason: string | null;
+  scene_id: string;
+  scene_label: string;
 }
 
 export interface MemoryItem {

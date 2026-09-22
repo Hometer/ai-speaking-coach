@@ -137,6 +137,13 @@ def _log_event(
     )
 
 
+def _scene_subgoal_keys(session: Session) -> list[str]:
+    """从场景配置读取子目标 key 列表；缺失时回退面试默认。"""
+    scene = SCENARIOS.get(session.scene_id, {})
+    keys = scene.get("subgoals") or ["intro", "followup"]
+    return list(keys)
+
+
 def _load_subgoals(session: Session) -> dict[str, Any]:
     try:
         subgoals = json.loads(session.subgoals) if session.subgoals else {}
@@ -144,15 +151,25 @@ def _load_subgoals(session: Session) -> dict[str, Any]:
         subgoals = {}
     if not isinstance(subgoals, dict):
         subgoals = {}
-    subgoals.setdefault("intro", {"status": "", "evidence": []})
-    subgoals.setdefault("followup", {"status": "", "evidence": []})
+    for key in _scene_subgoal_keys(session):
+        subgoals.setdefault(key, {"status": "", "evidence": []})
     return subgoals
 
 
-def _current_subgoal(subgoals: dict[str, Any]) -> str:
-    if subgoals.get("intro", {}).get("status") == "independent":
-        return "followup"
-    return "intro"
+def _current_subgoal(session: Session, subgoals: dict[str, Any]) -> str:
+    """返回第一个未独立完成的子目标。"""
+    keys = _scene_subgoal_keys(session)
+    for key in keys:
+        if subgoals.get(key, {}).get("status") != "independent":
+            return key
+    return keys[-1]
+
+
+def _all_subgoals_done(session: Session, subgoals: dict[str, Any]) -> bool:
+    return all(
+        subgoals.get(key, {}).get("status") == "independent"
+        for key in _scene_subgoal_keys(session)
+    )
 
 
 def _last_coach_text(db: DbSession, session_id: str) -> str:
@@ -400,7 +417,7 @@ def submit_turn(
 
         # 当前子目标 + 题目
         subgoals = _load_subgoals(session)
-        subgoal = _current_subgoal(subgoals)
+        subgoal = _current_subgoal(session, subgoals)
         question = _last_coach_text(db, session_id)
 
         # 独立评估（与生成分离）
@@ -413,6 +430,7 @@ def submit_turn(
                 "hint_used": hint_used,
                 "input_type": input_type,
                 "goal": session.goal_text,
+                "acceptable_points": SCENARIOS.get(session.scene_id, {}).get("acceptable_points", []),
             }
         )
 
@@ -436,6 +454,9 @@ def submit_turn(
                 "difficulty": session.difficulty,
                 "level": user.level if user else "basic",
                 "scene_context": SCENARIOS.get(session.scene_id, {}).get("coach_context", "an English conversation coach"),
+                "scene_id": session.scene_id,
+                "follow_ups": SCENARIOS.get(session.scene_id, {}).get("follow_ups", {}),
+                "reference_expressions": SCENARIOS.get(session.scene_id, {}).get("reference_expressions", []),
                 "current_question": question,
                 "current_answer": text_for_eval,
                 "input_type": input_type,
@@ -460,10 +481,7 @@ def submit_turn(
         raise
 
     # 状态迁移（先算到局部变量）
-    both_done = (
-        new_subgoals.get("intro", {}).get("status") == "independent"
-        and new_subgoals.get("followup", {}).get("status") == "independent"
-    )
+    both_done = _all_subgoals_done(session, new_subgoals)
     new_status = S_WAITING
     if decision.action_type == "suggest_practice":
         new_status = S_PRACTICE
@@ -570,7 +588,7 @@ def submit_practice(
         {
             "goal": session.goal_text,
             "difficulty": session.difficulty,
-            "subgoal": _current_subgoal(_load_subgoals(session)),
+            "subgoal": _current_subgoal(session, _load_subgoals(session)),
             "practice": {
                 "score": score,
                 "valid": valid,
@@ -728,6 +746,8 @@ def list_sessions(db: DbSession, user_id: str) -> list[dict[str, Any]]:
                 "turn_count": _count_user_turns(db, s.id),
                 "goal_status": review.get("goal_status") or _summary(db, s)["goal_status"],
                 "end_reason": s.end_reason,
+                "scene_id": s.scene_id,
+                "scene_label": SCENARIOS.get(s.scene_id, {}).get("label", ""),
             }
         )
     return result
@@ -881,7 +901,12 @@ def request_help(
         coach = get_coach_provider()
         question = _last_coach_text(db, session_id)
         decision = coach.help(
-            {"help_type": help_type, "help_level": help_level, "current_question": question}
+            {
+                "help_type": help_type,
+                "help_level": help_level,
+                "current_question": question,
+                "help_materials": SCENARIOS.get(session.scene_id, {}).get("help_materials", {}),
+            }
         )
         tts = get_tts_provider()
         audio = tts.synthesize(decision.reply_text)

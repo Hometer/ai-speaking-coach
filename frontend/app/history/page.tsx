@@ -57,10 +57,10 @@ export default function HistoryPage() {
     finally { setPending(""); }
   }
 
-  async function retry(difficulty = "standard") {
+  async function retry(difficulty = "standard", sceneId = "job_interview") {
     if (pending) return;
     setPending("retry"); setErr("");
-    try { const s = await createSession("basic", difficulty, 5); router.push(`/practice/${s.session_id}`); }
+    try { const s = await createSession("basic", difficulty, 5, sceneId); router.push(`/practice/${s.session_id}`); }
     catch(e) { setErr(e instanceof Error ? e.message : String(e)); setPending(""); }
   }
 
@@ -82,9 +82,9 @@ export default function HistoryPage() {
       {loading ? <div role="status" aria-label="加载练习记录"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div> : items.length === 0 && !err ? (
         <div className="panel empty-state"><span className="icon-tile"><Icon name="history" size={30} /></span><h2>你的故事，从第一次练习开始</h2><p>完成一段对话后，练习记录和回顾会出现在这里。给自己 5 分钟，试着说说你的经历吧。</p><Link href="/" className="btn btn-primary">去开始练习 <Icon name="arrow" size={16} /></Link></div>
       ) : <div className="history-list">{items.map(it => <article key={it.session_id} className="panel history-row">
-        <span className="icon-tile"><Icon name="briefcase" /></span><div className="history-info"><h3>英文面试 · 自我介绍</h3><div className="history-meta"><span>{formatDate(it.started_at)}</span><span>{it.difficulty === "simple" ? "简单" : "标准"}难度</span><span>{it.turn_count} 轮回答</span></div></div>
+        <span className="icon-tile"><Icon name="briefcase" /></span><div className="history-info"><h3>{it.scene_label || "口语练习"}</h3><div className="history-meta"><span>{formatDate(it.started_at)}</span><span>{it.difficulty === "simple" ? "简单" : "标准"}难度</span><span>{it.turn_count} 轮回答</span></div></div>
         <span className={`badge ${it.goal_status === "independent" ? "" : "badge-neutral"}`}>{it.status === "PAUSED" ? "已暂停" : it.status !== "ENDED" ? "进行中" : EVAL_CN[it.goal_status] || it.goal_status}</span>
-        <div className="row-actions"><button onClick={() => view(it.session_id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === it.session_id ? "加载中…" : "查看回顾"}</button><button onClick={() => retry(it.difficulty)} disabled={!!pending} className="btn btn-ghost btn-small">再练一次<Icon name="arrow" size={13} /></button><button onClick={() => del(it.session_id)} disabled={!!pending} className="btn btn-ghost btn-small" aria-label={`删除 ${formatDate(it.started_at)} 的记录`}><Icon name="trash" size={15} /></button></div>
+        <div className="row-actions"><button onClick={() => view(it.session_id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === it.session_id ? "加载中…" : "查看回顾"}</button><button onClick={() => retry(it.difficulty, it.scene_id)} disabled={!!pending} className="btn btn-ghost btn-small">再练一次<Icon name="arrow" size={13} /></button><button onClick={() => del(it.session_id)} disabled={!!pending} className="btn btn-ghost btn-small" aria-label={`删除 ${formatDate(it.started_at)} 的记录`}><Icon name="trash" size={15} /></button></div>
       </article>)}</div>}
       {detail && <section ref={detailRef} className="panel detail-panel" aria-label="对话与回顾">
         <div className="section-head mt-0"><div><div className="eyebrow">SESSION REVIEW</div><h2>对话与回顾</h2></div><button onClick={() => setDetail(null)} className="btn btn-ghost btn-small"><Icon name="close" size={16} />收起</button></div>
@@ -93,7 +93,7 @@ export default function HistoryPage() {
           {t.input_type === "coach" ? <div className="detail-turn"><small>AI 教练</small>{t.reply_text}</div> : t.input_type === "practice" ? <div className="detail-turn user"><small>跟读练习</small>{t.practice_sentence || "短句练习"}</div> : <>{(t.revised_text || t.user_text || t.transcript) && <div className="detail-turn user"><small>你的回答{t.revised_text ? " · 已修订" : ""}</small>{t.revised_text || t.user_text || t.transcript}</div>}{t.reply_text && <div className="detail-turn"><small>AI 教练</small>{t.reply_text}</div>}</>}
         </div>)}
         {detail.review && Array.isArray(detail.review.improvements) && detail.review.improvements.length > 0 && <div className="mt-5"><h3 className="font-semibold mb-2">值得再练的表达</h3>{(detail.review.improvements as Record<string, unknown>[]).map((imp,i) => <div className="detail-turn" key={i}><small>{imp.disputed ? "已标记有误，待复核" : "改进建议"}</small><p>{String(imp.explanation_cn ?? "")}</p><p className="mt-2 font-medium">{String(imp.practice_sentence ?? "")}</p></div>)}</div>}
-        <div className="flex flex-wrap gap-3 mt-5"><Link className="btn btn-secondary" href={`/practice/${detail.session_id}`}>{detail.status === "ENDED" ? "打开完整回顾" : "回到这次练习"}<Icon name="arrow" size={15} /></Link><button onClick={() => retry(detail.difficulty)} disabled={!!pending} className="btn btn-primary">再练一次（同难度新题）</button></div>
+        <div className="flex flex-wrap gap-3 mt-5"><Link className="btn btn-secondary" href={`/practice/${detail.session_id}`}>{detail.status === "ENDED" ? "打开完整回顾" : "回到这次练习"}<Icon name="arrow" size={15} /></Link><button onClick={() => retry(detail.difficulty, detail.scene_id)} disabled={!!pending} className="btn btn-primary">再练一次（同难度新题）</button></div>
         <p className="text-xs muted mt-4">反馈仅供练习参考，不代表考试成绩或语言能力认证。</p>
       </section>}
       <footer className="page-footer"><span><Icon name="shield" size={12} /> 会话文本保留 30 天，你也可以随时删除</span><span>Progress starts with practice.</span></footer>

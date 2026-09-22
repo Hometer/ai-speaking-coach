@@ -29,6 +29,7 @@ export default function PracticePage() {
   const router = useRouter();
 
   const [goal, setGoal] = useState("");
+  const [sceneLabel, setSceneLabel] = useState("");
   const [status, setStatus] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [text, setText] = useState("");
@@ -59,6 +60,7 @@ export default function PracticePage() {
       .then((d) => {
         if (!active) return;
         setGoal(d.goal_text);
+        setSceneLabel(d.scene_label || "");
         setStatus(d.status);
         setReview(d.review);
         setSourceInvalid(!!d.source_invalid);
@@ -371,7 +373,7 @@ export default function PracticePage() {
 
   return (
     <main className="page">
-      <div className="topline"><button onClick={() => router.push("/")} className="text-link"><Icon name="back" size={16} /> 返回练习首页</button><span className="subtle-tag">英文面试 · 自我介绍</span></div>
+      <div className="topline"><button onClick={() => router.push("/")} className="text-link"><Icon name="back" size={16} /> 返回练习首页</button><span className="subtle-tag">{sceneLabel || "口语练习"}</span></div>
       <div className={styles.titleRow}><div><div className="eyebrow">ONE CONVERSATION AT A TIME</div><h1 className="page-title">{ended ? "给这次练习，留一点回味。" : "慢慢说，教练在听。"}</h1><p className="page-description">{ended ? "重看你的表达，找到下一次想尝试的小改变。" : "不必急着说得完美，先把你的想法说出来。"}</p></div><span className="badge" role="status"><span className={styles.statusDot} />{busy ? "正在处理…" : STATUS_CN[status] || (sessionLoading ? "加载中" : "暂不可用")}</span></div>
       <div className={styles.practiceLayout}>
         <div className={styles.conversation}>
@@ -415,7 +417,7 @@ export default function PracticePage() {
         </div>
 
         <aside className={styles.sessionAside}>
-          <section className={`panel ${styles.goalCard}`}><span className="icon-tile"><Icon name="target" /></span><div className="eyebrow mt-4">TODAY’S FOCUS</div><h2>本次小目标</h2><p className={styles.goalText}>{goal || (sessionLoading ? "正在准备目标…" : "目标暂不可用")}</p><div className={styles.goalDivider} /><p className="text-xs muted">围绕真实经历组织表达。暂时想不到时，可以向教练求助。</p></section>
+          <section className={`panel ${styles.goalCard}`}><span className="icon-tile"><Icon name="target" /></span><div className="eyebrow mt-4">TODAY’S FOCUS</div><h2>本次小目标</h2><p className={styles.goalText}>{goal || (sessionLoading ? "正在准备目标…" : "目标暂不可用")}</p><div className={styles.goalDivider} /><p className="text-xs muted">围绕本次小目标组织表达。暂时想不到时，可以向教练求助。</p></section>
           <section className={styles.tipCard}><Icon name="leaf" size={22} /><h3>给自己一点思考时间</h3><p>先说重点，再补充细节。<br />停顿不是问题，开口就是开始。</p></section>
           {!ended && <div className={styles.sessionActions}><button onClick={togglePause} disabled={busy || sessionLoading || !status} className="btn btn-secondary"><Icon name={paused ? "play" : "pause"} size={15} />{paused ? "继续练习" : "暂停练习"}</button><button onClick={end} disabled={busy || sessionLoading || !status} className="btn btn-ghost">结束练习</button></div>}
           <p className={styles.sessionNote}><Icon name="shield" size={13} /> 文字回答不参与发音评分</p>

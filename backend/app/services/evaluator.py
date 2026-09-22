@@ -26,7 +26,9 @@ class MockEvaluatorProvider(EvaluatorProvider):
             return EvaluationOutput(result="insufficient_evidence")
         if hint_used:
             return EvaluationOutput(result="hinted")
-        if "I have" in answer or "experience" in answer or len(answer) >= 25:
+        points = context.get("acceptable_points") or ["i have", "experience"]
+        lowered = answer.lower()
+        if any(kw.lower() in lowered for kw in points) or len(answer) >= 25:
             return EvaluationOutput(result="independent")
         return EvaluationOutput(result="incomplete")
 
