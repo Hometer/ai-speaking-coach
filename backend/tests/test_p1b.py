@@ -1,0 +1,49 @@
+"""v0.7 P1 补充：七日训练计划 / 最小质检工作台 测试。"""
+from app.core import config
+
+USER = {"X-Invite-Code": "test-a"}
+QA = {"X-Invite-Code": "qa-a"}
+
+
+def _enable_qa():
+    config.settings.qa_invite_codes = ["qa-a"]
+
+
+def test_create_training_plan_seven_days(client):
+    r = client.post("/api/v1/training-plan", json={"goal_type": "travel"}, headers=USER)
+    assert r.status_code == 200, r.text
+    plan = r.json()
+    assert len(plan["days"]) == 7
+    # 旅行目标只用旅行系列场景
+    assert all(d["scene_id"] in ("hotel_checkin", "restaurant_order") for d in plan["days"])
+
+
+def test_skip_and_restart_plan(client):
+    client.post("/api/v1/training-plan", json={"goal_type": "daily"}, headers=USER)
+    plan = client.get("/api/v1/training-plan", headers=USER).json()
+    assert plan["days"][0]["status"] == "pending"
+    r = client.post("/api/v1/training-plan/1/skip", headers=USER)
+    assert r.json()["days"][0]["status"] == "skipped"
+    r2 = client.post("/api/v1/training-plan/restart", headers=USER)
+    assert all(d["status"] == "pending" for d in r2.json()["days"])
+
+
+def test_qa_forbidden_for_normal_user(client):
+    _enable_qa()
+    r = client.get("/api/v1/qa/sessions", headers=USER)
+    assert r.status_code == 403
+
+
+def test_qa_accessible_for_reviewer(client):
+    _enable_qa()
+    r = client.get("/api/v1/qa/sessions", headers=QA)
+    assert r.status_code == 200
+    r2 = client.post(
+        "/api/v1/qa/labels",
+        json={"session_id": "s1", "turn_id": "t1", "issue_type": "mis_correction", "conclusion": "confirmed"},
+        headers=QA,
+    )
+    assert r2.status_code == 200, r2.text
+    r3 = client.get("/api/v1/qa/stats", headers=QA)
+    assert r3.status_code == 200
+    assert r3.json()["total"] >= 1

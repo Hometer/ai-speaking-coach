@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
-from app.core.auth import get_user_id
+from app.core.auth import get_qa_user_id, get_user_id
 from app.core.errors import AppError, error_body
 from app.models.database import SessionLocal
 from app.models.entities import DeviceCheck
@@ -27,10 +27,14 @@ from app.schemas.session import (
 )
 from app.schemas.turn import TextTurnRequest
 from app.schemas.review_queue import AddToQueueRequest, QueueItemResponse, RetestRequest
+from app.schemas.training_plan import CreatePlanRequest, PlanResponse
+from app.schemas.quality_label import AddLabelRequest
 from app.services import memory as memory_svc
 from app.services import session_svc
 from app.services import review_queue as queue_svc
 from app.services import progress as progress_svc
+from app.services import training_plan as plan_svc
+from app.services import quality_label as qa_svc
 from app.services.prompts import scenarios as scenarios_mod
 
 router = APIRouter(prefix="/api/v1")
@@ -413,5 +417,68 @@ def progress(user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return progress_svc.get_progress(db, user_id)
+    finally:
+        db.close()
+
+
+@router.post("/training-plan", response_model=PlanResponse)
+def create_plan(req: CreatePlanRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return plan_svc.create_or_renew_plan(db, user_id, req.goal_type)
+    finally:
+        db.close()
+
+
+@router.get("/training-plan", response_model=PlanResponse | None)
+def get_plan(user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return plan_svc.get_plan(db, user_id)
+    finally:
+        db.close()
+
+
+@router.post("/training-plan/{day}/skip", response_model=PlanResponse)
+def skip_plan_day(day: int, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return plan_svc.skip_day(db, user_id, day)
+    finally:
+        db.close()
+
+
+@router.post("/training-plan/restart", response_model=PlanResponse)
+def restart_plan(user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return plan_svc.restart_plan(db, user_id)
+    finally:
+        db.close()
+
+
+@router.get("/qa/sessions")
+def qa_sessions(user_id: str = Depends(get_qa_user_id)):
+    db = SessionLocal()
+    try:
+        return qa_svc.list_sessions(db)
+    finally:
+        db.close()
+
+
+@router.post("/qa/labels")
+def qa_add_label(req: AddLabelRequest, user_id: str = Depends(get_qa_user_id)):
+    db = SessionLocal()
+    try:
+        return qa_svc.add_label(db, user_id, req.session_id, req.turn_id, req.issue_type, req.conclusion)
+    finally:
+        db.close()
+
+
+@router.get("/qa/stats")
+def qa_stats(user_id: str = Depends(get_qa_user_id)):
+    db = SessionLocal()
+    try:
+        return qa_svc.stats(db)
     finally:
         db.close()

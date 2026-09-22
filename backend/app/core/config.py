@@ -37,6 +37,8 @@ class Settings:
         self.xf_appid = os.getenv("XF_APPID", "")
         self.xf_api_key = os.getenv("XF_API_KEY", "")
         self.xf_api_secret = os.getenv("XF_API_SECRET", "")
+        # 质检员邀请码（逗号分隔，默认空=无质检员）
+        self.qa_invite_codes = [c.strip() for c in os.getenv("QA_INVITE_CODES", "").split(",") if c.strip()]
 
 
 settings = Settings()

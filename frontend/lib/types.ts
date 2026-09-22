@@ -115,3 +115,36 @@ export interface Progress {
   voice_evaluable_rate: number;
   calc_version: string;
 }
+
+export interface PlanDay {
+  day: number;
+  scene_id: string;
+  scene_label: string;
+  status: string;
+  retest_item_id: number | null;
+  adjustment_reason: string;
+}
+
+export interface TrainingPlan {
+  id: number;
+  goal_type: string;
+  days: PlanDay[];
+  status: string;
+}
+
+export interface QaTurn {
+  turn_id: string;
+  input_type: string;
+  user_text: string;
+  reply_text: string;
+  eval_result: string;
+  help_type: string;
+}
+
+export interface QaSession {
+  session_id: string;
+  scene_id: string;
+  status: string;
+  started_at: string | null;
+  turns: QaTurn[];
+}

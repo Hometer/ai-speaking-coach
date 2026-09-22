@@ -177,3 +177,28 @@ class ProgressSnapshot(Base):
     metrics_json: Mapped[str] = mapped_column(Text, default="{}")
     calc_version: Mapped[str] = mapped_column(String(16), default="v1")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class TrainingPlan(Base):
+    __tablename__ = "training_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    goal_type: Mapped[str] = mapped_column(String(24), default="job_prep")
+    days_json: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+class QualityLabel(Base):
+    __tablename__ = "quality_labels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), default="")
+    issue_type: Mapped[str] = mapped_column(String(24), default="")
+    conclusion: Mapped[str] = mapped_column(String(24), default="")
+    reviewer_id: Mapped[str] = mapped_column(String(64), default="")
+    review_version: Mapped[str] = mapped_column(String(16), default="v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

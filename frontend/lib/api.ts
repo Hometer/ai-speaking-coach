@@ -1,4 +1,4 @@
-import type { ApiErrorBody, MemoryItem, Progress, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TurnDone } from "./types";
+import type { ApiErrorBody, MemoryItem, Progress, QaSession, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TrainingPlan, TurnDone } from "./types";
 
 // 邀请码存本地，由用户输入，不再前端硬编码共享凭证
 const INVITE_KEY = "invite_code";
@@ -234,6 +234,49 @@ export async function deleteQueueItem(id: number): Promise<void> {
 export async function getProgress(): Promise<Progress> {
   const res = await fetch("/api/v1/progress", { headers: authHeaders() });
   return handle<Progress>(res);
+}
+
+export async function createPlan(goalType: string): Promise<TrainingPlan> {
+  const res = await fetch("/api/v1/training-plan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ goal_type: goalType }),
+  });
+  return handle<TrainingPlan>(res);
+}
+
+export async function getPlan(): Promise<TrainingPlan | null> {
+  const res = await fetch("/api/v1/training-plan", { headers: authHeaders() });
+  return handle<TrainingPlan | null>(res);
+}
+
+export async function skipPlanDay(day: number): Promise<TrainingPlan> {
+  const res = await fetch(`/api/v1/training-plan/${day}/skip`, { method: "POST", headers: authHeaders() });
+  return handle<TrainingPlan>(res);
+}
+
+export async function restartPlan(): Promise<TrainingPlan> {
+  const res = await fetch("/api/v1/training-plan/restart", { method: "POST", headers: authHeaders() });
+  return handle<TrainingPlan>(res);
+}
+
+export async function qaSessions(): Promise<QaSession[]> {
+  const res = await fetch("/api/v1/qa/sessions", { headers: authHeaders() });
+  return handle<QaSession[]>(res);
+}
+
+export async function qaAddLabel(sessionId: string, turnId: string, issueType: string): Promise<unknown> {
+  const res = await fetch("/api/v1/qa/labels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ session_id: sessionId, turn_id: turnId, issue_type: issueType, conclusion: "confirmed" }),
+  });
+  return handle<unknown>(res);
+}
+
+export async function qaStats(): Promise<{ total: number; by_type: Record<string, number>; review_version: string }> {
+  const res = await fetch("/api/v1/qa/stats", { headers: authHeaders() });
+  return handle<{ total: number; by_type: Record<string, number>; review_version: string }>(res);
 }
 
 async function parseSSE<T>(res: Response): Promise<T> {
