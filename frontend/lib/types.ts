@@ -7,6 +7,8 @@ export interface SessionCreated {
   session_id: string;
   status: string;
   goal_text: string;
+  scene_id: string;
+  scene_label: string;
   reply_text: string;
   reply_audio_url: string;
 }
@@ -45,6 +47,8 @@ export interface SessionDetail {
   difficulty: string;
   end_reason: string | null;
   practice_type: string;
+  scene_id: string;
+  scene_label: string;
   source_invalid: boolean;
   review: Record<string, unknown> | null;
   turns: TurnItem[];
@@ -71,4 +75,18 @@ export interface MemoryItem {
 
 export interface ApiErrorBody {
   error: { code: string; message: string };
+}
+
+export interface Scenario {
+  scene_id: string;
+  series: string;
+  series_label: string;
+  label: string;
+  version: string;
+  goal_zh: string;
+  user_role: string;
+  coach_role: string;
+  goal_text?: string;
+  levels?: string[];
+  openings?: Record<string, string>;
 }

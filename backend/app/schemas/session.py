@@ -11,12 +11,15 @@ class SessionCreateRequest(BaseModel):
     level: Level = "basic"
     difficulty: Difficulty = "standard"
     duration_minutes: float = Field(default=5.0, ge=3.0, le=15.0)
+    scene_id: str = "job_interview"
 
 
 class SessionCreatedResponse(BaseModel):
     session_id: str
     status: str
     goal_text: str
+    scene_id: str = "job_interview"
+    scene_label: str = ""
     reply_text: str
     reply_audio_url: str
 
@@ -43,6 +46,8 @@ class SessionDetailResponse(BaseModel):
     difficulty: str
     end_reason: str | None = None
     practice_type: str = "interview"
+    scene_id: str = "job_interview"
+    scene_label: str = ""
     source_invalid: bool = False
     review: dict | None = None
     turns: list[TurnItem] = []
@@ -97,3 +102,20 @@ class HelpRequest(BaseModel):
 class PracticeSentenceRequest(BaseModel):
     source_session_id: str
     turn_id: str
+
+
+class ScenarioListItem(BaseModel):
+    scene_id: str
+    series: str
+    series_label: str
+    label: str
+    version: str
+    goal_zh: str
+    user_role: str
+    coach_role: str
+
+
+class ScenarioDetail(ScenarioListItem):
+    goal_text: str
+    levels: list[str] = []
+    openings: dict[str, str] = {}

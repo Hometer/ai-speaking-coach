@@ -6,13 +6,13 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.core.jsonutil import extract_json_object
 from app.schemas.coach import CoachDecision
-from app.services.prompts.coach import COACH_DECISION_FORMAT, COACH_SYSTEM_PROMPT_V2
+from app.services.prompts.coach import COACH_DECISION_FORMAT, coach_system_prompt
 
 
 class CoachProvider(ABC):
     @abstractmethod
-    def opening(self, goal_text: str, difficulty: str) -> CoachDecision:
-        """会话创建时的首个问题。"""
+    def opening(self, scene: dict, level: str) -> CoachDecision:
+        """会话创建时的首个问题（按场景与水平）。"""
 
     @abstractmethod
     def decide(self, context: dict[str, Any]) -> CoachDecision:
@@ -26,11 +26,13 @@ class CoachProvider(ABC):
 class MockCoachProvider(CoachProvider):
     """确定性的 mock 教练。决策只依赖 context 中的内容，供测试与离线演示。"""
 
-    def opening(self, goal_text: str, difficulty: str) -> CoachDecision:
+    def opening(self, scene: dict, level: str) -> CoachDecision:
+        openings = scene.get("openings") or {}
+        text = openings.get(level) or openings.get("basic") or "Hello, let's start."
         return CoachDecision(
             action_type="follow_up",
-            reply_text="Welcome. Tell me about one experience you are proud of.",
-            follow_up_question="What experience are you most proud of?",
+            reply_text=text,
+            follow_up_question=text,
         )
 
     def decide(self, context: dict[str, Any]) -> CoachDecision:
@@ -129,14 +131,14 @@ class DashScopeCoachProvider(CoachProvider):
         self.api_key = api_key
         self.model = model
 
-    def _call(self, user_msg: str) -> dict[str, Any]:
+    def _call(self, user_msg: str, scene_context: str = "an English conversation coach") -> dict[str, Any]:
         import dashscope
 
         dashscope.api_key = self.api_key
         resp = dashscope.Generation.call(
             model=self.model,
             messages=[
-                {"role": "system", "content": COACH_SYSTEM_PROMPT_V2 + "\n" + COACH_DECISION_FORMAT},
+                {"role": "system", "content": coach_system_prompt(scene_context) + "\n" + COACH_DECISION_FORMAT},
                 {"role": "user", "content": user_msg},
             ],
             result_format="message",
@@ -166,15 +168,19 @@ class DashScopeCoachProvider(CoachProvider):
             raise AppError("COACH_EMPTY", "教练回复为空", status_code=502)
         return decision
 
-    def opening(self, goal_text: str, difficulty: str) -> CoachDecision:
-        data = self._call(f"Start the session. Goal: {goal_text}. Difficulty: {difficulty}. Give the opening.")
+    def opening(self, scene: dict, level: str) -> CoachDecision:
+        data = self._call(
+            f"Start the session. Goal: {scene.get('goal_text')}. Level: {level}. Give the opening.",
+            scene.get("coach_context", "an English conversation coach"),
+        )
         return self._to_decision(data)
 
     def decide(self, context: dict[str, Any]) -> CoachDecision:
         data = self._call(
             "Session context as JSON:\n"
             + __import__("json").dumps(context, ensure_ascii=False)
-            + "\nChoose the next teaching action. The follow-up must be based on what the user actually said."
+            + "\nChoose the next teaching action. The follow-up must be based on what the user actually said.",
+            context.get("scene_context", "an English conversation coach"),
         )
         return self._to_decision(data)
 
@@ -182,7 +188,8 @@ class DashScopeCoachProvider(CoachProvider):
         data = self._call(
             "Help request as JSON:\n"
             + __import__("json").dumps(context, ensure_ascii=False)
-            + "\nGive the appropriate help for the requested help_type."
+            + "\nGive the appropriate help for the requested help_type.",
+            context.get("scene_context", "an English conversation coach"),
         )
         return self._to_decision(data)
 

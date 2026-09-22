@@ -33,12 +33,16 @@ class Session(Base):
     subgoals: Mapped[str] = mapped_column(Text, default="{}")
     duration_minutes: Mapped[float] = mapped_column(Float, default=5.0)
     practice_type: Mapped[str] = mapped_column(String(24), default="interview")
+    scene_id: Mapped[str] = mapped_column(String(32), default="job_interview")
+    scene_version: Mapped[str] = mapped_column(String(16), default="v1")
     source_session_id: Mapped[str] = mapped_column(String(64), default="")
     source_turn_id: Mapped[str] = mapped_column(String(64), default="")
     practice_sentence: Mapped[str] = mapped_column(Text, default="")
     practice_goal: Mapped[str] = mapped_column(Text, default="")
     source_invalid: Mapped[bool] = mapped_column(default=False)
     rechecked: Mapped[bool] = mapped_column(default=False)
+    active_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    active_since: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
@@ -133,4 +137,14 @@ class Invite(Base):
     code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     revoked: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class DeviceCheck(Base):
+    __tablename__ = "device_checks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    summary: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(16), default="ok")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

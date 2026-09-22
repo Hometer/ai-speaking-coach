@@ -1,4 +1,4 @@
-import type { ApiErrorBody, MemoryItem, SessionCreated, SessionDetail, SessionListItem, TurnDone } from "./types";
+import type { ApiErrorBody, MemoryItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TurnDone } from "./types";
 
 // 邀请码存本地，由用户输入，不再前端硬编码共享凭证
 const INVITE_KEY = "invite_code";
@@ -33,15 +33,35 @@ async function handle<T>(res: Response): Promise<T> {
   return data as T;
 }
 
+export async function listScenarios(): Promise<Scenario[]> {
+  const res = await fetch("/api/v1/scenarios", { headers: authHeaders() });
+  return handle<Scenario[]>(res);
+}
+
+export async function getScenario(sceneId: string): Promise<Scenario> {
+  const res = await fetch(`/api/v1/scenarios/${sceneId}`, { headers: authHeaders() });
+  return handle<Scenario>(res);
+}
+
+export async function recordDeviceCheck(status: string, summary: string): Promise<void> {
+  const res = await fetch("/api/v1/device-check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ status, summary }),
+  });
+  await handle<unknown>(res);
+}
+
 export async function createSession(
   level: string,
   difficulty: string,
   durationMinutes = 5,
+  sceneId = "job_interview",
 ): Promise<SessionCreated> {
   const res = await fetch("/api/v1/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ level, difficulty, duration_minutes: durationMinutes }),
+    body: JSON.stringify({ level, difficulty, duration_minutes: durationMinutes, scene_id: sceneId }),
   });
   return handle<SessionCreated>(res);
 }

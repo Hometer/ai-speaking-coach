@@ -23,6 +23,7 @@ from app.services.asr import get_asr_provider
 from app.services.review import build_review, dedupe_improvements
 from app.services.tts import get_tts_provider
 from app.services.turn import _validate_audio
+from app.services.prompts.scenarios import SCENARIOS, get_approved_scenes, get_scene
 
 S_PREPARING = "PREPARING"
 S_WAITING = "WAITING_INPUT"
@@ -32,11 +33,20 @@ S_RECHECK = "RECHECK"
 S_PAUSED = "PAUSED"
 S_ENDED = "ENDED"
 
-GOAL_TEXT = "Introduce one experience and answer one related follow-up question."
-
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _active_elapsed_seconds(session: Session) -> float:
+    """累计非暂停时长（秒）：暂停区间不计入（F-07 精确非暂停计时）。"""
+    extra = 0.0
+    if session.active_since is not None:
+        since = session.active_since
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        extra = (datetime.now(timezone.utc) - since).total_seconds()
+    return float(session.active_seconds or 0.0) + max(0.0, extra)
 
 
 def _save_audio(audio_bytes: bytes, ext: str) -> str:
@@ -189,8 +199,17 @@ def finalize_session(db: DbSession, session: Session) -> None:
         memory_svc.generate_candidates(db, session.user_id, session.id, review)
 
 
-def create_session(db: DbSession, user_id: str, level: str, difficulty: str, duration_minutes: float = 5.0) -> dict[str, Any]:
+def create_session(
+    db: DbSession,
+    user_id: str,
+    level: str,
+    difficulty: str,
+    duration_minutes: float = 5.0,
+    scene_id: str = "job_interview",
+) -> dict[str, Any]:
     _get_or_create_user(db, user_id, level)
+    scene = get_scene(scene_id)
+    goal_text = scene["goal_text"]
     session_id = uuid.uuid4().hex
     guard = BudgetGuard(db)
     guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
@@ -199,16 +218,19 @@ def create_session(db: DbSession, user_id: str, level: str, difficulty: str, dur
         id=session_id,
         user_id=user_id,
         status=S_PREPARING,
-        goal_text=GOAL_TEXT,
+        goal_text=goal_text,
         difficulty=difficulty,
+        scene_id=scene_id,
+        scene_version=scene["version"],
         subgoals="{}",
         duration_minutes=duration_minutes,
         rechecked=False,
+        active_since=_now(),
     )
     db.add(session)
 
     coach = get_coach_provider()
-    decision = coach.opening(GOAL_TEXT, difficulty)
+    decision = coach.opening(scene, level)
     tts = get_tts_provider()
     audio = tts.synthesize(decision.reply_text)
     audio_url = _save_audio(audio, tts.ext)
@@ -230,7 +252,9 @@ def create_session(db: DbSession, user_id: str, level: str, difficulty: str, dur
     return {
         "session_id": session_id,
         "status": session.status,
-        "goal_text": GOAL_TEXT,
+        "goal_text": goal_text,
+        "scene_id": scene_id,
+        "scene_label": scene["label"],
         "reply_text": decision.reply_text,
         "reply_audio_url": audio_url,
     }
@@ -286,6 +310,8 @@ def create_sentence_practice(
         status=S_PREPARING,
         goal_text="Practice this sentence and see evidence-based feedback.",
         difficulty="standard",
+        scene_id=source.scene_id,
+        scene_version=source.scene_version,
         subgoals="{}",
         duration_minutes=5.0,
         practice_type="sentence_practice",
@@ -294,6 +320,7 @@ def create_sentence_practice(
         practice_sentence=sentence,
         practice_goal=goal,
         rechecked=False,
+        active_since=_now(),
     )
     db.add(session)
     tts = get_tts_provider()
@@ -340,19 +367,14 @@ def submit_turn(
     if session.status not in (S_WAITING, S_PRACTICE, S_RECHECK):
         raise AppError("INVALID_STATE", "当前状态不能提交回合", status_code=409)
 
-    # 时长校验（F-07A）：墙钟近似；精确累计非暂停时长由部署阶段定时任务接入
-    if session.started_at:
-        started = session.started_at
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
-        elapsed_min = (datetime.now(timezone.utc) - started).total_seconds() / 60
-        if elapsed_min > session.duration_minutes:
-            session.status = S_ENDED
-            session.end_reason = "time_limit"
-            session.ended_at = _now()
-            db.commit()
-            finalize_session(db, session)
-            raise AppError("TIME_LIMIT", "练习时间已到，本次练习结束", status_code=409)
+    # 时长校验（F-07）：精确累计非暂停时长，到时停止新提交并收尾
+    if _active_elapsed_seconds(session) > session.duration_minutes * 60:
+        session.status = S_ENDED
+        session.end_reason = "time_limit"
+        session.ended_at = _now()
+        db.commit()
+        finalize_session(db, session)
+        raise AppError("TIME_LIMIT", "练习时间已到，本次练习结束", status_code=409)
 
     guard = BudgetGuard(db)
     guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
@@ -413,6 +435,7 @@ def submit_turn(
                 "goal": session.goal_text,
                 "difficulty": session.difficulty,
                 "level": user.level if user else "basic",
+                "scene_context": SCENARIOS.get(session.scene_id, {}).get("coach_context", "an English conversation coach"),
                 "current_question": question,
                 "current_answer": text_for_eval,
                 "input_type": input_type,
@@ -653,6 +676,8 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
         "difficulty": session.difficulty,
         "end_reason": session.end_reason,
         "practice_type": session.practice_type,
+        "scene_id": session.scene_id,
+        "scene_label": SCENARIOS.get(session.scene_id, {}).get("label", ""),
         "source_invalid": session.source_invalid,
         "review": _review_of(session),
         "turns": [
@@ -755,9 +780,12 @@ def set_paused(db: DbSession, session_id: str, user_id: str, paused: bool) -> di
         if session.status == S_ENDED:
             raise AppError("SESSION_ENDED", "会话已结束", status_code=409)
         if session.status != S_PAUSED:
+            session.active_seconds = _active_elapsed_seconds(session)
+            session.active_since = None
             session.status = S_PAUSED
     else:
         if session.status == S_PAUSED:
+            session.active_since = _now()
             session.status = S_WAITING
     db.commit()
     return {"session_id": session_id, "status": session.status}

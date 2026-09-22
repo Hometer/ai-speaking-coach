@@ -8,6 +8,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from app.core.auth import get_user_id
 from app.core.errors import AppError, error_body
 from app.models.database import SessionLocal
+from app.models.entities import DeviceCheck
+from app.schemas.device import DeviceCheckRequest
 from app.schemas.memory import MemoryItem, MemorySettingsResponse, MemoryToggleRequest, MemoryUpdateRequest
 from app.schemas.session import (
     EndRequest,
@@ -16,6 +18,8 @@ from app.schemas.session import (
     PracticeResponse,
     PracticeSentenceRequest,
     ReviseTurnRequest,
+    ScenarioDetail,
+    ScenarioListItem,
     SessionCreateRequest,
     SessionCreatedResponse,
     SessionDetailResponse,
@@ -24,6 +28,7 @@ from app.schemas.session import (
 from app.schemas.turn import TextTurnRequest
 from app.services import memory as memory_svc
 from app.services import session_svc
+from app.services.prompts import scenarios as scenarios_mod
 
 router = APIRouter(prefix="/api/v1")
 
@@ -55,7 +60,53 @@ def get_audio(filename: str, user_id: str = Depends(get_user_id)):
 def create_session(req: SessionCreateRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes)
+        return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes, req.scene_id)
+    finally:
+        db.close()
+
+
+@router.get("/scenarios", response_model=list[ScenarioListItem])
+def list_scenarios(user_id: str = Depends(get_user_id)):
+    return [
+        {
+            "scene_id": s["scene_id"],
+            "series": s["series"],
+            "series_label": scenarios_mod.SERIES.get(s["series"], s["series"]),
+            "label": s["label"],
+            "version": s["version"],
+            "goal_zh": s["goal_zh"],
+            "user_role": s["user_role"],
+            "coach_role": s["coach_role"],
+        }
+        for s in scenarios_mod.get_approved_scenes()
+    ]
+
+
+@router.get("/scenarios/{scene_id}", response_model=ScenarioDetail)
+def scenario_detail(scene_id: str, user_id: str = Depends(get_user_id)):
+    s = scenarios_mod.get_scene(scene_id)
+    return {
+        "scene_id": s["scene_id"],
+        "series": s["series"],
+        "series_label": scenarios_mod.SERIES.get(s["series"], s["series"]),
+        "label": s["label"],
+        "version": s["version"],
+        "goal_zh": s["goal_zh"],
+        "goal_text": s["goal_text"],
+        "user_role": s["user_role"],
+        "coach_role": s["coach_role"],
+        "levels": list(s["openings"].keys()),
+        "openings": s["openings"],
+    }
+
+
+@router.post("/device-check")
+def record_device_check(req: DeviceCheckRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        db.add(DeviceCheck(user_id=user_id, summary=req.summary, status=req.status))
+        db.commit()
+        return {"recorded": True}
     finally:
         db.close()
 

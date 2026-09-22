@@ -24,3 +24,23 @@ def init_db() -> None:
     from app.models import entities  # noqa: F401  确保模型注册
 
     Base.metadata.create_all(bind=engine)
+    migrate_db()
+
+
+def migrate_db() -> None:
+    """开发阶段轻量迁移：为已有 SQLite 表补列（幂等）。schema 稳定后换 Alembic。"""
+    if not settings.database_url.startswith("sqlite"):
+        return
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        cols = {r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))}
+        additions = {
+            "scene_id": "VARCHAR(32) DEFAULT 'job_interview'",
+            "scene_version": "VARCHAR(16) DEFAULT 'v1'",
+            "active_seconds": "FLOAT DEFAULT 0.0",
+            "active_since": "DATETIME",
+        }
+        for col, ddl in additions.items():
+            if col not in cols:
+                conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}"))
