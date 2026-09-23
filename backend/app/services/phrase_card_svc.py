@@ -31,6 +31,7 @@ def _pick_chunk(suggestion: str, kws: list[str]) -> str:
 def _to_dict(c: PhraseCard) -> dict[str, Any]:
     return {
         "id": c.id,
+        "source_session_id": c.source_session_id,
         "source_turn_id": c.source_turn_id,
         "original_text": c.original_text,
         "suggestion_text": c.suggestion_text,

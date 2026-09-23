@@ -100,6 +100,7 @@ export interface DailyReviewAttemptResult {
 
 export interface PhraseCard {
   id: number;
+  source_session_id: string;
   source_turn_id: string;
   original_text: string;
   suggestion_text: string;

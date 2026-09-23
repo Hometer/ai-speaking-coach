@@ -1,0 +1,39 @@
+.cardGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 28px; }
+.singleCardGrid { grid-template-columns: minmax(0, 760px); justify-content: center; }
+.cardGrid > :global(.skeleton) { height: 340px; margin-top: 0; }
+.phraseCard { display: flex; flex-direction: column; min-width: 0; padding: 24px; overflow: hidden; }
+.cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sourceState { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; }
+
+.sourceBlock { margin-top: 20px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+.sourceBlock span,
+.suggestionBlock span,
+.chunkBlock > span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 10px; letter-spacing: .8px; }
+.sourceBlock p { color: var(--muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.suggestionBlock { padding: 18px 0; }
+.suggestionBlock h2 { font-size: 19px; font-weight: 650; line-height: 1.55; overflow-wrap: anywhere; }
+
+.chunkBlock { padding: 14px 16px; border-radius: 12px; background: #f1f5ea; }
+.chunkBlock mark { display: inline; padding: 2px 7px; border-radius: 6px; color: var(--brand-strong); background: var(--accent); font-size: 16px; font-weight: 650; }
+.detailGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 18px; border: 1px solid var(--line); border-radius: 13px; overflow: hidden; }
+.detailGrid div { min-width: 0; padding: 14px 15px; }
+.detailGrid div:nth-child(odd) { border-right: 1px solid var(--line); }
+.detailGrid div:nth-child(n + 3) { border-top: 1px solid var(--line); }
+.detailGrid dt { margin-bottom: 4px; color: var(--muted); font-size: 10px; }
+.detailGrid dd { font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.cardActions { display: flex; flex-wrap: wrap; gap: 9px; padding-top: 20px; margin-top: auto; }
+
+@media (max-width: 1000px) {
+  .cardGrid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .cardGrid { margin-top: 23px; }
+  .phraseCard { padding: 19px; }
+  .suggestionBlock h2 { font-size: 17px; }
+  .detailGrid { grid-template-columns: 1fr; }
+  .detailGrid div:nth-child(odd) { border-right: 0; }
+  .detailGrid div:nth-child(n + 2) { border-top: 1px solid var(--line); }
+  .cardActions { display: grid; grid-template-columns: 1fr; }
+  .cardActions button { width: 100%; }
+}

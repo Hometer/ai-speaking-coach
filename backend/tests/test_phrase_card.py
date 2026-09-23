@@ -41,10 +41,35 @@ def test_phrase_card_fields_and_idempotent(client):
     r1 = client.post("/api/v1/phrase-cards", json=body, headers=USER)
     assert r1.status_code == 200, r1.text
     c = r1.json()
+    assert c["source_session_id"] == sid
+    assert c["source_turn_id"] == tid
     for f in ("original_text", "suggestion_text", "chunk_text", "explanation_zh", "context_zh", "replaceable", "example_text"):
         assert c.get(f), f"缺字段 {f}"
     r2 = client.post("/api/v1/phrase-cards", json=body, headers=USER)
     assert r2.json()["id"] == c["id"]  # 幂等
+
+
+def test_phrase_card_reuses_practice_and_queue_flows(client):
+    sid, tid = _source(client)
+    card = client.post(
+        "/api/v1/phrase-cards",
+        json={"source_session_id": sid, "source_turn_id": tid},
+        headers=USER,
+    ).json()
+
+    practice = client.post(
+        "/api/v1/sessions/practice-sentence",
+        json={"source_session_id": card["source_session_id"], "turn_id": card["source_turn_id"]},
+        headers=USER,
+    )
+    assert practice.status_code == 200, practice.text
+
+    body = {"source_session_id": card["source_session_id"], "source_turn_id": card["source_turn_id"]}
+    queue_1 = client.post("/api/v1/review-queue", json=body, headers=USER)
+    queue_2 = client.post("/api/v1/review-queue", json=body, headers=USER)
+    assert queue_1.status_code == 200, queue_1.text
+    assert queue_2.status_code == 200, queue_2.text
+    assert queue_2.json()["id"] == queue_1.json()["id"]
 
 
 def test_phrase_card_list_and_isolation(client):

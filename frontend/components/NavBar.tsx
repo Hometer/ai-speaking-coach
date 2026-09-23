@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 import Icon, { type IconName } from "./Icon";
 
 const items: { href: string; label: string; icon: IconName }[] = [
@@ -17,11 +18,20 @@ const items: { href: string; label: string; icon: IconName }[] = [
 
 export default function NavBar() {
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    navRef.current?.querySelector<HTMLElement>("[aria-current='page']")?.scrollIntoView({
+      block: "nearest",
+      inline: "center",
+    });
+  }, [pathname]);
+
   return (
     <aside className="sidebar">
       <Link href="/" className="brand-lockup" aria-label="AI 口语练习首页"><span className="brand-mark"><Icon name="mic" size={22} /></span><span>AI 口语练习<small>A LITTLE EVERY DAY</small></span></Link>
       <div className="nav-caption">我的学习空间</div>
-      <nav aria-label="主导航" className="main-nav">
+      <nav ref={navRef} aria-label="主导航" className="main-nav">
         {items.map((item) => {
           const active = item.href === "/" ? pathname === "/" || pathname.startsWith("/practice/") : pathname.startsWith(item.href);
           return <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined} className={`nav-item ${active ? "active" : ""}`}><Icon name={item.icon} /><span>{item.label}</span>{active && <span className="nav-dot" />}</Link>;

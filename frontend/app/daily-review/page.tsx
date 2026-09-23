@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
+import Icon from "@/components/Icon";
 import { dailyReviewAction, dailyReviewAttempt, dailyReviewView, dueToday, startDailyReview } from "@/lib/api";
 import type { DailyReviewCurrent, DueToday } from "@/lib/types";
-import Icon from "@/components/Icon";
+import styles from "./page.module.css";
 
 export default function DailyReviewPage() {
   const [due, setDue] = useState<DueToday | null>(null);
@@ -17,7 +19,11 @@ export default function DailyReviewPage() {
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
-    dueToday().then(setDue).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+    let active = true;
+    dueToday()
+      .then((data) => { if (active) setDue(data); })
+      .catch((e) => { if (active) setErr(e instanceof Error ? e.message : String(e)); });
+    return () => { active = false; };
   }, []);
 
   async function begin() {
@@ -25,13 +31,13 @@ export default function DailyReviewPage() {
     setErr("");
     setMsg("");
     try {
-      const r = await startDailyReview();
-      if (!r.session_id) {
+      const result = await startDailyReview();
+      if (!result.session_id) {
         setMsg("今天暂无到期复练内容。");
         return;
       }
-      setSessionId(r.session_id);
-      setCurrent(await dailyReviewView(r.session_id));
+      setSessionId(result.session_id);
+      setCurrent(await dailyReviewView(result.session_id));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -44,12 +50,12 @@ export default function DailyReviewPage() {
     setBusy(true);
     setErr("");
     try {
-      const r = await dailyReviewAttempt(sessionId, answer.trim(), withHelp);
+      const result = await dailyReviewAttempt(sessionId, answer.trim(), withHelp);
       setAnswer("");
       setShowHint(false);
       setHelpUsed(false);
-      setMsg(r.success ? (withHelp ? "完成（用了提示）" : "完成，已独立表达") : "没对上，再试一次。");
-      setCurrent(r.next);
+      setMsg(result.success ? (withHelp ? "这一条已完成，记录为使用提示。" : "这一条已独立完成。") : "还没有对上，可以再试一次或使用提示。");
+      setCurrent(result.next);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -57,13 +63,14 @@ export default function DailyReviewPage() {
     }
   }
 
-  async function act(a: "skip" | "defer" | "dispute" | "end") {
+  async function act(action: "skip" | "defer" | "dispute" | "end") {
     if (!sessionId) return;
     setBusy(true);
     setErr("");
+    setMsg("");
     try {
-      const r = await dailyReviewAction(sessionId, a);
-      setCurrent(r.next);
+      const result = await dailyReviewAction(sessionId, action);
+      setCurrent(result.next);
       setAnswer("");
       setShowHint(false);
       setHelpUsed(false);
@@ -76,60 +83,117 @@ export default function DailyReviewPage() {
 
   const item = current?.item;
   const summary = current?.summary;
+  const progress = current?.total ? Math.round(((current.index + 1) / current.total) * 100) : 0;
 
   return (
     <main className="page">
-      <section className="panel">
-        <div className="section-head">
-          <h2><Icon name="target" size={19} /> 今日复练</h2>
-          <span className="badge">一次完成 3~5 条到期内容</span>
+      <div className="topline">
+        <span className="topline-title"><Icon name="target" size={15} /> 我的学习空间 / 今日复练</span>
+        <Link href="/queue" className="text-link">查看待复练 <Icon name="arrow" size={14} /></Link>
+      </div>
+      <div className="eyebrow">TODAY&apos;S REVIEW</div>
+      <h1 className="page-title">把到期的表达，再说得稳一点。</h1>
+      <p className="page-description">一次只练今天真正到期的内容。卡住可以看提示，退出和服务故障都不会记成学习失败。</p>
+
+      {err && <div className="error-banner" role="alert">{err}</div>}
+      {msg && <div className="notice mt-4" role="status"><Icon name="check" size={17} /><p>{msg}</p></div>}
+
+      {!current && due === null && !err && (
+        <div className={styles.loading} role="status" aria-label="加载今日复练">
+          <div className="skeleton" />
+          <div className="skeleton" />
         </div>
+      )}
 
-        {err && <p className="error-banner" role="alert">{err}</p>}
-        {msg && <div className="notice mb-3"><Icon name="check" size={17} /><p>{msg}</p></div>}
-
-        {!current && due && (
-          due.count === 0 ? (
-            <p className="muted">今天暂无到期复练内容，可以先去练习或稍后再来。</p>
-          ) : (
-            <div>
-              <p className="mb-3">今天有 <strong>{due.count}</strong> 条到期内容，预计 3~5 分钟。</p>
-              <button onClick={begin} disabled={busy} className="btn btn-primary"><Icon name="arrow" size={16} />开始今日复练</button>
-            </div>
-          )
-        )}
-
-        {current && item && !current.done && (
-          <div className="mt-4">
-            <p className="text-sm muted">第 {current.index + 1} / 共 {current.total} 条</p>
-            <div className="mt-2 p-3" style={{ background: "#f4f8f1", borderRadius: 8 }}>
-              <p className="text-sm muted">先回忆这句话，卡住了再要提示：</p>
-              {showHint && <p className="mt-2"><strong>{item.suggestion_sentence}</strong></p>}
-            </div>
-            <div className="mt-3">
-              <textarea value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="用英文说出这句话…" disabled={busy} maxLength={2000} style={{ width: "100%", minHeight: "72px", padding: "10px 12px", borderRadius: 8, border: "1px solid #d7ded4", fontSize: 15, resize: "vertical" }} />
-            </div>
-            <div className="flex flex-wrap gap-2 mt-3">
-              {!showHint && <button onClick={() => { setShowHint(true); setHelpUsed(true); }} disabled={busy} className="btn btn-secondary">要提示</button>}
-              <button onClick={() => submit(helpUsed)} disabled={busy || !answer.trim()} className="btn btn-primary">提交</button>
-              <button onClick={() => act("skip")} disabled={busy} className="btn btn-ghost">跳过</button>
-              <button onClick={() => act("defer")} disabled={busy} className="btn btn-ghost">延后</button>
-              <button onClick={() => act("dispute")} disabled={busy} className="btn btn-ghost">标记有误</button>
-            </div>
-            <p className="text-xs muted mt-3">用了关键词/半句/完整答案会回到 1 天间隔；独立完成进下一档间隔。</p>
+      {!current && due && due.count === 0 && (
+        <section className="panel empty-state">
+          <span className="icon-tile"><Icon name="check" size={30} /></span>
+          <h2>今天没有到期内容</h2>
+          <p>间隔到了再练，比连续重复更有用。你可以开始一段新练习，或者去看看待复练队列。</p>
+          <div className={styles.emptyActions}>
+            <Link href="/" className="btn btn-primary">开始新练习 <Icon name="arrow" size={15} /></Link>
+            <Link href="/queue" className="btn btn-secondary">查看待复练</Link>
           </div>
-        )}
+        </section>
+      )}
 
-        {current?.done && summary && (
-          <div className="notice mt-4">
-            <Icon name="check" size={19} />
+      {!current && due && due.count > 0 && (
+        <section className={`panel ${styles.startPanel}`}>
+          <div className={styles.startIcon}><Icon name="target" size={28} /></div>
+          <div className={styles.startCopy}>
+            <span className="badge">今日已到期</span>
+            <h2>{due.count} 条表达，约 3~5 分钟</h2>
+            <p>系统按逾期时间和帮助记录排序。少于 3 条时按实际数量展示，不会拿未到期内容凑数。</p>
+          </div>
+          <button onClick={begin} disabled={busy} className="btn btn-primary">
+            <Icon name="arrow" size={16} />{busy ? "正在准备…" : "开始今日复练"}
+          </button>
+        </section>
+      )}
+
+      {current && item && !current.done && (
+        <section className={`panel ${styles.practicePanel}`}>
+          <header className={styles.practiceHeader}>
             <div>
-              <p><strong>今日复练结束</strong></p>
-              <p className="text-sm">完成 {summary.completed} 条（其中用提示 {summary.helped} 条）、跳过 {summary.skipped} 条、延后 {summary.deferred} 条。</p>
+              <span className="eyebrow">RECALL FIRST</span>
+              <h2>先回忆，再开口</h2>
+            </div>
+            <span className="badge">第 {current.index + 1} / {current.total} 条</span>
+          </header>
+
+          <div className={styles.progressTrack} aria-label={`今日复练进度 ${progress}%`} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+            <span style={{ width: `${progress}%` }} />
+          </div>
+
+          <div className={styles.promptCard}>
+            <span className={styles.promptIcon}><Icon name={showHint ? "book" : "help"} size={20} /></span>
+            <div>
+              <p className={styles.promptLabel}>{showHint ? "提示已经展开" : "先不要看答案"}</p>
+              {showHint ? <p className={styles.hintText}>{item.suggestion_sentence}</p> : <p>想一想这条表达原本想传达什么，再用自己的话说出来。</p>}
             </div>
           </div>
-        )}
-      </section>
+
+          <div className={styles.answerBlock}>
+            <label htmlFor="daily-review-answer">你的英文回答</label>
+            <textarea
+              id="daily-review-answer"
+              className="field"
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              placeholder="用英文说出这句话，意思对即可…"
+              disabled={busy}
+              maxLength={2000}
+            />
+          </div>
+
+          <div className={styles.primaryActions}>
+            {!showHint && <button onClick={() => { setShowHint(true); setHelpUsed(true); }} disabled={busy} className="btn btn-secondary"><Icon name="help" size={15} />看提示</button>}
+            <button onClick={() => submit(helpUsed)} disabled={busy || !answer.trim()} className="btn btn-primary">{busy ? "提交中…" : "提交回答"}<Icon name="arrow" size={15} /></button>
+          </div>
+
+          <div className={styles.secondaryActions}>
+            <button onClick={() => act("skip")} disabled={busy} className="btn btn-ghost btn-small">跳过</button>
+            <button onClick={() => act("defer")} disabled={busy} className="btn btn-ghost btn-small">延后</button>
+            <button onClick={() => act("dispute")} disabled={busy} className="btn btn-ghost btn-small">内容有误</button>
+            <button onClick={() => act("end")} disabled={busy} className="btn btn-ghost btn-small">结束本次复练</button>
+          </div>
+          <p className={styles.ruleNote}>使用提示会回到较短间隔；独立完成才会进入下一档。退出、识别失败或服务故障不会记作失败。</p>
+        </section>
+      )}
+
+      {current?.done && summary && (
+        <section className={`panel ${styles.summaryPanel}`}>
+          <span className={styles.summaryIcon}><Icon name="check" size={30} /></span>
+          <div>
+            <span className="eyebrow">REVIEW COMPLETE</span>
+            <h2>今天的复练完成了</h2>
+            <p>完成 {summary.completed} 条，其中使用提示 {summary.helped} 条；跳过 {summary.skipped} 条，延后 {summary.deferred} 条。</p>
+          </div>
+          <Link href="/queue" className="btn btn-secondary">回到待复练</Link>
+        </section>
+      )}
+
+      <footer className="page-footer"><span><Icon name="shield" size={12} /> 只安排已到期且来源有效的内容</span><span>Review less. Remember more.</span></footer>
     </main>
   );
 }
