@@ -18,6 +18,7 @@ export interface TurnDone {
   transcript: string;
   reply_text: string;
   reply_audio_url: string;
+  audio_status?: "pending" | "ok" | "failed";
   action_type: ActionType;
   eval_result: EvalResult;
   status: string;

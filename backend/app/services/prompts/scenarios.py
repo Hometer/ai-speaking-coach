@@ -38,6 +38,10 @@ SCENARIOS: dict[str, dict] = {
         "coach_context": "an English interview coach helping an adult practice a job-interview self-introduction",
         "subgoals": ["intro", "followup"],
         "acceptable_points": ["i have", "experience", "worked", "project", "years", "achieved", "led"],
+        "subgoal_standard": {
+            "intro": "state one specific past experience (job/project) with concrete detail",
+            "followup": "answer the follow-up about that experience with a relevant detail",
+        },
         "follow_ups": {
             "intro": ["What was the most challenging part of that experience?", "What did you learn from it?"],
             "followup": ["What was the result of that work?", "How did it affect your team?"],
@@ -79,6 +83,10 @@ SCENARIOS: dict[str, dict] = {
         "coach_context": "a friendly new colleague chatting with an adult on their first day at work",
         "subgoals": ["self_intro", "ask_question"],
         "acceptable_points": ["i am", "i work", "my name", "my role", "i do", "what about you", "how about you", "what do you"],
+        "subgoal_standard": {
+            "self_intro": "state name or role with concrete detail (not just one vague phrase)",
+            "ask_question": "ask the other person a question (What about you / What do you do)",
+        },
         "follow_ups": {
             "self_intro": ["Nice to meet you. What do you enjoy about your work?"],
             "ask_question": ["Good question! Let me tell you a bit about that."],
@@ -116,6 +124,10 @@ SCENARIOS: dict[str, dict] = {
         "coach_context": "a meeting host inviting an adult to share and defend an opinion in English",
         "subgoals": ["state_opinion", "give_reason"],
         "acceptable_points": ["i think", "in my opinion", "i believe", "we should", "because", "the reason", "i agree", "i disagree"],
+        "subgoal_standard": {
+            "state_opinion": "state a clear specific opinion/stance (not just 'I agree')",
+            "give_reason": "give a reason for the opinion (because...)",
+        },
         "follow_ups": {
             "state_opinion": ["Why do you think so?", "Could you explain your reasoning?"],
             "give_reason": ["How would you respond if someone disagreed?"],
@@ -153,6 +165,10 @@ SCENARIOS: dict[str, dict] = {
         "coach_context": "a hotel front-desk clerk checking in an adult guest in English",
         "subgoals": ["confirm_booking", "ask_service"],
         "acceptable_points": ["reservation", "booking", "my name", "check in", "room", "breakfast", "wifi", "gym", "what time", "where is"],
+        "subgoal_standard": {
+            "confirm_booking": "confirm reservation (name or nights)",
+            "ask_service": "ask about a service (breakfast/wifi/time)",
+        },
         "follow_ups": {
             "confirm_booking": ["May I see your ID, please?", "Is it two nights, correct?"],
             "ask_service": ["Sure. Breakfast is from 7 to 10 on the second floor.", "The wifi password is on your key card."],
@@ -190,6 +206,10 @@ SCENARIOS: dict[str, dict] = {
         "coach_context": "a restaurant waiter taking an adult customer's order in English",
         "subgoals": ["place_order", "handle_followup"],
         "acceptable_points": ["i would like", "i will have", "order", "please", "menu", "no sugar", "spicy", "no onions", "no ice"],
+        "subgoal_standard": {
+            "place_order": "state what to order",
+            "handle_followup": "answer a follow-up (drink/preference)",
+        },
         "follow_ups": {
             "place_order": ["Would you like anything to drink with that?"],
             "handle_followup": ["Any allergies or preferences I should know about?"],
@@ -228,6 +248,10 @@ SCENARIOS: dict[str, dict] = {
         "coach_persona": "You work at a local café.",
         "subgoals": ["round1", "round2"],
         "acceptable_points": ["my name", "i am", "i do", "i work", "i like", "i enjoy", "in my free time"],
+        "subgoal_standard": {
+            "round1": "introduce self (name/job/hobby)",
+            "round2": "keep conversation going with a second round",
+        },
         "follow_ups": {
             "round1": ["Nice. What do you like to do in your free time?"],
             "round2": ["That sounds interesting. Tell me a bit more about it."],
@@ -265,6 +289,10 @@ SCENARIOS: dict[str, dict] = {
         "coach_context": "a friend asking an adult about their hobbies in English",
         "subgoals": ["describe_hobby", "explain_reason"],
         "acceptable_points": ["i like", "i enjoy", "i love", "hobby", "because", "it helps", "relax", "fun"],
+        "subgoal_standard": {
+            "describe_hobby": "name a specific hobby",
+            "explain_reason": "explain why (because...)",
+        },
         "follow_ups": {
             "describe_hobby": ["What do you like about it?", "How did you get into it?"],
             "explain_reason": ["How often do you do it?"],

@@ -170,6 +170,16 @@ def test_job_interview_still_works(client):
     assert ("experience" in r1["reply_text"].lower()) or ("challenging" in r1["reply_text"].lower())
 
 
+def test_evaluator_not_lenient_on_vague_answers(client):
+    # 评估器收紧：极简/模糊回答不得标 independent
+    s = _create_scene_session(client, "new_colleague")
+    r1 = _send_text_turn(client, s["session_id"], "I work with data.")
+    assert r1["eval_result"] != "independent"
+    s2 = _create_scene_session(client, "meeting_opinion")
+    r2 = _send_text_turn(client, s2["session_id"], "I agree with the plan.")
+    assert r2["eval_result"] != "independent"
+
+
 def test_list_sessions_returns_scene_info(client):
     s = _create_scene_session(client, "hotel_checkin")
     r = client.get("/api/v1/sessions", headers=USER)

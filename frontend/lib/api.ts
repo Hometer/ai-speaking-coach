@@ -290,7 +290,7 @@ export async function qaStats(): Promise<{ total: number; by_type: Record<string
   return handle<{ total: number; by_type: Record<string, number>; review_version: string }>(res);
 }
 
-async function parseSSE<T>(res: Response): Promise<T> {
+async function parseSSE<T>(res: Response, onChunk?: (text: string) => void): Promise<T> {
   if (!res.body) throw new Error("无响应流");
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -313,7 +313,10 @@ async function parseSSE<T>(res: Response): Promise<T> {
       }
       if (!dataStr) continue;
       const data = JSON.parse(dataStr);
-      if (event === "done") lastDone = data as T;
+      if (event === "chunk") {
+        const text = (data as { text?: string }).text;
+        if (text && onChunk) onChunk(text);
+      } else if (event === "done") lastDone = data as T;
       else if (event === "error") lastError = (data as ApiErrorBody).error?.message ?? "未知错误";
     }
   }
@@ -325,6 +328,7 @@ async function parseSSE<T>(res: Response): Promise<T> {
 export async function submitTurn(
   sessionId: string,
   opts: { text?: string; audio?: Blob },
+  onChunk?: (text: string) => void,
 ): Promise<TurnDone> {
   let url: string;
   let init: RequestInit;
@@ -342,7 +346,15 @@ export async function submitTurn(
     };
   }
   const res = await fetch(url, init);
-  return parseSSE<TurnDone>(res);
+  return parseSSE<TurnDone>(res, onChunk);
+}
+
+export async function retryTurnAudio(sessionId: string, turnId: string): Promise<TurnDone> {
+  const res = await fetch(`/api/v1/sessions/${sessionId}/turns/${turnId}/audio`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  return handle<TurnDone>(res);
 }
 
 export async function fetchAudio(url: string): Promise<string> {

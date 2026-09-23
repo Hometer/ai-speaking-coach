@@ -57,6 +57,14 @@ def _save_audio(audio_bytes: bytes, ext: str) -> str:
     return f"/api/v1/audio/{name}"
 
 
+def _synth_and_save(tts, text: str) -> tuple[str, str]:
+    """合成音频并落盘，返回 (audio_url, audio_status)。失败返回 ("", "failed")，不抛错。"""
+    result = tts.synthesize_result(text)
+    if result.audio is None:
+        return "", "failed"
+    return _save_audio(result.audio, tts.ext), "ok"
+
+
 def _get_or_create_user(db: DbSession, user_id: str, level: str) -> User:
     user = db.get(User, user_id)
     if user is None:
@@ -255,8 +263,7 @@ def create_session(
     coach = get_coach_provider()
     decision = coach.opening(scene, level)
     tts = get_tts_provider()
-    audio = tts.synthesize(decision.reply_text)
-    audio_url = _save_audio(audio, tts.ext)
+    audio_url, _ = _synth_and_save(tts, decision.reply_text)
     session.status = S_WAITING
     opening_turn_id = uuid.uuid4().hex
     session.current_question_id = opening_turn_id
@@ -352,8 +359,7 @@ def create_sentence_practice(
     )
     db.add(session)
     tts = get_tts_provider()
-    audio = tts.synthesize(sentence)
-    audio_url = _save_audio(audio, tts.ext)
+    audio_url, _ = _synth_and_save(tts, sentence)
     opening_text = f"Let's practice this sentence: {sentence}"
     db.add(
         Turn(
@@ -445,6 +451,7 @@ def submit_turn(
                 "input_type": input_type,
                 "goal": session.goal_text,
                 "subgoal": subgoal,
+                "subgoal_standard": SCENARIOS.get(session.scene_id, {}).get("subgoal_standard", {}).get(subgoal, ""),
                 "acceptable_points": SCENARIOS.get(session.scene_id, {}).get("acceptable_points", []),
             }
         )
@@ -495,12 +502,6 @@ def submit_turn(
             }
         )
 
-        tts = get_tts_provider()
-        if decision.action_type == "suggest_practice" and decision.practice_sentence:
-            audio = tts.synthesize(decision.practice_sentence)
-        else:
-            audio = tts.synthesize(decision.reply_text)
-        audio_url = _save_audio(audio, tts.ext)
     except Exception:
         db.rollback()
         guard.release(settings.nominal_cost_per_turn, session_id, user_id)
@@ -554,7 +555,7 @@ def submit_turn(
     if decision.action_type in ("follow_up", "recheck"):
         session.current_question_id = turn_id
         session.current_question_text = decision.reply_text
-        session.current_question_audio_url = audio_url
+        session.current_question_audio_url = ""  # 音频在 synthesize_turn_audio 阶段补齐
 
     turn = Turn(
         id=turn_id,
@@ -564,8 +565,9 @@ def submit_turn(
         transcript=transcript,
         user_text=text_for_eval,
         reply_text=decision.reply_text,
-        reply_audio_url=audio_url,
+        reply_audio_url="",
         action_type=decision.action_type,
+        audio_status="pending",
         hint_used=hint_used,
         practice_sentence=decision.practice_sentence,
         eval_result=eval_out.result,
@@ -584,13 +586,58 @@ def submit_turn(
         "turn_id": turn_id,
         "transcript": transcript,
         "reply_text": decision.reply_text,
-        "reply_audio_url": audio_url,
+        "reply_audio_url": "",
+        "audio_status": "pending",
         "action_type": decision.action_type,
         "eval_result": eval_out.result,
         "status": new_status,
         "hint_used": hint_used,
         "practice_sentence": decision.practice_sentence,
     }
+
+
+def _turn_done(db: DbSession, session: Session, turn: Turn) -> dict[str, Any]:
+    return {
+        "turn_id": turn.id,
+        "transcript": turn.transcript,
+        "reply_text": turn.reply_text,
+        "reply_audio_url": turn.reply_audio_url,
+        "audio_status": turn.audio_status,
+        "action_type": turn.action_type,
+        "eval_result": turn.eval_result,
+        "status": session.status,
+        "hint_used": turn.hint_used,
+        "practice_sentence": turn.practice_sentence,
+    }
+
+
+def synthesize_turn_audio(
+    db: DbSession, session_id: str, user_id: str, turn_id: str
+) -> dict[str, Any]:
+    """为已落库的回合补充语音。TTS 失败不毁文字回合；幂等（已有音频直接返回）。"""
+    session = _require_session(db, session_id, user_id)
+    turn = db.get(Turn, turn_id)
+    if turn is None or turn.session_id != session_id:
+        raise AppError("TURN_NOT_FOUND", "回合不存在", status_code=404)
+
+    # 已有音频且成功 → 幂等返回
+    if turn.audio_status == "ok" and turn.reply_audio_url:
+        return _turn_done(db, session, turn)
+
+    text = turn.practice_sentence or turn.reply_text
+    if not text:
+        turn.audio_status = "failed"
+        db.commit()
+        return _turn_done(db, session, turn)
+
+    tts = get_tts_provider()
+    audio_url, audio_status = _synth_and_save(tts, text)
+    turn.reply_audio_url = audio_url
+    turn.audio_status = audio_status
+    if session.current_question_id == turn_id:
+        session.current_question_audio_url = audio_url
+    db.commit()
+    return _turn_done(db, session, turn)
 
 
 def submit_practice(
@@ -630,8 +677,7 @@ def submit_practice(
         }
     )
     tts = get_tts_provider()
-    audio = tts.synthesize(decision.reply_text)
-    audio_url = _save_audio(audio, tts.ext)
+    audio_url, _ = _synth_and_save(tts, decision.reply_text)
 
     turn = Turn(
         id=uuid.uuid4().hex,
@@ -855,8 +901,7 @@ def skip_practice(db: DbSession, session_id: str, user_id: str) -> dict[str, Any
         coach = get_coach_provider()
         decision = coach.decide({"skipped_practice": True})
         tts = get_tts_provider()
-        audio = tts.synthesize(decision.reply_text)
-        audio_url = _save_audio(audio, tts.ext)
+        audio_url, _ = _synth_and_save(tts, decision.reply_text)
         db.add(
             Turn(
                 id=uuid.uuid4().hex,
@@ -897,8 +942,7 @@ def request_hint(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]
         coach = get_coach_provider()
         decision = coach.decide({"help_requested": True})
         tts = get_tts_provider()
-        audio = tts.synthesize(decision.reply_text)
-        audio_url = _save_audio(audio, tts.ext)
+        audio_url, _ = _synth_and_save(tts, decision.reply_text)
         db.add(
             Turn(
                 id=uuid.uuid4().hex,

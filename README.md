@@ -88,6 +88,10 @@ npm run start -- -p 3100
 
 记忆设置新增只读 `GET /api/v1/users/me/memory`，沿用邀请凭证鉴权，返回 `{ "enabled": boolean }`；错误沿用 `{ "error": { "code", "message" } }`。刷新页面直接读取数据库中保存的选择，不再重置为前端默认值。
 
+四类求助（REQ-05）改由 `app/services/help_svc.py` 确定性编排：`repeat` 复用当前问题音频（零模型/零计费）、`explain` 返回场景中文解释、`organize` 后端按同题已展示记录逐级关键词→半句→完整、`translate` 用专用翻译 Prompt 且需 `source_text`（幂等）。帮助记录绑定 `question_id` 与 `is_answer_help`；organize/translate 为答案帮助（后续回答判 hinted），repeat/explain 为理解辅助（不取消独立）。
+
+TTS 已加有限重试与文字降级：合成失败不影响文字回合（`audio_status=failed`），回合 SSE 顺序为 `chunk`（文字）→ `done`（含音频）；另提供音频重试接口 `POST /api/v1/sessions/{id}/turns/{turn_id}/audio`（鉴权、幂等）。评估器已按每场景 `subgoal_standard` 收紧，极简/模糊回答不再标独立。
+
 ### 运行 mock 自动化测试（后端，离线）
 
 ```bash

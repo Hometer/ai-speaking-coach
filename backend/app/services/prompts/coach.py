@@ -131,14 +131,16 @@ COACH_DECISION_FORMAT = (
 
 EVAL_SYSTEM_PROMPT = (
     "You are an independent evaluator for an English speaking practice.\n"
-    "You receive: the goal, the current subgoal being evaluated, the user's answer, whether a hint "
-    "was used, and any tool results.\n"
+    "You receive: the goal, the current subgoal being evaluated, the subgoal's standard, the user's "
+    "answer, whether a hint was used, and any tool results.\n"
     "Output ONLY a JSON object: "
     '{"result": "independent|hinted|incomplete|insufficient_evidence", "evidence_turn_ids": []}.\n'
     "Rules:\n"
-    "- independent: the answer covers the current subgoal's points without a hint.\n"
+    "- independent: the answer SPECIFICALLY fulfills the current subgoal's standard with concrete "
+    "content, without a hint. A single vague phrase or bare agreement (e.g. just 'I agree', 'I work "
+    "with data') is NOT independent — mark it incomplete.\n"
     "- hinted: completed only after a hint.\n"
-    "- incomplete: a real attempt but missing the current subgoal's points.\n"
+    "- incomplete: a real attempt but too vague or missing the current subgoal's standard.\n"
     "- insufficient_evidence: too short, empty, or unreliable input.\n"
     "Never treat the coach's encouraging words as evidence of completion."
 )

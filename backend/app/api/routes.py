@@ -133,9 +133,10 @@ def text_turn_stream(session_id: str, req: TextTurnRequest, user_id: str = Depen
     def gen():
         db = SessionLocal()
         try:
-            result = session_svc.submit_turn(db, session_id, user_id, "text", user_text=req.text)
-            yield _sse("chunk", {"text": result["reply_text"]})
-            yield _sse("done", result)
+            partial = session_svc.submit_turn(db, session_id, user_id, "text", user_text=req.text)
+            yield _sse("chunk", {"text": partial["reply_text"]})
+            done = session_svc.synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
+            yield _sse("done", done)
         except AppError as exc:
             yield _sse("error", error_body(exc.code, exc.message))
         except Exception:
@@ -153,9 +154,10 @@ def voice_turn_stream(session_id: str, audio: UploadFile = File(...), user_id: s
     def gen():
         db = SessionLocal()
         try:
-            result = session_svc.submit_turn(db, session_id, user_id, "voice", audio_bytes=data)
-            yield _sse("chunk", {"text": result["reply_text"]})
-            yield _sse("done", result)
+            partial = session_svc.submit_turn(db, session_id, user_id, "voice", audio_bytes=data)
+            yield _sse("chunk", {"text": partial["reply_text"]})
+            done = session_svc.synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
+            yield _sse("done", done)
         except AppError as exc:
             yield _sse("error", error_body(exc.code, exc.message))
         except Exception:
@@ -164,6 +166,16 @@ def voice_turn_stream(session_id: str, audio: UploadFile = File(...), user_id: s
             db.close()
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@router.post("/sessions/{session_id}/turns/{turn_id}/audio")
+def retry_turn_audio(session_id: str, turn_id: str, user_id: str = Depends(get_user_id)):
+    """重新生成本回合语音（受鉴权保护、幂等）。会话结束后也可重试已有文字的音频。"""
+    db = SessionLocal()
+    try:
+        return session_svc.synthesize_turn_audio(db, session_id, user_id, turn_id)
+    finally:
+        db.close()
 
 
 @router.post("/sessions/{session_id}/practice", response_model=PracticeResponse)

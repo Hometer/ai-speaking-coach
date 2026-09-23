@@ -78,6 +78,7 @@ class Turn(Base):
     # 本回合绑定的有效问题；帮助回合据此区分“理解辅助”与“答案辅助”
     question_id: Mapped[str] = mapped_column(String(64), default="")
     is_answer_help: Mapped[bool] = mapped_column(default=False)
+    audio_status: Mapped[str] = mapped_column(String(16), default="ok")  # pending / ok / failed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     session: Mapped["Session"] = relationship(back_populates="turns")

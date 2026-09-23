@@ -28,7 +28,9 @@ class MockEvaluatorProvider(EvaluatorProvider):
             return EvaluationOutput(result="hinted")
         points = context.get("acceptable_points") or ["i have", "experience"]
         lowered = answer.lower()
-        if any(kw.lower() in lowered for kw in points) or len(answer) >= 25:
+        matches = sum(1 for kw in points if kw.lower() in lowered)
+        # 需要实质内容：至少命中两个要点，或一个要点且足够长（非极简短语）
+        if matches >= 2 or (matches >= 1 and len(answer) >= 25):
             return EvaluationOutput(result="independent")
         return EvaluationOutput(result="incomplete")
 

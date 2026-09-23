@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { createPracticeSentence, disputeReview, endSession, getInviteCode, getSession, pauseSession, resumeSession, requestHelp, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
+import { createPracticeSentence, disputeReview, endSession, getInviteCode, getSession, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
 import type { TurnDone } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 import Icon from "@/components/Icon";
@@ -40,6 +40,7 @@ export default function PracticePage() {
   const [practiceDemo, setPracticeDemo] = useState("");
   const [practiceResult, setPracticeResult] = useState("");
   const [recording, setRecording] = useState(false);
+  const [audioRetryTurnId, setAudioRetryTurnId] = useState<string | null>(null);
   const [recordMode, setRecordMode] = useState<"answer" | "practice" | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
@@ -105,16 +106,43 @@ export default function PracticePage() {
     setMessages((m) => [...m, { who, text, audioUrl, turnId }]);
   }
 
+  function attachLastCoachAudio(audioUrl?: string) {
+    setMessages((ms) => {
+      const copy = [...ms];
+      for (let i = copy.length - 1; i >= 0; i--) {
+        if (copy[i].who === "coach") {
+          copy[i] = { ...copy[i], audioUrl: audioUrl || copy[i].audioUrl };
+          break;
+        }
+      }
+      return copy;
+    });
+  }
+
   async function handleTurn(input: { text?: string; audio?: Blob }, typedText?: string) {
     setBusy(true);
     setErr("");
+    setAudioRetryTurnId(null);
+    let coachShown = false;
     try {
-      const done: TurnDone = await submitTurn(sessionId, input);
-      if (typedText) setText("");
-      if (typedText) addMsg("user", typedText, undefined, done.turn_id);
-      else if (done.transcript) addMsg("user", done.transcript, undefined, done.turn_id);
-      else addMsg("user", "（语音回答）", undefined, done.turn_id);
-      addMsg("coach", done.reply_text, done.reply_audio_url);
+      if (typedText) { setText(""); addMsg("user", typedText); }
+      const done: TurnDone = await submitTurn(sessionId, input, (text) => {
+        coachShown = true;
+        addMsg("coach", text); // chunk：教练文字生成后立即显示
+      });
+      if (!typedText) {
+        if (done.transcript) addMsg("user", done.transcript, undefined, done.turn_id);
+        else addMsg("user", "（语音回答）", undefined, done.turn_id);
+      }
+      if (!coachShown) {
+        addMsg("coach", done.reply_text, done.reply_audio_url, done.turn_id);
+      } else {
+        attachLastCoachAudio(done.reply_audio_url); // done 到达后补充音频
+      }
+      if (done.audio_status === "failed") {
+        setErr("语音暂不可用，可以阅读文字或重试语音。");
+        setAudioRetryTurnId(done.turn_id);
+      }
       setStatus(done.status);
       if (done.action_type === "suggest_practice" && done.practice_sentence) {
         setPracticeSentence(done.practice_sentence);
@@ -128,6 +156,22 @@ export default function PracticePage() {
         const detail = await getSession(sessionId);
         setReview(detail.review);
       }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAudioRetry() {
+    if (!audioRetryTurnId || busy) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await retryTurnAudio(sessionId, audioRetryTurnId);
+      attachLastCoachAudio(r.reply_audio_url);
+      if (r.audio_status === "failed") setErr("语音仍不可用，可以阅读文字。");
+      else { setErr(""); setAudioRetryTurnId(null); }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -410,7 +454,7 @@ export default function PracticePage() {
             <p className="text-xs muted mt-3">可以直接尝试，也可以先听示范。跟读不等同于独立表达。</p>
           </section>}
           {practiceResult && <div className="notice mb-4"><Icon name="check" size={17} /><p>上次跟读：{practiceResult}<br /><span className="text-xs">仅供练习参考，不代表语言能力认证。</span></p></div>}
-          {err && <p className="error-banner" role="alert">{err}</p>}
+          {err && <p className="error-banner" role="alert">{err}{audioRetryTurnId && <button onClick={handleAudioRetry} disabled={busy} className="text-link ml-2">重试语音</button>}</p>}
 
           {ended ? <div className={styles.finished}><Icon name="check" size={22} /><div><strong>本次练习已结束</strong><p>对话已保留。你可以查看回顾，或回首页开始新练习。</p></div><button onClick={() => router.push("/history")} className="btn btn-secondary btn-small">查看历史<Icon name="arrow" size={14} /></button></div> : <div className={styles.composer}>
             {paused && <div className="notice mb-3"><Icon name="pause" size={16} /> 练习已暂停，点击“继续练习”后再回答。</div>}
