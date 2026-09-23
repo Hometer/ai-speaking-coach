@@ -56,3 +56,13 @@ def migrate_db() -> None:
         for col, ddl in tadditions.items():
             if col not in tcols:
                 conn.execute(text(f"ALTER TABLE turns ADD COLUMN {col} {ddl}"))
+        scols = {r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))}
+        sadditions = {
+            "drill_stage": "VARCHAR(16) DEFAULT ''",
+            "drill_target": "TEXT DEFAULT ''",
+            "drill_meaning": "TEXT DEFAULT ''",
+            "drill_chunk": "TEXT DEFAULT ''",
+        }
+        for col, ddl in sadditions.items():
+            if col not in scols:
+                conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}"))

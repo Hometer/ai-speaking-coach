@@ -35,6 +35,11 @@ class Session(Base):
     practice_type: Mapped[str] = mapped_column(String(24), default="interview")
     scene_id: Mapped[str] = mapped_column(String(32), default="job_interview")
     scene_version: Mapped[str] = mapped_column(String(16), default="v1")
+    # 脱稿阶梯（P1-1）
+    drill_stage: Mapped[str] = mapped_column(String(16), default="")
+    drill_target: Mapped[str] = mapped_column(Text, default="")
+    drill_meaning: Mapped[str] = mapped_column(Text, default="")
+    drill_chunk: Mapped[str] = mapped_column(Text, default="")
     source_session_id: Mapped[str] = mapped_column(String(64), default="")
     source_turn_id: Mapped[str] = mapped_column(String(64), default="")
     practice_sentence: Mapped[str] = mapped_column(Text, default="")
@@ -210,3 +215,21 @@ class QualityLabel(Base):
     reviewer_id: Mapped[str] = mapped_column(String(64), default="")
     review_version: Mapped[str] = mapped_column(String(16), default="v1")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class DrillAttempt(Base):
+    """脱稿阶梯一次尝试（P1-1）：绑定来源建议与阶梯阶段，帮助证据决定完成结论。"""
+    __tablename__ = "drill_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_session_id: Mapped[str] = mapped_column(String(64), default="")
+    source_turn_id: Mapped[str] = mapped_column(String(64), default="")
+    drill_session_id: Mapped[str] = mapped_column(String(64), index=True)
+    stage: Mapped[str] = mapped_column(String(16), default="")  # full_text/fill_blanks/structure/free_speak/transfer
+    visible_help: Mapped[str] = mapped_column(Text, default="")  # 实际展示的帮助内容（脱敏）
+    answer_text: Mapped[str] = mapped_column(Text, default="")
+    result: Mapped[str] = mapped_column(String(16), default="")  # reference/hinted/independent/transfer/pending/failed
+    ended_reason: Mapped[str] = mapped_column(String(16), default="")  # completed/skipped/user_ended/error
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
