@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { createPracticeSentence, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
+import { createPhraseCard, createPracticeSentence, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
 import type { DrillView, TurnDone } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 import Icon from "@/components/Icon";
@@ -398,6 +398,20 @@ export default function PracticePage() {
     }
   }
 
+  async function handlePhraseCard(turnId: string) {
+    if (busy) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await createPhraseCard(sessionId, turnId);
+      router.push("/phrase-cards");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDispute(turnId: string) {
     try {
       await disputeReview(sessionId, turnId);
@@ -532,7 +546,7 @@ export default function PracticePage() {
 
       {ended && <section className={`panel ${styles.review}`} aria-label="练习回顾">
         <div className="section-head mt-0"><div><div className="eyebrow">A MOMENT TO REFLECT</div><h2>练习回顾</h2></div><span className="icon-tile"><Icon name="book" /></span></div>
-        {review ? improvements.length ? <div className={styles.reviewGrid}>{improvements.map((imp,i) => <article key={i} className={styles.reviewItem}><span className="badge badge-neutral">表达建议 {String(i+1).padStart(2,"0")}</span><div className={styles.reviewOriginal}><small>你的原句</small><p>{String(imp.original ?? "")}</p></div><p className="muted text-sm">{String(imp.explanation_cn ?? "")}</p><div className={styles.reviewSuggestion}><small>可以试着这样说</small><p>{String(imp.practice_sentence ?? imp.suggestion ?? "")}</p></div>{imp.disputed || sourceInvalid ? <p className="text-xs muted">已标记有误或来源已失效，待复核。</p> : <div className="flex gap-3 mt-3"><button onClick={() => handlePracticeSentence(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-primary btn-small"><Icon name="mic" size={14} />练这一句</button><button onClick={() => handleDispute(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small">评价有误</button></div>}</article>)}</div> : <div className="notice"><Icon name="book" size={19} /><p>本次暂无可展示的改进建议。<br />这不代表整体能力已达标；可以回看对话，再尝试一段新的表达。</p></div> : <div className="notice"><Icon name="help" size={19} /><p>回顾暂未就绪，已提交的对话仍然保留。<button className="text-link ml-2" onClick={end} disabled={busy}>重新获取回顾</button></p></div>}
+        {review ? improvements.length ? <div className={styles.reviewGrid}>{improvements.map((imp,i) => <article key={i} className={styles.reviewItem}><span className="badge badge-neutral">表达建议 {String(i+1).padStart(2,"0")}</span><div className={styles.reviewOriginal}><small>你的原句</small><p>{String(imp.original ?? "")}</p></div><p className="muted text-sm">{String(imp.explanation_cn ?? "")}</p><div className={styles.reviewSuggestion}><small>可以试着这样说</small><p>{String(imp.practice_sentence ?? imp.suggestion ?? "")}</p></div>{imp.disputed || sourceInvalid ? <p className="text-xs muted">已标记有误或来源已失效，待复核。</p> : <div className="flex gap-3 mt-3"><button onClick={() => handlePracticeSentence(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-primary btn-small"><Icon name="mic" size={14} />练这一句</button><button onClick={() => handlePhraseCard(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small"><Icon name="book" size={14} />语块卡</button><button onClick={() => handleDispute(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small">评价有误</button></div>}</article>)}</div> : <div className="notice"><Icon name="book" size={19} /><p>本次暂无可展示的改进建议。<br />这不代表整体能力已达标；可以回看对话，再尝试一段新的表达。</p></div> : <div className="notice"><Icon name="help" size={19} /><p>回顾暂未就绪，已提交的对话仍然保留。<button className="text-link ml-2" onClick={end} disabled={busy}>重新获取回顾</button></p></div>}
         <p className="text-xs muted mt-5">反馈仅供练习参考，不代表考试成绩或真实语言能力认证。</p>
       </section>}
     </main>

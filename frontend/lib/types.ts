@@ -98,6 +98,19 @@ export interface DailyReviewAttemptResult {
   next: DailyReviewCurrent;
 }
 
+export interface PhraseCard {
+  id: number;
+  source_turn_id: string;
+  original_text: string;
+  suggestion_text: string;
+  chunk_text: string;
+  explanation_zh: string;
+  context_zh: string;
+  replaceable: string;
+  example_text: string;
+  status: string;
+}
+
 export interface SessionDetail {
   session_id: string;
   status: string;

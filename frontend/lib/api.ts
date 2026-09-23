@@ -1,4 +1,4 @@
-import type { ApiErrorBody, DailyReviewAttemptResult, DailyReviewCurrent, DrillAttemptResult, DrillView, DueToday, MemoryItem, Progress, QaSession, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TrainingPlan, TurnDone } from "./types";
+import type { ApiErrorBody, DailyReviewAttemptResult, DailyReviewCurrent, DrillAttemptResult, DrillView, DueToday, MemoryItem, PhraseCard, Progress, QaSession, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TrainingPlan, TurnDone } from "./types";
 
 // 邀请码存本地，由用户输入，不再前端硬编码共享凭证
 const INVITE_KEY = "invite_code";
@@ -406,6 +406,20 @@ export async function dailyReviewAction(sessionId: string, action: "skip" | "def
     body: JSON.stringify({ action }),
   });
   return handle<{ next: DailyReviewCurrent }>(res);
+}
+
+export async function createPhraseCard(sourceSessionId: string, sourceTurnId: string): Promise<PhraseCard> {
+  const res = await fetch("/api/v1/phrase-cards", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ source_session_id: sourceSessionId, source_turn_id: sourceTurnId }),
+  });
+  return handle<PhraseCard>(res);
+}
+
+export async function listPhraseCards(): Promise<PhraseCard[]> {
+  const res = await fetch("/api/v1/phrase-cards", { headers: authHeaders() });
+  return handle<PhraseCard[]>(res);
 }
 
 export async function fetchAudio(url: string): Promise<string> {
