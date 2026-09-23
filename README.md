@@ -94,6 +94,8 @@ TTS 已加有限重试与文字降级：合成失败不影响文字回合（`aud
 
 P1-1 脱稿阶梯（REQ-28）：五段阶梯 `full_text→fill_blanks→structure→free_speak→transfer`，帮助证据决定完成结论（看全文/补关键词=有参考、看结构=提示下、脱稿说=独立、换题=迁移），结果写回待复练。接口：`POST /api/v1/sessions/{id}/drill-attempt`（提交尝试）、`POST /api/v1/sessions/{id}/drill/action`（skip/downgrade/end）。
 
+P1-2 今日复练组合（REQ-29）：从待复练队列选已到期、来源有效的 3~5 条组成一次连续练习，按间隔档位 1/3/7/14 推进，结果写回同一套队列。接口：`GET /api/v1/review-queue/due-today`、`POST /api/v1/review-queue/daily-review/start`、`GET/POST /api/v1/review-queue/daily-review/{session_id}[/attempt|/action]`。
+
 ### 运行 mock 自动化测试（后端，离线）
 
 ```bash
