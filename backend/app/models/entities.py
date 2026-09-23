@@ -40,6 +40,9 @@ class Session(Base):
     drill_target: Mapped[str] = mapped_column(Text, default="")
     drill_meaning: Mapped[str] = mapped_column(Text, default="")
     drill_chunk: Mapped[str] = mapped_column(Text, default="")
+    # 今日复练（P1-2）
+    daily_review_items: Mapped[str] = mapped_column(Text, default="[]")
+    daily_review_index: Mapped[int] = mapped_column(Integer, default=0)
     source_session_id: Mapped[str] = mapped_column(String(64), default="")
     source_turn_id: Mapped[str] = mapped_column(String(64), default="")
     practice_sentence: Mapped[str] = mapped_column(Text, default="")
@@ -175,6 +178,7 @@ class ReviewQueueItem(Base):
     evidence_status: Mapped[str] = mapped_column(String(16), default="active")
     status: Mapped[str] = mapped_column(String(24), default="pending")
     success_count: Mapped[int] = mapped_column(Integer, default=0)
+    interval_days: Mapped[int] = mapped_column(Integer, default=1)  # 复练间隔档位 1/3/7/14
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     due_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     last_practiced_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -233,3 +237,17 @@ class DrillAttempt(Base):
     ended_reason: Mapped[str] = mapped_column(String(16), default="")  # completed/skipped/user_ended/error
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+
+class DailyReviewAttempt(Base):
+    """今日复练（P1-2）每条尝试记录，用于汇总与事件。"""
+    __tablename__ = "daily_review_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    queue_item_id: Mapped[int] = mapped_column(Integer, default=0)
+    attempt_answer: Mapped[str] = mapped_column(Text, default="")
+    help_used: Mapped[bool] = mapped_column(default=False)
+    result: Mapped[str] = mapped_column(String(16), default="")  # completed/skipped/deferred/disputed/failed
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

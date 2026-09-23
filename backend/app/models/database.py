@@ -62,7 +62,16 @@ def migrate_db() -> None:
             "drill_target": "TEXT DEFAULT ''",
             "drill_meaning": "TEXT DEFAULT ''",
             "drill_chunk": "TEXT DEFAULT ''",
+            "daily_review_items": "TEXT DEFAULT '[]'",
+            "daily_review_index": "INTEGER DEFAULT 0",
         }
         for col, ddl in sadditions.items():
             if col not in scols:
                 conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}"))
+        qcols = {r[1] for r in conn.execute(text("PRAGMA table_info(review_queue_items)"))}
+        qadditions = {
+            "interval_days": "INTEGER DEFAULT 1",
+        }
+        for col, ddl in qadditions.items():
+            if col not in qcols:
+                conn.execute(text(f"ALTER TABLE review_queue_items ADD COLUMN {col} {ddl}"))
