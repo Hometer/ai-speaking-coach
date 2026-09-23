@@ -96,6 +96,8 @@ P1-1 脱稿阶梯（REQ-28）：五段阶梯 `full_text→fill_blanks→structur
 
 P1-2 今日复练组合（REQ-29）：从待复练队列选已到期、来源有效的 3~5 条组成一次连续练习，按间隔档位 1/3/7/14 推进，结果写回同一套队列。接口：`GET /api/v1/review-queue/due-today`、`POST /api/v1/review-queue/daily-review/start`、`GET/POST /api/v1/review-queue/daily-review/{session_id}[/attempt|/action]`。
 
+P1-3 示范与本人录音对比（REQ-30）：跟读提交后保存本人录音供回放（`recording_url`），评价绑定录音版本/参考句版本/阶梯阶段；前端支持慢速示范（0.75x）与示范/本人录音互斥播放；录音随会话清理。
+
 ### 运行 mock 自动化测试（后端，离线）
 
 ```bash
