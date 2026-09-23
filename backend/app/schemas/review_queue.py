@@ -23,3 +23,12 @@ class QueueItemResponse(BaseModel):
     due_at: str | None = None
     last_practiced_at: str | None = None
     retest_result: str = ""
+
+
+class DailyReviewAttemptRequest(BaseModel):
+    answer: str = Field(default="", max_length=2000)
+    help_used: bool = False
+
+
+class DailyReviewActionRequest(BaseModel):
+    action: str = Field(..., description="skip/defer/dispute/end")

@@ -1,0 +1,122 @@
+"""今日复练组合（REQ-29，P1-2）Mock 测试。"""
+import json
+from datetime import datetime, timedelta, timezone
+
+from app.models.database import SessionLocal
+from app.models.entities import ReviewQueueItem
+
+USER = {"X-Invite-Code": "test-a"}
+
+
+def _create(client):
+    r = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard"}, headers=USER)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _turn(client, sid, text):
+    r = client.post(f"/api/v1/sessions/{sid}/turns/text", json={"text": text}, headers=USER)
+    assert r.status_code == 200, r.text
+    for block in r.text.split("\n\n"):
+        if not block.strip():
+            continue
+        event, data = None, None
+        for line in block.split("\n"):
+            if line.startswith("event:"):
+                event = line[6:].strip()
+            elif line.startswith("data:"):
+                data = json.loads(line[5:].strip())
+        if event == "done" and data is not None:
+            return data
+    raise AssertionError("无 done")
+
+
+def _make_queue_item(client):
+    s = _create(client)
+    _turn(client, s["session_id"], "just working")
+    client.post(f"/api/v1/sessions/{s['session_id']}/end", json={"reason": "user_ended"}, headers=USER)
+    detail = client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()
+    imp = (detail.get("review") or {}).get("improvements", [])[0]
+    r = client.post("/api/v1/review-queue", json={"source_session_id": s["session_id"], "source_turn_id": imp["turn_id"]}, headers=USER)
+    assert r.status_code == 200, r.text
+    return r.json(), imp["practice_sentence"]
+
+
+def _make_due(turn_id):
+    db = SessionLocal()
+    try:
+        item = db.query(ReviewQueueItem).filter_by(source_turn_id=turn_id).first()
+        item.due_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_due_today_only_due_items(client):
+    item, _ = _make_queue_item(client)
+    r = client.get("/api/v1/review-queue/due-today", headers=USER)
+    assert r.json()["count"] == 0  # 未到期
+    _make_due(item["source_turn_id"])
+    r2 = client.get("/api/v1/review-queue/due-today", headers=USER)
+    assert r2.json()["count"] == 1
+
+
+def test_start_daily_review_idempotent(client):
+    item, _ = _make_queue_item(client)
+    _make_due(item["source_turn_id"])
+    r1 = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
+    r2 = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
+    assert r1["session_id"] == r2["session_id"]
+    assert len(r1["items"]) == 1
+
+
+def test_submit_attempt_complete_advances(client):
+    item, sentence = _make_queue_item(client)
+    _make_due(item["source_turn_id"])
+    s = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
+    r = client.post(
+        f"/api/v1/review-queue/daily-review/{s['session_id']}/attempt",
+        json={"answer": sentence, "help_used": False},
+        headers=USER,
+    ).json()
+    assert r["success"] is True and r["result"] == "completed"
+    assert r["next"]["done"] is True
+    db = SessionLocal()
+    try:
+        q = db.query(ReviewQueueItem).filter_by(source_turn_id=item["source_turn_id"]).first()
+        assert q.success_count == 1
+        assert q.interval_days == 3  # 1 → 3
+    finally:
+        db.close()
+
+
+def test_submit_attempt_with_help_resets_interval(client):
+    item, sentence = _make_queue_item(client)
+    _make_due(item["source_turn_id"])
+    s = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
+    client.post(
+        f"/api/v1/review-queue/daily-review/{s['session_id']}/attempt",
+        json={"answer": sentence, "help_used": True},
+        headers=USER,
+    )
+    db = SessionLocal()
+    try:
+        q = db.query(ReviewQueueItem).filter_by(source_turn_id=item["source_turn_id"]).first()
+        assert q.interval_days == 1
+        assert q.retest_result == "hinted"
+    finally:
+        db.close()
+
+
+def test_skip_and_summary(client):
+    item, _ = _make_queue_item(client)
+    _make_due(item["source_turn_id"])
+    s = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
+    client.post(
+        f"/api/v1/review-queue/daily-review/{s['session_id']}/action",
+        json={"action": "skip"},
+        headers=USER,
+    )
+    view = client.get(f"/api/v1/review-queue/daily-review/{s['session_id']}", headers=USER).json()
+    assert view["summary"]["skipped"] == 1
+    assert view["done"] is True

@@ -28,10 +28,11 @@ from app.schemas.session import (
     SessionListItem,
 )
 from app.schemas.turn import TextTurnRequest
-from app.schemas.review_queue import AddToQueueRequest, QueueItemResponse, RetestRequest
+from app.schemas.review_queue import AddToQueueRequest, DailyReviewActionRequest, DailyReviewAttemptRequest, QueueItemResponse, RetestRequest
 from app.schemas.training_plan import CreatePlanRequest, PlanResponse
 from app.schemas.quality_label import AddLabelRequest
 from app.services import memory as memory_svc
+from app.services import daily_review_svc
 from app.services import drill_svc
 from app.services import help_svc
 from app.services import session_svc
@@ -405,6 +406,53 @@ def due_item(user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
         return queue_svc.get_due_item(db, user_id)
+    finally:
+        db.close()
+
+
+@router.get("/review-queue/due-today")
+def due_today(user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return daily_review_svc.due_today(db, user_id)
+    finally:
+        db.close()
+
+
+@router.post("/review-queue/daily-review/start")
+def start_daily_review(user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return daily_review_svc.start_daily_review(db, user_id)
+    finally:
+        db.close()
+
+
+@router.get("/review-queue/daily-review/{session_id}")
+def daily_review_view(session_id: str, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        session = session_svc._require_session(db, session_id, user_id)
+        cur = daily_review_svc.current_item(db, session, user_id)
+        return {**cur, "summary": daily_review_svc.summary(db, session_id, user_id)}
+    finally:
+        db.close()
+
+
+@router.post("/review-queue/daily-review/{session_id}/attempt")
+def daily_review_attempt(session_id: str, req: DailyReviewAttemptRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return daily_review_svc.submit_attempt(db, session_id, user_id, req.answer, req.help_used)
+    finally:
+        db.close()
+
+
+@router.post("/review-queue/daily-review/{session_id}/action")
+def daily_review_action(session_id: str, req: DailyReviewActionRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return daily_review_svc.control_action(db, session_id, user_id, req.action)
     finally:
         db.close()
 
