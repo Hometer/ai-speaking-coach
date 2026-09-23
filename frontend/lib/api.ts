@@ -1,4 +1,4 @@
-import type { ApiErrorBody, DrillAttemptResult, DrillView, MemoryItem, Progress, QaSession, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TrainingPlan, TurnDone } from "./types";
+import type { ApiErrorBody, DailyReviewAttemptResult, DailyReviewCurrent, DrillAttemptResult, DrillView, DueToday, MemoryItem, Progress, QaSession, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TrainingPlan, TurnDone } from "./types";
 
 // 邀请码存本地，由用户输入，不再前端硬编码共享凭证
 const INVITE_KEY = "invite_code";
@@ -373,6 +373,39 @@ export async function drillAction(sessionId: string, action: "skip" | "downgrade
     body: JSON.stringify({ action }),
   });
   return handle<DrillView>(res);
+}
+
+export async function dueToday(): Promise<DueToday> {
+  const res = await fetch("/api/v1/review-queue/due-today", { headers: authHeaders() });
+  return handle<DueToday>(res);
+}
+
+export async function startDailyReview(): Promise<{ session_id: string | null; items: DueToday["items"] }> {
+  const res = await fetch("/api/v1/review-queue/daily-review/start", { method: "POST", headers: authHeaders() });
+  return handle<{ session_id: string | null; items: DueToday["items"] }>(res);
+}
+
+export async function dailyReviewView(sessionId: string): Promise<DailyReviewCurrent> {
+  const res = await fetch(`/api/v1/review-queue/daily-review/${sessionId}`, { headers: authHeaders() });
+  return handle<DailyReviewCurrent>(res);
+}
+
+export async function dailyReviewAttempt(sessionId: string, answer: string, helpUsed: boolean): Promise<DailyReviewAttemptResult> {
+  const res = await fetch(`/api/v1/review-queue/daily-review/${sessionId}/attempt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ answer, help_used: helpUsed }),
+  });
+  return handle<DailyReviewAttemptResult>(res);
+}
+
+export async function dailyReviewAction(sessionId: string, action: "skip" | "defer" | "dispute" | "end"): Promise<{ next: DailyReviewCurrent }> {
+  const res = await fetch(`/api/v1/review-queue/daily-review/${sessionId}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ action }),
+  });
+  return handle<{ next: DailyReviewCurrent }>(res);
 }
 
 export async function fetchAudio(url: string): Promise<string> {

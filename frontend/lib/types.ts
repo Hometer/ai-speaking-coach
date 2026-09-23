@@ -58,6 +58,46 @@ export interface DrillAttemptResult extends DrillView {
   next_stage: string;
 }
 
+export interface DueTodayItem {
+  id: number;
+  source_turn_id: string;
+  suggestion_sentence: string;
+  status: string;
+  success_count: number;
+  interval_days: number;
+  due_at: string | null;
+}
+
+export interface DueToday {
+  count: number;
+  items: DueTodayItem[];
+}
+
+export interface DailyReviewSummary {
+  session_id: string;
+  status: string;
+  completed: number;
+  helped: number;
+  skipped: number;
+  deferred: number;
+  total: number;
+}
+
+export interface DailyReviewCurrent {
+  done: boolean;
+  index: number;
+  total: number;
+  item?: DueTodayItem;
+  summary?: DailyReviewSummary;
+}
+
+export interface DailyReviewAttemptResult {
+  success: boolean;
+  result: string;
+  help_used: boolean;
+  next: DailyReviewCurrent;
+}
+
 export interface SessionDetail {
   session_id: string;
   status: string;
