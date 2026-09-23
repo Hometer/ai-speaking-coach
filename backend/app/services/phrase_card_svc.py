@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
-from app.models.entities import PhraseCard, Session
+from app.models.entities import EventLog, PhraseCard, Session
 from app.services.prompts.scenarios import SCENARIOS
 
 
@@ -86,6 +86,7 @@ def generate_card(db: DbSession, user_id: str, source_session_id: str, source_tu
         return _to_dict(existing)
     card = _build(db, user_id, source_session_id, source_turn_id)
     db.add(card)
+    db.add(EventLog(session_id=source_session_id, turn_id=source_turn_id, action_type="phrase_card", basis="generated"))
     db.commit()
     db.refresh(card)
     return _to_dict(card)

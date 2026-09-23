@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
-from app.models.entities import DrillAttempt, ReviewQueueItem, Session
+from app.models.entities import DrillAttempt, EventLog, ReviewQueueItem, Session
 from app.services.prompts.scenarios import SCENARIOS
 from app.services.session_svc import _require_session
 
@@ -167,6 +167,7 @@ def submit_drill_attempt(
     result = STAGE_RESULT[stage] if success else "failed"
     reason = "completed" if success else "error"
     _record(db, session, user_id, text, result, reason)
+    db.add(EventLog(session_id=session.id, turn_id="", action_type="drill", basis=result))
 
     if success:
         if stage == "transfer":

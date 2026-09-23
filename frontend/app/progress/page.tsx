@@ -12,6 +12,8 @@ const METRICS: { key: keyof Progress; label: string; icon: IconName; percent?: b
   { key: "due_retest_done_rate", label: "到期复练完成率", icon: "check", percent: true },
   { key: "mastered_count", label: "已掌握项目数", icon: "shield" },
   { key: "voice_evaluable_rate", label: "语音可评估率", icon: "mic", percent: true },
+  { key: "drill_completed_count", label: "脱稿完成数", icon: "book" },
+  { key: "transfer_completed_count", label: "迁移成功数", icon: "spark" },
 ];
 
 export default function ProgressPage() {

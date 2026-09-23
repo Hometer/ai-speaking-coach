@@ -3,7 +3,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session as DbSession
 
-from app.models.entities import Evaluation, ReviewQueueItem, Session, Turn
+from app.models.entities import DrillAttempt, Evaluation, ReviewQueueItem, Session, Turn
 
 
 def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
@@ -49,6 +49,11 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     voice_evaluable = sum(1 for t in voice_turns if t.eval_result)
     voice_evaluable_rate = round(voice_evaluable / len(voice_turns), 3) if voice_turns else 0.0
 
+    # v0.8 新增：脱稿完成数 / 迁移成功数（按 DrillAttempt 结果计数）
+    drill_attempts = db.query(DrillAttempt).filter(DrillAttempt.user_id == user_id).all()
+    drill_completed_count = sum(1 for a in drill_attempts if a.result == "independent")
+    transfer_completed_count = sum(1 for a in drill_attempts if a.result == "transfer")
+
     return {
         "completed_count": completed_count,
         "independent_rate": independent_rate,
@@ -56,5 +61,7 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
         "due_retest_done_rate": due_retest_done_rate,
         "mastered_count": mastered_count,
         "voice_evaluable_rate": voice_evaluable_rate,
-        "calc_version": "v1",
+        "drill_completed_count": drill_completed_count,
+        "transfer_completed_count": transfer_completed_count,
+        "calc_version": "v2",
     }

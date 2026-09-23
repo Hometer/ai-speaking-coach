@@ -185,6 +185,8 @@ export interface Progress {
   due_retest_done_rate: number;
   mastered_count: number;
   voice_evaluable_rate: number;
+  drill_completed_count: number;
+  transfer_completed_count: number;
   calc_version: string;
 }
 

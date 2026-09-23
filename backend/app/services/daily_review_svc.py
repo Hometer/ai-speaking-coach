@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
-from app.models.entities import DailyReviewAttempt, ReviewQueueItem, Session
+from app.models.entities import DailyReviewAttempt, EventLog, ReviewQueueItem, Session
 from app.services.review_queue import STATUS_AWAITING_RETEST, STATUS_DISPUTED, STATUS_MASTERED, STATUS_PENDING
 
 INTERVALS = [1, 3, 7, 14]
@@ -167,6 +167,7 @@ def submit_attempt(
             result=result,
         )
     )
+    db.add(EventLog(session_id=session.id, turn_id="", action_type="daily_review", basis=result))
 
     if success:
         # 写回同一套队列：无帮助独立成功→下一档；有帮助→回 1 天
