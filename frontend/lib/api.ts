@@ -1,4 +1,4 @@
-import type { ApiErrorBody, MemoryItem, Progress, QaSession, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TrainingPlan, TurnDone } from "./types";
+import type { ApiErrorBody, DrillAttemptResult, DrillView, MemoryItem, Progress, QaSession, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TrainingPlan, TurnDone } from "./types";
 
 // 邀请码存本地，由用户输入，不再前端硬编码共享凭证
 const INVITE_KEY = "invite_code";
@@ -355,6 +355,24 @@ export async function retryTurnAudio(sessionId: string, turnId: string): Promise
     headers: authHeaders(),
   });
   return handle<TurnDone>(res);
+}
+
+export async function drillAttempt(sessionId: string, text: string): Promise<DrillAttemptResult> {
+  const res = await fetch(`/api/v1/sessions/${sessionId}/drill-attempt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ text }),
+  });
+  return handle<DrillAttemptResult>(res);
+}
+
+export async function drillAction(sessionId: string, action: "skip" | "downgrade" | "end"): Promise<DrillView> {
+  const res = await fetch(`/api/v1/sessions/${sessionId}/drill/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ action }),
+  });
+  return handle<DrillView>(res);
 }
 
 export async function fetchAudio(url: string): Promise<string> {

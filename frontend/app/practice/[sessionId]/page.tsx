@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { createPracticeSentence, disputeReview, endSession, getInviteCode, getSession, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
-import type { TurnDone } from "@/lib/types";
+import { createPracticeSentence, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
+import type { DrillView, TurnDone } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 import Icon from "@/components/Icon";
 import styles from "./page.module.css";
@@ -41,6 +41,8 @@ export default function PracticePage() {
   const [practiceResult, setPracticeResult] = useState("");
   const [recording, setRecording] = useState(false);
   const [audioRetryTurnId, setAudioRetryTurnId] = useState<string | null>(null);
+  const [drill, setDrill] = useState<DrillView | null>(null);
+  const [drillText, setDrillText] = useState("");
   const [recordMode, setRecordMode] = useState<"answer" | "practice" | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
@@ -64,6 +66,7 @@ export default function PracticePage() {
         setStatus(d.status);
         setReview(d.review);
         setSourceInvalid(!!d.source_invalid);
+        setDrill(d.drill);
         const msgs: Msg[] = [];
         for (const t of d.turns) {
           if (t.input_type === "coach") {
@@ -172,6 +175,38 @@ export default function PracticePage() {
       attachLastCoachAudio(r.reply_audio_url);
       if (r.audio_status === "failed") setErr("语音仍不可用，可以阅读文字。");
       else { setErr(""); setAudioRetryTurnId(null); }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDrillAttempt() {
+    if (!drill || busy || !drillText.trim()) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await drillAttempt(sessionId, drillText.trim());
+      setDrillText("");
+      setDrill(r);
+      if (r.completed) setStatus("ENDED");
+      setErr(r.success ? (r.result === "independent" ? "脱稿成功，已记为本次独立表达。" : r.result === "transfer" ? "换题成功，已形成迁移证据。" : "说对了，进入下一级。") : "没对上，再试一次或降一级。");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDrillAction(action: "skip" | "downgrade" | "end") {
+    if (!drill || busy) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await drillAction(sessionId, action);
+      setDrill(r);
+      if (r.completed) setStatus("ENDED");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -447,7 +482,18 @@ export default function PracticePage() {
             <div ref={bottomRef} />
           </div>
 
-          {practiceSentence && !ended && <section className={styles.readingCard}>
+          {drill && !drill.completed && !ended && <section className={styles.readingCard}>
+            <div className="section-head mt-0 mb-3"><h2><Icon name="book" size={19} /> 脱稿阶梯 · {drill.stage_label}</h2><span className="badge">逐级减少帮助</span></div>
+            <p className={styles.practiceSentence}>{drill.visible_help}</p>
+            {drill.drill_stage === "full_text" && <p className="text-sm muted mt-2">中文意思：{drill.drill_meaning}</p>}
+            {drill.drill_stage === "free_speak" && <p className="text-sm muted mt-2">目标语块：{drill.drill_chunk}</p>}
+            <textarea value={drillText} onChange={e => setDrillText(e.target.value)} placeholder="用英文说出这一句（不用逐字一样，意思对即可）…" disabled={busy} maxLength={2000} style={{ width: "100%", minHeight: "72px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d7ded4", fontSize: "15px", resize: "vertical" }} />
+            <div className="flex items-center gap-2 flex-wrap mt-3"><button onClick={handleDrillAttempt} disabled={busy || !drillText.trim()} className="btn btn-primary">提交</button><button onClick={() => handleDrillAction("downgrade")} disabled={busy} className="btn btn-ghost">降一级</button><button onClick={() => handleDrillAction("skip")} disabled={busy} className="btn btn-ghost">跳过这级</button><button onClick={() => handleDrillAction("end")} disabled={busy} className="btn btn-ghost">结束</button></div>
+            <p className="text-xs muted mt-3">看全文/补关键词=有参考练习；看结构=提示下完成；脱稿说=独立表达；换题=迁移证据。</p>
+          </section>}
+          {drill?.completed && <div className="notice mb-4"><Icon name="check" size={17} /><p>脱稿阶梯已完成。本次表达已写回待复练记录。</p></div>}
+
+          {practiceSentence && !drill && !ended && <section className={styles.readingCard}>
             <div className="section-head mt-0 mb-3"><h2><Icon name="headphones" size={19} /> 试着练这一句</h2><span className="badge">有参考文本的短练</span></div>
             <p className={styles.practiceSentence}>{practiceSentence}</p>{practiceDemo && <AudioPlayer key={practiceDemo} src={practiceDemo} />}
             <div className="flex items-center gap-2 flex-wrap mt-4"><button onClick={() => toggleRecord("practice")} disabled={inputDisabled} className="btn btn-primary"><Icon name={recording && recordMode === "practice" ? "stop" : "mic"} size={16} />{recording && recordMode === "practice" ? "停止并提交" : "录音跟读"}</button><button onClick={handleSkipPractice} disabled={inputDisabled || recording} className="btn btn-ghost">跳过这次跟读</button>{recording && recordMode === "practice" && <><span className={styles.recordingTimer}>{timerText()}</span><button onClick={cancelRecord} className="btn btn-ghost">取消录音</button></>}</div>

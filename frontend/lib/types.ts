@@ -41,6 +41,23 @@ export interface TurnItem {
   revised_text: string;
 }
 
+export interface DrillView {
+  drill_stage: string;
+  stage_label: string;
+  drill_target: string;
+  drill_meaning: string;
+  drill_chunk: string;
+  visible_help: string;
+  completed: boolean;
+}
+
+export interface DrillAttemptResult extends DrillView {
+  success: boolean;
+  result: string;
+  stage: string;
+  next_stage: string;
+}
+
 export interface SessionDetail {
   session_id: string;
   status: string;
@@ -52,6 +69,7 @@ export interface SessionDetail {
   scene_label: string;
   source_invalid: boolean;
   review: Record<string, unknown> | null;
+  drill: DrillView | null;
   turns: TurnItem[];
 }
 
