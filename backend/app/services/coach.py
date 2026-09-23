@@ -7,6 +7,7 @@ from app.core.errors import AppError
 from app.core.jsonutil import extract_json_object
 from app.schemas.coach import CoachDecision
 from app.services.prompts.coach import COACH_DECISION_FORMAT, coach_system_prompt
+from app.services.prompts.scenarios import SCENARIOS
 
 
 class CoachProvider(ABC):
@@ -67,8 +68,9 @@ class MockCoachProvider(CoachProvider):
 
         result = context.get("eval_result", "")
         subgoal = context.get("subgoal", "")
-        follow_ups = context.get("follow_ups") or {}
-        references = context.get("reference_expressions") or []
+        scene = SCENARIOS.get(context.get("scene_id", ""), {})
+        follow_ups = scene.get("follow_ups") or {}
+        references = scene.get("reference_expressions") or []
         if result == "insufficient_evidence":
             return CoachDecision(
                 action_type="hint",
@@ -130,14 +132,14 @@ class DashScopeCoachProvider(CoachProvider):
         self.api_key = api_key
         self.model = model
 
-    def _call(self, user_msg: str, scene_context: str = "an English conversation coach") -> dict[str, Any]:
+    def _call(self, user_msg: str, scene_context: str = "an English conversation coach", coach_persona: str = "") -> dict[str, Any]:
         import dashscope
 
         dashscope.api_key = self.api_key
         resp = dashscope.Generation.call(
             model=self.model,
             messages=[
-                {"role": "system", "content": coach_system_prompt(scene_context) + "\n" + COACH_DECISION_FORMAT},
+                {"role": "system", "content": coach_system_prompt(scene_context, coach_persona) + "\n" + COACH_DECISION_FORMAT},
                 {"role": "user", "content": user_msg},
             ],
             result_format="message",
@@ -171,6 +173,7 @@ class DashScopeCoachProvider(CoachProvider):
         data = self._call(
             f"Start the session. Goal: {scene.get('goal_text')}. Level: {level}. Give the opening.",
             scene.get("coach_context", "an English conversation coach"),
+            scene.get("coach_persona", ""),
         )
         return self._to_decision(data)
 
@@ -180,6 +183,7 @@ class DashScopeCoachProvider(CoachProvider):
             + __import__("json").dumps(context, ensure_ascii=False)
             + "\nChoose the next teaching action. The follow-up must be based on what the user actually said.",
             context.get("scene_context", "an English conversation coach"),
+            context.get("coach_persona", ""),
         )
         return self._to_decision(data)
 
@@ -189,6 +193,7 @@ class DashScopeCoachProvider(CoachProvider):
             + __import__("json").dumps(context, ensure_ascii=False)
             + "\nGive the appropriate help for the requested help_type.",
             context.get("scene_context", "an English conversation coach"),
+            context.get("coach_persona", ""),
         )
         return self._to_decision(data)
 

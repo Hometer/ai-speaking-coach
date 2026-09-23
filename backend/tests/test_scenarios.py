@@ -147,6 +147,22 @@ def test_new_friend_requires_two_rounds(client):
     assert r2["status"] == "ENDED"
 
 
+def test_new_colleague_intro_and_question_in_one_turn_completes(client):
+    # 认识新同事：自我介绍 + 反问同句完成，两个子目标都独立 → 一轮结束（co_complete）
+    s = _create_scene_session(client, "new_colleague")
+    r1 = _send_text_turn(client, s["session_id"], "I just joined the sales team. What about you?")
+    assert r1["eval_result"] == "independent"
+    assert r1["status"] == "ENDED"
+
+
+def test_new_colleague_self_intro_only_does_not_end(client):
+    # 只自我介绍、不反问时，仅 self_intro 完成，ask_question 仍待完成，不应结束
+    s = _create_scene_session(client, "new_colleague")
+    r1 = _send_text_turn(client, s["session_id"], "I am a designer on the product team.")
+    assert r1["eval_result"] == "independent"
+    assert r1["status"] != "ENDED"
+
+
 def test_job_interview_still_works(client):
     s = _create_scene_session(client, "job_interview")
     r1 = _send_text_turn(client, s["session_id"], "I have three years of experience in software development.")

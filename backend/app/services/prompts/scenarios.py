@@ -63,6 +63,10 @@ SCENARIOS: dict[str, dict] = {
         "review_status": "approved",
         "user_role": "新入职员工",
         "coach_role": "同事",
+        "coach_persona": "You are a product manager on the product team.",
+        "co_complete": {
+            "ask_question": ["what about you", "how about you", "what do you", "what's your", "what is your"]
+        },
         "goal_text": "Introduce yourself and ask the other person one question.",
         "goal_zh": "完成自我介绍并向对方提出一个问题",
         "openings": {
@@ -207,10 +211,11 @@ SCENARIOS: dict[str, dict] = {
         "goal_zh": "介绍自己并延续两轮简单交流",
         "openings": {
             "beginner": "Hi, nice to meet you. What's your name?",
-            "basic": "Hey, I'm Alex. Tell me a bit about yourself — what do you do?",
+            "basic": "Hey, nice to meet you. Tell me a bit about yourself — what do you do?",
             "intermediate": "Nice to meet you. What do you like to do in your free time?",
         },
         "coach_context": "a friendly new acquaintance making small talk with an adult in English",
+        "coach_persona": "You work at a local café.",
         "subgoals": ["round1", "round2"],
         "acceptable_points": ["my name", "i am", "i do", "i work", "i like", "i enjoy", "in my free time"],
         "follow_ups": {

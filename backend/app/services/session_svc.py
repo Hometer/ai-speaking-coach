@@ -420,7 +420,7 @@ def submit_turn(
         subgoal = _current_subgoal(session, subgoals)
         question = _last_coach_text(db, session_id)
 
-        # 独立评估（与生成分离）
+        # 独立评估（与生成分离；上下文告知正在评估哪个子目标）
         tool_budget.consume()
         evaluator = get_evaluator_provider()
         eval_out = evaluator.evaluate(
@@ -430,14 +430,27 @@ def submit_turn(
                 "hint_used": hint_used,
                 "input_type": input_type,
                 "goal": session.goal_text,
+                "subgoal": subgoal,
                 "acceptable_points": SCENARIOS.get(session.scene_id, {}).get("acceptable_points", []),
             }
         )
 
         # 更新子目标（先算到局部变量，提交前统一应用）
+        # 多意图：仅当场景配置显式声明 co_complete 时，一次回答可同时完成多个子目标
+        # （如「认识新同事」的自我介绍 + 反问）；其余场景保持每回合只推进一个子目标，
+        # 「认识新朋友」等两轮规则不受影响。
         new_subgoals = dict(subgoals)
         if eval_out.result == "independent":
             new_subgoals[subgoal] = {"status": "independent", "evidence": [turn_id]}
+            co_complete = SCENARIOS.get(session.scene_id, {}).get("co_complete") or {}
+            lowered = text_for_eval.lower()
+            for key, phrases in co_complete.items():
+                if key == subgoal:
+                    continue
+                if new_subgoals.get(key, {}).get("status") == "independent":
+                    continue
+                if any(phrase in lowered for phrase in phrases):
+                    new_subgoals[key] = {"status": "independent", "evidence": [turn_id]}
         else:
             new_subgoals[subgoal] = {"status": eval_out.result, "evidence": []}
 
@@ -455,8 +468,7 @@ def submit_turn(
                 "level": user.level if user else "basic",
                 "scene_context": SCENARIOS.get(session.scene_id, {}).get("coach_context", "an English conversation coach"),
                 "scene_id": session.scene_id,
-                "follow_ups": SCENARIOS.get(session.scene_id, {}).get("follow_ups", {}),
-                "reference_expressions": SCENARIOS.get(session.scene_id, {}).get("reference_expressions", []),
+                "coach_persona": SCENARIOS.get(session.scene_id, {}).get("coach_persona", ""),
                 "current_question": question,
                 "current_answer": text_for_eval,
                 "input_type": input_type,
