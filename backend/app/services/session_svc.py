@@ -354,6 +354,9 @@ def create_sentence_practice(
         source_turn_id=source_turn_id,
         practice_sentence=sentence,
         practice_goal=goal,
+        drill_stage="full_text",
+        drill_target=sentence,
+        drill_meaning=goal,
         rechecked=False,
         active_since=_now(),
     )
@@ -765,7 +768,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
     turns = (
         db.query(Turn).filter(Turn.session_id == session.id).order_by(Turn.seq).all()
     )
-    return {
+    detail: dict[str, Any] = {
         "session_id": session.id,
         "status": session.status,
         "goal_text": session.goal_text,
@@ -794,6 +797,10 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
             for t in turns
         ],
     }
+    if session.practice_type == "sentence_practice":
+        from app.services import drill_svc
+        detail["drill"] = drill_svc.drill_view(session)
+    return detail
 
 
 def _count_user_turns(db: DbSession, session_id: str) -> int:

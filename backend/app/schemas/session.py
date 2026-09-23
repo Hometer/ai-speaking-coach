@@ -50,6 +50,7 @@ class SessionDetailResponse(BaseModel):
     scene_label: str = ""
     source_invalid: bool = False
     review: dict | None = None
+    drill: dict | None = None  # 脱稿阶梯视图（sentence_practice 会话）
     turns: list[TurnItem] = []
 
 
@@ -99,6 +100,14 @@ class ReviseTurnRequest(BaseModel):
 class HelpRequest(BaseModel):
     help_type: Literal["repeat", "explain", "organize", "translate"]
     source_text: str = Field(default="", max_length=2000)  # translate 必填（用户的中文原意）
+
+
+class DrillAttemptRequest(BaseModel):
+    text: str = Field(default="", max_length=2000)
+
+
+class DrillActionRequest(BaseModel):
+    action: Literal["skip", "downgrade", "end"]
 
 
 class PracticeSentenceRequest(BaseModel):

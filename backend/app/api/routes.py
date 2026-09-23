@@ -12,6 +12,8 @@ from app.models.entities import DeviceCheck
 from app.schemas.device import DeviceCheckRequest
 from app.schemas.memory import MemoryItem, MemorySettingsResponse, MemoryToggleRequest, MemoryUpdateRequest
 from app.schemas.session import (
+    DrillActionRequest,
+    DrillAttemptRequest,
     EndRequest,
     EndResponse,
     HelpRequest,
@@ -30,6 +32,7 @@ from app.schemas.review_queue import AddToQueueRequest, QueueItemResponse, Retes
 from app.schemas.training_plan import CreatePlanRequest, PlanResponse
 from app.schemas.quality_label import AddLabelRequest
 from app.services import memory as memory_svc
+from app.services import drill_svc
 from app.services import help_svc
 from app.services import session_svc
 from app.services import review_queue as queue_svc
@@ -174,6 +177,24 @@ def retry_turn_audio(session_id: str, turn_id: str, user_id: str = Depends(get_u
     db = SessionLocal()
     try:
         return session_svc.synthesize_turn_audio(db, session_id, user_id, turn_id)
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/drill-attempt")
+def drill_attempt(session_id: str, req: DrillAttemptRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return drill_svc.submit_drill_attempt(db, session_id, user_id, req.text)
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/drill/action")
+def drill_action(session_id: str, req: DrillActionRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return drill_svc.drill_action(db, session_id, user_id, req.action)
     finally:
         db.close()
 
