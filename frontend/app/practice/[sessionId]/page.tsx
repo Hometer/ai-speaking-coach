@@ -201,7 +201,7 @@ export default function PracticePage() {
     }
   }
 
-  async function handleDrillAction(action: "skip" | "downgrade" | "end") {
+  async function handleDrillAction(action: "skip" | "downgrade" | "jump" | "end") {
     if (!drill || busy) return;
     setBusy(true);
     setErr("");
@@ -505,7 +505,7 @@ export default function PracticePage() {
             {drill.drill_stage === "full_text" && <p className="text-sm muted mt-2">中文意思：{drill.drill_meaning}</p>}
             {drill.drill_stage === "free_speak" && <p className="text-sm muted mt-2">目标语块：{drill.drill_chunk}</p>}
             <textarea value={drillText} onChange={e => setDrillText(e.target.value)} placeholder="用英文说出这一句（不用逐字一样，意思对即可）…" disabled={busy} maxLength={2000} style={{ width: "100%", minHeight: "72px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d7ded4", fontSize: "15px", resize: "vertical" }} />
-            <div className="flex items-center gap-2 flex-wrap mt-3"><button onClick={handleDrillAttempt} disabled={busy || !drillText.trim()} className="btn btn-primary">提交</button><button onClick={() => handleDrillAction("downgrade")} disabled={busy} className="btn btn-ghost">降一级</button><button onClick={() => handleDrillAction("skip")} disabled={busy} className="btn btn-ghost">跳过这级</button><button onClick={() => handleDrillAction("end")} disabled={busy} className="btn btn-ghost">结束</button></div>
+            <div className="flex items-center gap-2 flex-wrap mt-3"><button onClick={handleDrillAttempt} disabled={busy || !drillText.trim()} className="btn btn-primary">提交</button><button onClick={() => handleDrillAction("downgrade")} disabled={busy} className="btn btn-ghost">降一级</button><button onClick={() => handleDrillAction("skip")} disabled={busy} className="btn btn-ghost">跳过这级</button>{drill.drill_stage !== "transfer" && <button onClick={() => handleDrillAction("jump")} disabled={busy} className="btn btn-ghost">跳级到换题</button>}<button onClick={() => handleDrillAction("end")} disabled={busy} className="btn btn-ghost">结束</button></div>
             <p className="text-xs muted mt-3">看全文/补关键词=有参考练习；看结构=提示下完成；脱稿说=独立表达；换题=迁移证据。</p>
           </section>}
           {drill?.completed && <div className="notice mb-4"><Icon name="check" size={17} /><p>脱稿阶梯已完成。本次表达已写回待复练记录。</p></div>}

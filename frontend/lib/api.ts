@@ -366,7 +366,7 @@ export async function drillAttempt(sessionId: string, text: string): Promise<Dri
   return handle<DrillAttemptResult>(res);
 }
 
-export async function drillAction(sessionId: string, action: "skip" | "downgrade" | "end"): Promise<DrillView> {
+export async function drillAction(sessionId: string, action: "skip" | "downgrade" | "jump" | "end"): Promise<DrillView> {
   const res = await fetch(`/api/v1/sessions/${sessionId}/drill/action`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },

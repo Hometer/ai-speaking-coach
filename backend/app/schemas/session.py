@@ -108,7 +108,7 @@ class DrillAttemptRequest(BaseModel):
 
 
 class DrillActionRequest(BaseModel):
-    action: Literal["skip", "downgrade", "end"]
+    action: Literal["skip", "downgrade", "jump", "end"]
 
 
 class PracticeSentenceRequest(BaseModel):

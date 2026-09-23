@@ -108,6 +108,14 @@ def test_drill_downgrade_and_skip(client):
     assert r2.json()["drill_stage"] == "fill_blanks"
 
 
+def test_drill_jump_to_transfer(client):
+    source_sid, source_tid, _ = _source_improvement(client)
+    d = _create_drill(client, source_sid, source_tid)
+    r = client.post(f"/api/v1/sessions/{d['session_id']}/drill/action", json={"action": "jump"}, headers=USER)
+    assert r.status_code == 200, r.text
+    assert r.json()["drill_stage"] == "transfer"
+
+
 def test_drill_write_back_to_queue(client):
     source_sid, source_tid, imp = _source_improvement(client)
     # 先加入待复练

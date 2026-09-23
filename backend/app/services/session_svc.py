@@ -702,6 +702,7 @@ def submit_practice(
         recording_url=recording_url,
     )
     db.add(turn)
+    _log_event(db, session_id, turn_id=turn.id, action_type="practice", basis=decision.action_type, input_type="practice", tool_result="scored" if valid else "unscored")
 
     # 状态迁移
     new_status = S_WAITING

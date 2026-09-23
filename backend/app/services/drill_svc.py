@@ -205,6 +205,12 @@ def drill_action(db: DbSession, session_id: str, user_id: str, action: str) -> d
     elif action == "downgrade":
         idx = STAGE_ORDER.index(stage)
         session.drill_stage = STAGE_ORDER[max(0, idx - 1)]
+    elif action == "jump":
+        # 跳级：用户已能脱稿时可直接进入换题（AC08-02）
+        if stage == "transfer":
+            raise AppError("INVALID_STATE", "已在换题阶段", status_code=409)
+        _record(db, session, user_id, "", "skipped", "jumped")
+        session.drill_stage = "transfer"
     elif action == "end":
         session.drill_stage = "ended"
         session.status = "ENDED"
