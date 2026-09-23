@@ -43,6 +43,10 @@ class Session(Base):
     rechecked: Mapped[bool] = mapped_column(default=False)
     active_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     active_since: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    # 当前有效问题（求助与评估按此绑定，不靠“最后一条回复”猜）
+    current_question_id: Mapped[str] = mapped_column(String(64), default="")
+    current_question_text: Mapped[str] = mapped_column(Text, default="")
+    current_question_audio_url: Mapped[str] = mapped_column(String(255), default="")
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
@@ -71,6 +75,9 @@ class Turn(Base):
     revision_version: Mapped[int] = mapped_column(Integer, default=0)
     help_type: Mapped[str] = mapped_column(String(16), default="")
     help_level: Mapped[int] = mapped_column(Integer, default=0)
+    # 本回合绑定的有效问题；帮助回合据此区分“理解辅助”与“答案辅助”
+    question_id: Mapped[str] = mapped_column(String(64), default="")
+    is_answer_help: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     session: Mapped["Session"] = relationship(back_populates="turns")

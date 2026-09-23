@@ -91,20 +91,26 @@ def _last_action_type(db: DbSession, session_id: str) -> str:
     return last.action_type if last else ""
 
 
-def _last_help_type(db: DbSession, session_id: str) -> str:
-    last = (
-        db.query(Turn)
-        .filter(Turn.session_id == session_id, Turn.help_type != "")
-        .order_by(Turn.seq.desc())
-        .first()
-    )
-    return last.help_type if last else ""
-
-
 def _has_practice(db: DbSession, session_id: str) -> bool:
     return (
         db.query(Turn)
         .filter(Turn.session_id == session_id, Turn.input_type == "practice")
+        .first()
+        is not None
+    )
+
+
+def _has_answer_help_for_question(db: DbSession, session_id: str, question_id: str) -> bool:
+    """当前问题是否已给出过答案帮助（organize/translate）；有则后续回答不判独立。"""
+    if not question_id:
+        return False
+    return (
+        db.query(Turn)
+        .filter(
+            Turn.session_id == session_id,
+            Turn.question_id == question_id,
+            Turn.is_answer_help.is_(True),
+        )
         .first()
         is not None
     )
@@ -252,15 +258,20 @@ def create_session(
     audio = tts.synthesize(decision.reply_text)
     audio_url = _save_audio(audio, tts.ext)
     session.status = S_WAITING
+    opening_turn_id = uuid.uuid4().hex
+    session.current_question_id = opening_turn_id
+    session.current_question_text = decision.reply_text
+    session.current_question_audio_url = audio_url
     db.add(
         Turn(
-            id=uuid.uuid4().hex,
+            id=opening_turn_id,
             session_id=session_id,
             seq=0,
             input_type="coach",
             reply_text=decision.reply_text,
             reply_audio_url=audio_url,
             action_type="follow_up",
+            question_id=opening_turn_id,
         )
     )
     db.commit()
@@ -413,12 +424,15 @@ def submit_turn(
         else:
             text_for_eval = user_text or ""
 
-        hint_used = _last_action_type(db, session_id) == "hint" or _last_help_type(db, session_id) == "organize"
+        hint_used = _last_action_type(db, session_id) == "hint" or _has_answer_help_for_question(
+            db, session_id, session.current_question_id
+        )
 
-        # 当前子目标 + 题目
+        # 当前子目标 + 题目（绑定当前有效问题，不靠“最后一条回复”猜）
         subgoals = _load_subgoals(session)
         subgoal = _current_subgoal(session, subgoals)
-        question = _last_coach_text(db, session_id)
+        question = session.current_question_text or _last_coach_text(db, session_id)
+        question_id = session.current_question_id
 
         # 独立评估（与生成分离；上下文告知正在评估哪个子目标）
         tool_budget.consume()
@@ -536,6 +550,11 @@ def submit_turn(
         session.end_reason = "goal_reached"
         session.ended_at = _now()
     session.status = new_status
+    # 新问题（追问/复测）才更新当前问题；hint/跟读不改变当前问题
+    if decision.action_type in ("follow_up", "recheck"):
+        session.current_question_id = turn_id
+        session.current_question_text = decision.reply_text
+        session.current_question_audio_url = audio_url
 
     turn = Turn(
         id=turn_id,
@@ -550,6 +569,7 @@ def submit_turn(
         hint_used=hint_used,
         practice_sentence=decision.practice_sentence,
         eval_result=eval_out.result,
+        question_id=question_id,
     )
     db.add(turn)
     _log_event(db, session_id, turn_id=turn_id, action_type=decision.action_type, basis=eval_out.result, input_type=input_type, tool_result=eval_out.result)
@@ -897,59 +917,6 @@ def request_hint(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]
         raise
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
     return {"session_id": session_id, "reply_text": decision.reply_text, "reply_audio_url": audio_url, "action_type": decision.action_type}
-
-
-def request_help(
-    db: DbSession, session_id: str, user_id: str, help_type: str, help_level: int = 0
-) -> dict[str, Any]:
-    session = _require_session(db, session_id, user_id)
-    if session.status == S_ENDED:
-        raise AppError("SESSION_ENDED", "会话已结束", status_code=409)
-    if session.status == S_PAUSED:
-        raise AppError("SESSION_PAUSED", "会话已暂停", status_code=409)
-    guard = BudgetGuard(db)
-    guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
-    try:
-        coach = get_coach_provider()
-        question = _last_coach_text(db, session_id)
-        decision = coach.help(
-            {
-                "help_type": help_type,
-                "help_level": help_level,
-                "current_question": question,
-                "help_materials": SCENARIOS.get(session.scene_id, {}).get("help_materials", {}),
-            }
-        )
-        tts = get_tts_provider()
-        audio = tts.synthesize(decision.reply_text)
-        audio_url = _save_audio(audio, tts.ext)
-        db.add(
-            Turn(
-                id=uuid.uuid4().hex,
-                session_id=session_id,
-                seq=_next_seq(db, session_id),
-                input_type="coach",
-                reply_text=decision.reply_text,
-                reply_audio_url=audio_url,
-                action_type="help",
-                help_type=help_type,
-                help_level=help_level,
-            )
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
-        raise
-    guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
-    return {
-        "session_id": session_id,
-        "reply_text": decision.reply_text,
-        "reply_audio_url": audio_url,
-        "action_type": "help",
-        "help_type": help_type,
-        "help_level": help_level,
-    }
 
 
 def dispute_review_improvement(db: DbSession, session_id: str, user_id: str, turn_id: str) -> dict[str, Any]:

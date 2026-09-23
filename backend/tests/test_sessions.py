@@ -240,13 +240,15 @@ def test_coach_context_contains_answer_and_history(client, monkeypatch):
     assert captured.get("level") == "basic"
 
 
-def test_help_types(client):
+def test_help_repeat_returns_original_question(client):
     s = _create_session(client)
     r = client.post(f"/api/v1/sessions/{s['session_id']}/help", json={"help_type": "repeat"}, headers=USER)
     assert r.status_code == 200
-    assert r.json()["help_type"] == "repeat"
-    r2 = client.post(f"/api/v1/sessions/{s['session_id']}/help", json={"help_type": "organize", "help_level": 1}, headers=USER)
-    assert r2.json()["help_level"] == 1
+    body = r.json()
+    assert body["help_type"] == "repeat"
+    # repeat 复用当前问题原文本与音频，不生成新内容
+    assert body["reply_text"] == s["reply_text"]
+    assert body["reply_audio_url"] == s["reply_audio_url"]
 
 
 def test_organize_help_marks_hinted(client):

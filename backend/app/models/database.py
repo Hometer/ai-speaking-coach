@@ -40,7 +40,18 @@ def migrate_db() -> None:
             "scene_version": "VARCHAR(16) DEFAULT 'v1'",
             "active_seconds": "FLOAT DEFAULT 0.0",
             "active_since": "DATETIME",
+            "current_question_id": "VARCHAR(64) DEFAULT ''",
+            "current_question_text": "TEXT DEFAULT ''",
+            "current_question_audio_url": "VARCHAR(255) DEFAULT ''",
         }
         for col, ddl in additions.items():
             if col not in cols:
                 conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}"))
+        tcols = {r[1] for r in conn.execute(text("PRAGMA table_info(turns)"))}
+        tadditions = {
+            "question_id": "VARCHAR(64) DEFAULT ''",
+            "is_answer_help": "BOOLEAN DEFAULT 0",
+        }
+        for col, ddl in tadditions.items():
+            if col not in tcols:
+                conn.execute(text(f"ALTER TABLE turns ADD COLUMN {col} {ddl}"))

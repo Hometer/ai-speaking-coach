@@ -30,6 +30,7 @@ from app.schemas.review_queue import AddToQueueRequest, QueueItemResponse, Retes
 from app.schemas.training_plan import CreatePlanRequest, PlanResponse
 from app.schemas.quality_label import AddLabelRequest
 from app.services import memory as memory_svc
+from app.services import help_svc
 from app.services import session_svc
 from app.services import review_queue as queue_svc
 from app.services import progress as progress_svc
@@ -262,7 +263,7 @@ def request_hint(session_id: str, user_id: str = Depends(get_user_id)):
 def request_help(session_id: str, req: HelpRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return session_svc.request_help(db, session_id, user_id, req.help_type, req.help_level)
+        return help_svc.request_help(db, session_id, user_id, req.help_type, req.source_text)
     finally:
         db.close()
 

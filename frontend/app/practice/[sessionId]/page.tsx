@@ -36,7 +36,6 @@ export default function PracticePage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [showHelp, setShowHelp] = useState(false);
-  const [organizeLevel, setOrganizeLevel] = useState(0);
   const [practiceSentence, setPracticeSentence] = useState("");
   const [practiceDemo, setPracticeDemo] = useState("");
   const [practiceResult, setPracticeResult] = useState("");
@@ -267,14 +266,26 @@ export default function PracticePage() {
     setBusy(true);
     setErr("");
     setShowHelp(false);
-    let level = 0;
-    if (type === "organize") {
-      level = Math.min(organizeLevel + 1, 3);
-      setOrganizeLevel(level);
-    }
     try {
-      const r = await requestHelp(sessionId, type, level);
-      addMsg("coach", r.reply_text, r.reply_audio_url);
+      let sourceText: string | undefined;
+      if (type === "translate") {
+        const src = window.prompt("请输入你想表达的中文：", "");
+        if (!src || !src.trim()) {
+          setErr("已取消，未请求翻译。");
+          return;
+        }
+        sourceText = src.trim();
+      }
+      const r = await requestHelp(sessionId, type, sourceText);
+      if (type === "repeat") {
+        // 重播已有音频，不追加新消息
+        if (r.reply_audio_url) {
+          const a = new Audio(r.reply_audio_url);
+          a.play().catch(() => setErr("音频播放失败，请重试。"));
+        }
+      } else {
+        addMsg("coach", r.reply_text, r.reply_audio_url);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {

@@ -46,6 +46,8 @@ SCENARIOS: dict[str, dict] = {
             "keywords": "experience / project / result",
             "half": "你可以这样开头：'I have experience in...'",
             "full": "I have three years of experience in software development, and I led a project that improved delivery speed.",
+            "explain_zh": "面试官在请你介绍一段自己的工作或学习经历，并可能继续追问这段经历的细节。",
+            "simple_question": "Tell me about one job or project you did.",
         },
         "reference_expressions": [
             "I have three years of experience in software development.",
@@ -85,6 +87,8 @@ SCENARIOS: dict[str, dict] = {
             "keywords": "name / role / what about you",
             "half": "可以先说：'I am..., I work on...'，再问 'What about you?'",
             "full": "I am a designer on the product team, and I focus on the mobile app. What about you?",
+            "explain_zh": "新同事想认识你，请介绍一下你自己（名字、岗位），也可以反过来问对方一个问题。",
+            "simple_question": "What's your name and what do you do?",
         },
         "reference_expressions": [
             "I am a designer on the product team.",
@@ -120,6 +124,8 @@ SCENARIOS: dict[str, dict] = {
             "keywords": "I think / because / reason",
             "half": "可以先说观点：'I think we should...'，再补理由 'because...'",
             "full": "I think we should launch the smaller version first, because it is faster to test and cheaper to fix.",
+            "explain_zh": "主持人请你对这个项目发表你的看法，并说明你支持或反对的理由。",
+            "simple_question": "What do you think about the plan, and why?",
         },
         "reference_expressions": [
             "I think we should launch the smaller version first.",
@@ -155,6 +161,8 @@ SCENARIOS: dict[str, dict] = {
             "keywords": "reservation / breakfast / wifi",
             "half": "可以先确认：'I have a reservation under...'，再问一项服务",
             "full": "I have a reservation under the name Li. What time does breakfast start?",
+            "explain_zh": "前台在确认你的预订信息（姓名/几晚），并会问你有没有需要了解的服务。",
+            "simple_question": "Do you have a reservation? What's your name?",
         },
         "reference_expressions": [
             "I have a reservation under the name Li.",
@@ -190,6 +198,8 @@ SCENARIOS: dict[str, dict] = {
             "keywords": "I would like / please",
             "half": "点餐可以这样：'I would like...'，特殊要求补 'no...' 或 'without...'",
             "full": "I would like the grilled chicken, please. No spicy food, please.",
+            "explain_zh": "服务员在请你点餐，可能还会追问你的特殊要求（不要辣、饮料等）。",
+            "simple_question": "What would you like to order?",
         },
         "reference_expressions": [
             "I would like the grilled chicken, please.",
@@ -226,6 +236,8 @@ SCENARIOS: dict[str, dict] = {
             "keywords": "name / I like / free time",
             "half": "可以先说 'I am...'，再聊一件你喜欢做的事",
             "full": "I am Alex, and I work in marketing. In my free time I like hiking.",
+            "explain_zh": "新朋友想认识你，请介绍一下你自己（工作/爱好），让对话继续下去。",
+            "simple_question": "What do you do? What do you like?",
         },
         "reference_expressions": [
             "I am Alex, and I work in marketing.",
@@ -261,6 +273,8 @@ SCENARIOS: dict[str, dict] = {
             "keywords": "I like / because",
             "half": "先说自己喜欢什么：'I like...'，再补原因 'because...'",
             "full": "I like painting in my free time, because it helps me relax.",
+            "explain_zh": "对方在问你的兴趣爱好，请说说你喜欢做什么，以及为什么喜欢。",
+            "simple_question": "What hobby do you like, and why?",
         },
         "reference_expressions": [
             "I like painting in my free time.",

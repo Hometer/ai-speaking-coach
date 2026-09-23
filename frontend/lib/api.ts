@@ -137,13 +137,24 @@ export async function requestHint(sessionId: string) {
   return handle<{ reply_text: string; reply_audio_url: string; action_type: string }>(res);
 }
 
-export async function requestHelp(sessionId: string, helpType: string, helpLevel = 0) {
+export interface HelpResult {
+  reply_text: string;
+  reply_audio_url: string;
+  help_type: string;
+  help_level: number;
+  is_answer_help: boolean;
+  question_id: string;
+}
+
+export async function requestHelp(sessionId: string, helpType: string, sourceText?: string) {
+  const body: Record<string, string> = { help_type: helpType };
+  if (sourceText !== undefined) body.source_text = sourceText;
   const res = await fetch(`/api/v1/sessions/${sessionId}/help`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ help_type: helpType, help_level: helpLevel }),
+    body: JSON.stringify(body),
   });
-  return handle<{ reply_text: string; reply_audio_url: string; help_type: string; help_level: number }>(res);
+  return handle<HelpResult>(res);
 }
 
 export async function disputeReview(sessionId: string, turnId: string): Promise<void> {

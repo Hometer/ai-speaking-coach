@@ -97,8 +97,8 @@ class ReviseTurnRequest(BaseModel):
 
 
 class HelpRequest(BaseModel):
-    help_type: str = Field(..., description="repeat/explain/organize/translate")
-    help_level: int = Field(default=0, ge=0, le=3)
+    help_type: Literal["repeat", "explain", "organize", "translate"]
+    source_text: str = Field(default="", max_length=2000)  # translate 必填（用户的中文原意）
 
 
 class PracticeSentenceRequest(BaseModel):
