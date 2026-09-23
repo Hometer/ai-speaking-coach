@@ -92,6 +92,8 @@ npm run start -- -p 3100
 
 TTS 已加有限重试与文字降级：合成失败不影响文字回合（`audio_status=failed`），回合 SSE 顺序为 `chunk`（文字）→ `done`（含音频）；另提供音频重试接口 `POST /api/v1/sessions/{id}/turns/{turn_id}/audio`（鉴权、幂等）。评估器已按每场景 `subgoal_standard` 收紧，极简/模糊回答不再标独立。
 
+P1-1 脱稿阶梯（REQ-28）：五段阶梯 `full_text→fill_blanks→structure→free_speak→transfer`，帮助证据决定完成结论（看全文/补关键词=有参考、看结构=提示下、脱稿说=独立、换题=迁移），结果写回待复练。接口：`POST /api/v1/sessions/{id}/drill-attempt`（提交尝试）、`POST /api/v1/sessions/{id}/drill/action`（skip/downgrade/end）。
+
 ### 运行 mock 自动化测试（后端，离线）
 
 ```bash
