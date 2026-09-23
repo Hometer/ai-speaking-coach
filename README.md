@@ -73,11 +73,12 @@ npm run dev   # http://localhost:3000
 ```bash
 npm run typecheck
 npm run lint
+npm run test
 npm run build
 npm run start -- -p 3100
 ```
 
-生产预览地址为 `http://localhost:3100`，需要同时运行 8000 端口的后端。构建时可用 `BACKEND_URL=http://127.0.0.1:8001 npm run build` 指向独立后端；未设置时默认使用 8000 端口。当前未配置独立前端单元测试脚本；本批浏览器验证结果和复现步骤记录在证据包中。2026-09-23：类型检查、Lint、默认 Turbopack 生产构建均通过，后端 Mock 回归 110/110。
+生产预览地址为 `http://localhost:3100`，需要同时运行 8000 端口的后端。构建时可用 `BACKEND_URL=http://127.0.0.1:8001 npm run build` 指向独立后端；未设置时默认使用 8000 端口。前端组件测试用 Vitest + React Testing Library（`npm run test`），覆盖导航八入口、语块卡空状态；页面级链路仍靠浏览器走查与后端集成测试。2026-09-23：类型检查、Lint、组件测试、默认 Turbopack 生产构建均通过，后端 Mock 回归 111/111。
 
 ### 前端代码位置
 
