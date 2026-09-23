@@ -87,6 +87,7 @@ class Turn(Base):
     question_id: Mapped[str] = mapped_column(String(64), default="")
     is_answer_help: Mapped[bool] = mapped_column(default=False)
     audio_status: Mapped[str] = mapped_column(String(16), default="ok")  # pending / ok / failed
+    recording_url: Mapped[str] = mapped_column(String(255), default="")  # 本人录音回放（会话内）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     session: Mapped["Session"] = relationship(back_populates="turns")

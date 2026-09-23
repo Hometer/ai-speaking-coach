@@ -659,8 +659,15 @@ def submit_practice(
     audio_path = uploads_dir / f"{uuid.uuid4().hex}.{fmt}"
     audio_path.write_bytes(audio_bytes)
 
+    # 保存本人录音供回放/对比（会话内）
+    recording_url = _save_audio(audio_bytes, fmt)
+
     provider = get_practice_eval_provider()
     eval_result = provider.evaluate(audio_path, sentence)
+    # 评价绑定录音版本 / 参考句版本 / 阶梯阶段
+    eval_result["recording_url"] = recording_url
+    eval_result["reference_version"] = session.scene_version or ""
+    eval_result["drill_stage"] = session.drill_stage or ""
 
     score = eval_result.get("score")
     valid = score is not None
@@ -692,6 +699,7 @@ def submit_practice(
         reply_text=decision.reply_text,
         reply_audio_url=audio_url,
         action_type=decision.action_type,
+        recording_url=recording_url,
     )
     db.add(turn)
 
@@ -710,6 +718,7 @@ def submit_practice(
         "session_id": session_id,
         "status": new_status,
         "eval": eval_result,
+        "recording_url": recording_url,
         "recheck_reply_text": decision.reply_text,
         "recheck_audio_url": audio_url,
     }
@@ -790,6 +799,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
                 "reply_audio_url": t.reply_audio_url,
                 "practice_sentence": t.practice_sentence,
                 "action_type": t.action_type,
+                "recording_url": t.recording_url,
                 "hint_used": t.hint_used,
                 "eval_result": t.eval_result,
                 "revised_text": t.revised_text,
@@ -847,6 +857,8 @@ def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
     for t in db.query(Turn).filter(Turn.session_id == session.id).all():
         if t.reply_audio_url:
             audio_filenames.add(os.path.basename(t.reply_audio_url))
+        if t.recording_url:
+            audio_filenames.add(os.path.basename(t.recording_url))
     # 删除传播：以本会话为来源的单句复练标失效并清空复制文本
     for sp in (
         db.query(Session)

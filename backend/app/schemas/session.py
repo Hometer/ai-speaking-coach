@@ -89,6 +89,7 @@ class PracticeResponse(BaseModel):
     session_id: str
     status: str
     eval: dict = Field(default_factory=dict)
+    recording_url: str = ""
     recheck_reply_text: str
     recheck_audio_url: str
 

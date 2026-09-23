@@ -52,6 +52,7 @@ def migrate_db() -> None:
             "question_id": "VARCHAR(64) DEFAULT ''",
             "is_answer_help": "BOOLEAN DEFAULT 0",
             "audio_status": "VARCHAR(16) DEFAULT 'ok'",
+            "recording_url": "VARCHAR(255) DEFAULT ''",
         }
         for col, ddl in tadditions.items():
             if col not in tcols:

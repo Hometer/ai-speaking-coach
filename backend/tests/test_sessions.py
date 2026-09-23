@@ -126,6 +126,24 @@ def test_practice_flow(client):
     assert data["recheck_reply_text"]
 
 
+def test_practice_recording_binding(client):
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "just working")  # → PRACTICE
+    r = client.post(
+        f"/api/v1/sessions/{s['session_id']}/practice",
+        data={"sentence": "I have three years of experience."},
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    # 本人录音保存并绑定评价（录音版本/参考句版本/阶梯阶段）
+    assert data["recording_url"].startswith("/api/v1/audio/")
+    assert data["eval"]["recording_url"] == data["recording_url"]
+    assert "reference_version" in data["eval"]
+    assert "drill_stage" in data["eval"]
+
+
 def test_practice_invalid_state_rejected(client):
     s = _create_session(client)
     r = client.post(
