@@ -28,13 +28,14 @@ from app.schemas.session import (
     SessionListItem,
 )
 from app.schemas.turn import TextTurnRequest
-from app.schemas.review_queue import AddToQueueRequest, DailyReviewActionRequest, DailyReviewAttemptRequest, QueueItemResponse, RetestRequest
+from app.schemas.review_queue import AddToQueueRequest, DailyReviewActionRequest, DailyReviewAttemptRequest, PhraseCardRequest, QueueItemResponse, RetestRequest
 from app.schemas.training_plan import CreatePlanRequest, PlanResponse
 from app.schemas.quality_label import AddLabelRequest
 from app.services import memory as memory_svc
 from app.services import daily_review_svc
 from app.services import drill_svc
 from app.services import help_svc
+from app.services import phrase_card_svc
 from app.services import session_svc
 from app.services import review_queue as queue_svc
 from app.services import progress as progress_svc
@@ -453,6 +454,24 @@ def daily_review_action(session_id: str, req: DailyReviewActionRequest, user_id:
     db = SessionLocal()
     try:
         return daily_review_svc.control_action(db, session_id, user_id, req.action)
+    finally:
+        db.close()
+
+
+@router.post("/phrase-cards")
+def create_phrase_card(req: PhraseCardRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return phrase_card_svc.generate_card(db, user_id, req.source_session_id, req.source_turn_id)
+    finally:
+        db.close()
+
+
+@router.get("/phrase-cards")
+def list_phrase_cards(user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return phrase_card_svc.list_cards(db, user_id)
     finally:
         db.close()
 

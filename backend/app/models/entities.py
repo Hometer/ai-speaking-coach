@@ -252,3 +252,22 @@ class DailyReviewAttempt(Base):
     help_used: Mapped[bool] = mapped_column(default=False)
     result: Mapped[str] = mapped_column(String(16), default="")  # completed/skipped/deferred/disputed/failed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class PhraseCard(Base):
+    """语块卡（P1-4，REQ-31）：从有效建议生成，不扩写用户事实，随来源传播失效。"""
+    __tablename__ = "phrase_cards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_session_id: Mapped[str] = mapped_column(String(64), default="")
+    source_turn_id: Mapped[str] = mapped_column(String(64), default="")
+    original_text: Mapped[str] = mapped_column(Text, default="")
+    suggestion_text: Mapped[str] = mapped_column(Text, default="")
+    chunk_text: Mapped[str] = mapped_column(Text, default="")
+    explanation_zh: Mapped[str] = mapped_column(Text, default="")
+    context_zh: Mapped[str] = mapped_column(Text, default="")
+    replaceable: Mapped[str] = mapped_column(Text, default="")
+    example_text: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active / invalid
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

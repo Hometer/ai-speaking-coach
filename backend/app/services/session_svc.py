@@ -859,6 +859,8 @@ def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
             audio_filenames.add(os.path.basename(t.reply_audio_url))
         if t.recording_url:
             audio_filenames.add(os.path.basename(t.recording_url))
+    from app.services import phrase_card_svc
+    phrase_card_svc.invalidate_by_source(db, session.id)
     # 删除传播：以本会话为来源的单句复练标失效并清空复制文本
     for sp in (
         db.query(Session)
@@ -1000,6 +1002,8 @@ def dispute_review_improvement(db: DbSession, session_id: str, user_id: str, tur
         .all()
     ):
         sp.source_invalid = True
+    from app.services import phrase_card_svc
+    phrase_card_svc.invalidate_by_turn(db, turn_id)
     db.commit()
     return {"disputed": True}
 

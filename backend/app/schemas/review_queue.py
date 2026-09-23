@@ -32,3 +32,8 @@ class DailyReviewAttemptRequest(BaseModel):
 
 class DailyReviewActionRequest(BaseModel):
     action: str = Field(..., description="skip/defer/dispute/end")
+
+
+class PhraseCardRequest(BaseModel):
+    source_session_id: str
+    source_turn_id: str
