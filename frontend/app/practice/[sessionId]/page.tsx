@@ -38,6 +38,8 @@ export default function PracticePage() {
   const [showHelp, setShowHelp] = useState(false);
   const [practiceSentence, setPracticeSentence] = useState("");
   const [practiceDemo, setPracticeDemo] = useState("");
+  const [practiceRecording, setPracticeRecording] = useState("");
+  const [slowDemo, setSlowDemo] = useState(false);
   const [practiceResult, setPracticeResult] = useState("");
   const [recording, setRecording] = useState(false);
   const [audioRetryTurnId, setAudioRetryTurnId] = useState<string | null>(null);
@@ -314,6 +316,7 @@ export default function PracticePage() {
       const score = typeof data.eval?.score === "number" ? data.eval.score : null;
       const isMock = !!data.eval?.mock;
       setPracticeResult(score === null ? "本次无法评估" : `评测得分 ${score}${isMock ? "（示例）" : "（实测）"}`);
+      setPracticeRecording(data.recording_url || "");
       addMsg("coach", data.recheck_reply_text, data.recheck_audio_url);
       setStatus(data.status);
       setPracticeSentence("");
@@ -495,7 +498,9 @@ export default function PracticePage() {
 
           {practiceSentence && !drill && !ended && <section className={styles.readingCard}>
             <div className="section-head mt-0 mb-3"><h2><Icon name="headphones" size={19} /> 试着练这一句</h2><span className="badge">有参考文本的短练</span></div>
-            <p className={styles.practiceSentence}>{practiceSentence}</p>{practiceDemo && <AudioPlayer key={practiceDemo} src={practiceDemo} />}
+            <p className={styles.practiceSentence}>{practiceSentence}</p>
+            {practiceDemo && <div><AudioPlayer key={practiceDemo} src={practiceDemo} rate={slowDemo ? 0.75 : 1} /><button onClick={() => setSlowDemo(!slowDemo)} className="btn btn-ghost btn-small mt-1">{slowDemo ? "正常速度" : "慢速示范"}</button></div>}
+            {practiceRecording && <div className="mt-2"><p className="text-xs muted">你的录音（本次评价使用）：</p><AudioPlayer key={practiceRecording} src={practiceRecording} /></div>}
             <div className="flex items-center gap-2 flex-wrap mt-4"><button onClick={() => toggleRecord("practice")} disabled={inputDisabled} className="btn btn-primary"><Icon name={recording && recordMode === "practice" ? "stop" : "mic"} size={16} />{recording && recordMode === "practice" ? "停止并提交" : "录音跟读"}</button><button onClick={handleSkipPractice} disabled={inputDisabled || recording} className="btn btn-ghost">跳过这次跟读</button>{recording && recordMode === "practice" && <><span className={styles.recordingTimer}>{timerText()}</span><button onClick={cancelRecord} className="btn btn-ghost">取消录音</button></>}</div>
             <p className="text-xs muted mt-3">可以直接尝试，也可以先听示范。跟读不等同于独立表达。</p>
           </section>}
