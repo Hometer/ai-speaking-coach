@@ -69,6 +69,18 @@ a.feature:hover { background: #f1f4e9; border-color: #cdd8be; }
 @media (max-width: 900px) { .workspace { grid-template-columns: 1fr; } .voiceArt { right: 20px; opacity: 1; transform: none; } .hero { padding: 28px; } .heroCopy { max-width: 65%; } .setup { padding: 25px; } .settings { grid-template-columns: 1fr 1fr; gap: 20px; } .settings fieldset:first-child { grid-column: 1/-1; } .start,.micNote,.logout { grid-column: 1/-1; } .levels small { font-size: 10px; } }
 @media (max-width: 760px) { .greeting { margin-bottom: 22px; } .greeting h1 { font-size: 26px; max-width: 295px; } .hero { min-height: 290px; padding: 24px; } .hero h2 { font-size: 28px; } .voiceArt { transform: scale(.75); right: -55px; top: 41px; } .heroCopy { max-width: 78%; } .hero p { font-size: 11px; } .goalPanel { padding: 16px; gap: 10px; } .goalNumber { display: none; } .goalPanel p { font-size: 10px; } .question { font-size: 20px; } .questionNote { font-size: 10px; } .settings { display: grid; grid-template-columns: 1fr; } .setup { padding: 22px; } .featureGrid { grid-template-columns: 1fr; gap: 12px; } .feature { padding: 20px 20px 20px 64px; } .feature > svg { position: absolute; top: 24px; left: 22px; } .feature .featureArrow { left: auto; top: auto; bottom: 22px; } .feature h3 { font-size: 13px; } .feature p { font-size: 11px; } .featureIndex { display: none; } }
 
+.todayZone { margin-top: 30px; }
+.todayGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
+.todayCard { display: flex; align-items: center; gap: 12px; padding: 17px 18px; border: 1px solid var(--line); border-radius: 14px; background: #fdfefb; }
+a.todayCard:hover { background: #f1f4e9; border-color: #cdd8be; }
+.todayIcon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--brand-soft); color: var(--brand); flex-shrink: 0; }
+.todayBody { flex: 1; min-width: 0; }
+.todayBody h3 { font-size: 13px; font-weight: 650; }
+.todayBody p { color: var(--muted); font-size: 11px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todayArrow { color: #b5bfa8; flex-shrink: 0; }
+@media (max-width: 900px) { .todayGrid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .todayZone { margin-top: 24px; } .todayCard { padding: 15px 14px; } .todayBody p { white-space: normal; } }
+
 .sceneGroups { display: grid; gap: 13px; }
 .sceneGroup { display: grid; gap: 6px; }
 .sceneSeries { font-size: 10px; color: var(--muted); }

@@ -6,8 +6,11 @@ import { useRouter } from "next/navigation";
 import {
   clearInviteCode,
   createSession,
+  dueToday,
+  getPlan,
   getScenario,
   hasInviteCode,
+  listQueue,
   listScenarios,
   listSessions,
   recordDeviceCheck,
@@ -56,6 +59,9 @@ export default function Home() {
   const [scene, setScene] = useState<Scenario | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [dueCount, setDueCount] = useState<number | null>(null);
+  const [queueCount, setQueueCount] = useState<number | null>(null);
+  const [planToday, setPlanToday] = useState<{ day: number; label: string } | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -82,6 +88,26 @@ export default function Home() {
       .then(setScene)
       .catch(() => setScene(null));
   }, [loggedIn, sceneId]);
+
+  useEffect(() => {
+    if (!loggedIn) return;
+    let active = true;
+    dueToday()
+      .then((d) => { if (active) setDueCount(d.count); })
+      .catch(() => { if (active) setDueCount(null); });
+    listQueue()
+      .then((q) => { if (active) setQueueCount(q.filter((i) => i.status === "pending" || i.status === "awaiting_retest").length); })
+      .catch(() => { if (active) setQueueCount(null); });
+    getPlan()
+      .then((p) => {
+        if (!active) return;
+        if (!p || p.days.length === 0) { setPlanToday(null); return; }
+        const today = p.days.find((d) => d.status !== "skipped") ?? p.days[0];
+        setPlanToday({ day: today.day, label: today.scene_label });
+      })
+      .catch(() => { if (active) setPlanToday(null); });
+    return () => { active = false; };
+  }, [loggedIn]);
 
   async function login() {
     if (!invite.trim()) { setErr("请输入你的邀请凭证"); return; }
@@ -181,6 +207,35 @@ export default function Home() {
           {err && <p role="alert" className="error-banner">{err}</p>}
         </section>
       </div>
+
+      {loggedIn && (
+        <section className={styles.todayZone} aria-labelledby="today-title">
+          <div className="section-head mt-0">
+            <div><div className="eyebrow">TODAY’S TASKS</div><h2 id="today-title">今日任务</h2></div>
+            <span>一次只做一件事</span>
+          </div>
+          <div className={styles.todayGrid}>
+            <Link href="/daily-review" className={styles.todayCard}>
+              <span className={styles.todayIcon}><Icon name="target" size={19} /></span>
+              <div className={styles.todayBody}><h3>今日复练</h3><p>{dueCount === null ? "正在读取…" : dueCount > 0 ? `${dueCount} 条到期，约 3~5 分钟` : "今天暂无到期内容"}</p></div>
+              <span className={`badge ${dueCount ? "" : "badge-neutral"}`}>{dueCount ? `${dueCount} 条待练` : "已完成"}</span>
+              <Icon className={styles.todayArrow} name="chevron" size={15} />
+            </Link>
+            <Link href="/plan" className={styles.todayCard}>
+              <span className={styles.todayIcon}><Icon name="clock" size={19} /></span>
+              <div className={styles.todayBody}><h3>七日计划</h3><p>{planToday ? `第 ${planToday.day} 天 · ${planToday.label}` : "还没有计划，可先选一个目标"}</p></div>
+              <span className="badge badge-neutral">{planToday ? `第 ${planToday.day} 天` : "待创建"}</span>
+              <Icon className={styles.todayArrow} name="chevron" size={15} />
+            </Link>
+            <Link href="/queue" className={styles.todayCard}>
+              <span className={styles.todayIcon}><Icon name="check" size={19} /></span>
+              <div className={styles.todayBody}><h3>待复练</h3><p>{queueCount === null ? "正在读取…" : queueCount > 0 ? `${queueCount} 条待练/待复测` : "队列是空的，先积累想再练的表达"}</p></div>
+              <span className={`badge ${queueCount ? "" : "badge-neutral"}`}>{queueCount ? `${queueCount} 条` : "无"}</span>
+              <Icon className={styles.todayArrow} name="chevron" size={15} />
+            </Link>
+          </div>
+        </section>
+      )}
 
       <div className="section-head"><h2>让每一次练习，都有收获</h2><span>练习 · 回顾 · 再尝试</span></div>
       <div className={styles.featureGrid}>

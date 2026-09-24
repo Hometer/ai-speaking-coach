@@ -3,7 +3,6 @@
 从有效建议生成轻量语块卡（确定性，不扩写用户经历/职位/成绩/数字）：来源原句、建议表达、
 主要语块、中文解释、适用情境、可替换部分、新例句。来源失效/删除时传播失效。
 """
-import re
 from typing import Any
 
 from sqlalchemy.orm import Session as DbSession
@@ -61,8 +60,9 @@ def _build(db: DbSession, user_id: str, source_session_id: str, source_turn_id: 
     variations = scene.get("variations") or []
     refs = scene.get("reference_expressions") or []
     other_ref = next((r for r in refs if r != suggestion), (refs[0] if refs else ""))
-    replace_kw = next((k for k in kws if k.lower() != chunk.lower()), "")
-    replaceable = re.sub(re.escape(chunk), replace_kw or "___", suggestion, flags=re.IGNORECASE) if chunk else suggestion
+    # 可替换部分：展示主要语块本身与可替换的同场景词，而不是把整句词替换成错误句。
+    replace_kws = [k for k in kws if k.lower() != chunk.lower()][:2]
+    replaceable = f"{chunk}（可换成 {' / '.join(replace_kws)}）" if replace_kws else chunk
     return PhraseCard(
         user_id=user_id,
         source_session_id=source_session_id,

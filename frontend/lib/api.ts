@@ -25,11 +25,20 @@ function authHeaders(): Record<string, string> {
 }
 
 async function handle<T>(res: Response): Promise<T> {
-  const data = await res.json().catch(() => null);
-  if (!res.ok || data === null) {
+  const text = await res.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+  }
+  if (!res.ok) {
     const msg = (data as ApiErrorBody | null)?.error?.message ?? `HTTP ${res.status}`;
     throw new Error(msg);
   }
+  // 200 + 合法 JSON（包括字面量 null）都按成功返回，避免 getPlan 等接口的空值被误报为"HTTP 200"。
   return data as T;
 }
 

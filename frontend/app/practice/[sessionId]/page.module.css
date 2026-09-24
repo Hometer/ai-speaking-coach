@@ -2,7 +2,8 @@
 .statusDot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .practiceLayout { display: grid; grid-template-columns: minmax(0,1fr) 247px; gap: 24px; align-items: start; }
 .conversation { border: 1px solid var(--line); background: #fff; border-radius: 19px; overflow: hidden; min-width: 0; }
-.conversationHeading { display: flex; gap: 12px; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--line); }
+.conversationHeading { display: flex; gap: 12px; align-items: center; padding: 16px 22px; border-bottom: 1px solid var(--line); }
+.headerActions { display: flex; gap: 7px; margin-left: auto; }
 .conversationHeading h2 { font-size: 14px; font-weight: 650; }
 .conversationHeading p { font-size: 10px; color: var(--muted); margin-top: 2px; }
 .turnCount { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
@@ -55,11 +56,21 @@
 .readingCard h2 { display: flex; align-items: center; gap: 9px; font-size: 14px; }
 .practiceSentence { font-size: 19px; line-height: 1.7; font-family: Georgia,serif; }
 .review { padding: 27px; margin-top: 25px; }
+.reviewGoal { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid #e0e6d3; background: #f3f6ec; border-radius: 12px; margin-bottom: 4px; }
+.reviewGoal p { flex: 1; min-width: 200px; font-size: 14px; font-family: Georgia,serif; }
+.reviewSubBlock { padding: 20px; border: 1px solid var(--line); border-radius: 13px; background: #fbfcf7; }
+.reviewAudioList { display: grid; gap: 13px; }
+.reviewAudioItem { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px; background: #f3f6ec; border-radius: 10px; }
+.reviewAudioItem > div { min-width: 0; }
+.reviewAudioItem small { display: block; color: #859077; font-size: 10px; margin-bottom: 5px; }
+.reviewAudioItem p { font-size: 14px; font-family: Georgia,serif; margin-bottom: 8px; overflow-wrap: anywhere; }
+.reviewAudioItem audio { width: 100%; height: 32px; }
 .reviewGrid { display: grid; grid-template-columns: repeat(auto-fit,minmax(250px,1fr)); gap: 16px; }
 .reviewItem { padding: 20px; background: #fbfcf7; border: 1px solid var(--line); border-radius: 12px; overflow-wrap: anywhere; }
 .reviewOriginal { margin: 15px 0 12px; font-size: 14px; }
 .reviewItem small { display: block; color: #859077; font-size: 10px; margin-bottom: 6px; }
 .reviewSuggestion { margin-top: 16px; padding: 15px; background: #ebf1e1; border-radius: 9px; font-size: 15px; }
+.reviewActions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
 @media (max-width: 1200px) { .practiceLayout { grid-template-columns: minmax(0,1fr) 205px; gap: 17px; } .goalCard,.tipCard { padding: 19px; } .composerTools .btn { font-size: 12px; padding: 10px 12px; } .helpOptions { grid-template-columns: 1fr; } }
 @media (max-width: 1000px) { .practiceLayout { grid-template-columns: 1fr; } .sessionAside { grid-row: 1; display: block; } .goalCard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 16px 20px; background: #edf2e4; } .goalCard > .icon-tile { width: 32px; height: 32px; } .goalCard .goalText { flex-basis: 100%; font-size: 16px; margin: 0; } .goalCard > :global(.eyebrow),.goalDivider,.goalCard > p:last-child,.tipCard,.sessionNote { display: none; } .sessionActions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; } .sessionActions .btn { min-height: 36px; padding: 7px 11px; font-size: 11px; } .messages { max-height: 440px; } }
-@media (max-width: 760px) { .titleRow { align-items: flex-start; margin-bottom: 23px; } .titleRow h1 { font-size: 24px; } .titleRow :global(.badge) { font-size: 9px; white-space: nowrap; margin-top: 29px; } .titleRow :global(.page-description) { max-width: 250px; } .conversationHeading { padding: 16px; gap: 9px; } .conversationHeading p { font-size: 9px; } .conversationHeading :global(.icon-tile) { width: 33px; height: 33px; } .messages { padding: 20px 14px; min-height: 200px; max-height: 440px; } .bubble { padding: 12px 14px; max-width: calc(100% - 34px); } .bubble > p { font-size: 14px; } .coachAvatar { width: 24px; height: 26px; border-radius: 8px; } .messageRow { gap: 7px; } .bubble audio { min-width: 0; width: 100%; } .composer { padding: 16px 13px; } .composerTools { gap: 6px; } .composerTools .btn { font-size: 11px; padding: 9px 10px; gap: 5px; } .composerTools svg { width: 14px; } .send > span { display: none; } .inputNote { font-size: 8px; } .finished { flex-wrap: wrap; padding: 19px; } .finished > button { width: 100%; } .readingCard { margin: 0 12px 15px; padding: 16px; } .readingCard :global(.section-head) { flex-wrap: wrap; gap: 8px; } .review { padding: 19px; } .reviewGrid { grid-template-columns: minmax(0,1fr); } .reviewItem { padding: 17px; } }
+@media (max-width: 760px) { .titleRow { align-items: flex-start; margin-bottom: 23px; } .titleRow h1 { font-size: 24px; } .titleRow :global(.badge) { font-size: 9px; white-space: nowrap; margin-top: 29px; } .titleRow :global(.page-description) { max-width: 250px; } .conversationHeading { padding: 16px; gap: 9px; } .conversationHeading p { font-size: 9px; } .conversationHeading :global(.icon-tile) { width: 33px; height: 33px; } .messages { padding: 20px 14px; min-height: 200px; max-height: 440px; } .bubble { padding: 12px 14px; max-width: calc(100% - 34px); } .bubble > p { font-size: 14px; } .coachAvatar { width: 24px; height: 26px; border-radius: 8px; } .messageRow { gap: 7px; } .bubble audio { min-width: 0; width: 100%; } .composer { padding: 16px 13px; } .composerTools { gap: 6px; } .composerTools .btn { font-size: 11px; padding: 9px 10px; gap: 5px; } .composerTools svg { width: 14px; } .send > span { display: none; } .inputNote { font-size: 8px; } .finished { flex-wrap: wrap; padding: 19px; } .finished > button { width: 100%; } .readingCard { margin: 0 12px 15px; padding: 16px; } .readingCard :global(.section-head) { flex-wrap: wrap; gap: 8px; } .conversationHeading { padding: 13px 15px; flex-wrap: wrap; } .headerActions { width: 100%; justify-content: flex-end; } .headerActions .btn { min-height: 32px; padding: 5px 9px; font-size: 11px; } .review { padding: 19px; } .reviewGrid { grid-template-columns: minmax(0,1fr); } .reviewItem { padding: 17px; } .reviewSubBlock { padding: 15px; } .reviewAudioItem { grid-template-columns: 1fr; } .reviewGoal p { min-width: 0; flex-basis: 100%; } }

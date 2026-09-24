@@ -810,7 +810,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
     }
     if session.practice_type == "sentence_practice":
         from app.services import drill_svc
-        detail["drill"] = drill_svc.drill_view(session)
+        detail["drill"] = drill_svc.drill_view(session, db)
     return detail
 
 

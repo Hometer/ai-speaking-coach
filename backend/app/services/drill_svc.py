@@ -91,8 +91,21 @@ def _judge(text: str, target: str) -> bool:
     return overlap >= 0.4
 
 
-def drill_view(session: Session) -> dict[str, Any]:
+def drill_view(session: Session, db: DbSession | None = None) -> dict[str, Any]:
     stage = session.drill_stage or "full_text"
+    # 结束后的准确结论：换题成功/脱稿成功/仅结束。用于前端不编造"已写回"。
+    outcome = ""
+    if stage == "ended":
+        outcome = "transfer" if session.end_reason == "goal_reached" else "ended"
+        if db is not None and outcome != "transfer":
+            results = [
+                r[0]
+                for r in db.query(DrillAttempt.result)
+                .filter(DrillAttempt.drill_session_id == session.id)
+                .all()
+            ]
+            if "independent" in results:
+                outcome = "independent"
     return {
         "drill_stage": stage,
         "stage_label": STAGE_LABEL.get(stage, ""),
@@ -101,6 +114,7 @@ def drill_view(session: Session) -> dict[str, Any]:
         "drill_chunk": " · ".join(_keywords(session.scene_id)[:3]),
         "visible_help": _visible_help(session, stage),
         "completed": stage == "ended",
+        "outcome": outcome,
     }
 
 
@@ -181,7 +195,7 @@ def submit_drill_attempt(
                 _write_back_queue(db, user_id, session.source_turn_id, "independent")
     db.commit()
 
-    view = drill_view(session)
+    view = drill_view(session, db)
     return {
         "success": success,
         "result": result,
@@ -218,4 +232,4 @@ def drill_action(db: DbSession, session_id: str, user_id: str, action: str) -> d
     else:
         raise AppError("INVALID_INPUT", "未知的脱稿操作", status_code=422)
     db.commit()
-    return drill_view(session)
+    return drill_view(session, db)

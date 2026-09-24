@@ -36,6 +36,7 @@ export interface TurnItem {
   reply_audio_url: string;
   practice_sentence: string;
   action_type: string;
+  recording_url: string;
   hint_used: boolean;
   eval_result: string;
   revised_text: string;
@@ -49,6 +50,7 @@ export interface DrillView {
   drill_chunk: string;
   visible_help: string;
   completed: boolean;
+  outcome: string;
 }
 
 export interface DrillAttemptResult extends DrillView {
