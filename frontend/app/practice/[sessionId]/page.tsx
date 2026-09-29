@@ -54,7 +54,7 @@ export default function PracticePage() {
   const [audioRetryTurnId, setAudioRetryTurnId] = useState<string | null>(null);
   const [drill, setDrill] = useState<DrillView | null>(null);
   const [drillText, setDrillText] = useState("");
-  const [recordMode, setRecordMode] = useState<"answer" | "practice" | null>(null);
+  const [recordMode, setRecordMode] = useState<"answer" | "practice" | "drill" | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
   const [sourceInvalid, setSourceInvalid] = useState(false);
@@ -212,6 +212,30 @@ export default function PracticePage() {
     }
   }
 
+  async function submitDrillVoice(blob: Blob) {
+    setBusy(true);
+    setErr("");
+    try {
+      const fd = new FormData();
+      fd.append("audio", blob, "drill");
+      const res = await fetch(`/api/v1/sessions/${sessionId}/drill-attempt/voice`, {
+        method: "POST",
+        headers: { "X-Invite-Code": getInviteCode() },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
+      setDrillText("");
+      setDrill(data);
+      if (data.completed) setStatus("ENDED");
+      setErr(data.success ? (data.result === "independent" ? "脱稿成功，已记为本次独立表达。" : data.result === "transfer" ? "换题成功，已形成迁移证据。" : "说对了，进入下一级。") : "没对上，再试一次或降一级。");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDrillAction(action: "skip" | "downgrade" | "jump" | "end") {
     if (!drill || busy) return;
     setBusy(true);
@@ -246,7 +270,7 @@ export default function PracticePage() {
     return `已录 ${elapsed} 秒`;
   }
 
-  async function toggleRecord(mode: "answer" | "practice") {
+  async function toggleRecord(mode: "answer" | "practice" | "drill") {
     if (busy || sessionLoading || status === "ENDED" || status === "PAUSED") return;
     if (recRef.current && recRef.current.state === "recording") {
       cancelRef.current = false;
@@ -280,7 +304,8 @@ export default function PracticePage() {
         }
         const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
         if (mode === "answer") handleTurn({ audio: blob });
-        else submitPractice(blob);
+        else if (mode === "practice") submitPractice(blob);
+        else submitDrillVoice(blob);
       };
       rec.start();
       setRecording(true);
@@ -534,8 +559,8 @@ export default function PracticePage() {
             <p className={styles.practiceSentence}>{drill.visible_help}</p>
             {drill.drill_stage === "full_text" && <p className="text-sm muted mt-2">中文意思：{drill.drill_meaning}</p>}
             {drill.drill_stage === "free_speak" && <p className="text-sm muted mt-2">目标语块：{drill.drill_chunk}</p>}
-            <textarea value={drillText} onChange={e => setDrillText(e.target.value)} placeholder="用英文说出这一句（不用逐字一样，意思对即可）…" disabled={busy} maxLength={2000} style={{ width: "100%", minHeight: "72px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d7ded4", fontSize: "15px", resize: "vertical" }} />
-            <div className="flex items-center gap-2 flex-wrap mt-3"><button onClick={handleDrillAttempt} disabled={busy || !drillText.trim()} className="btn btn-primary">提交</button><button onClick={() => handleDrillAction("downgrade")} disabled={busy} className="btn btn-ghost">降一级</button><button onClick={() => handleDrillAction("skip")} disabled={busy} className="btn btn-ghost">跳过这级</button>{drill.drill_stage !== "transfer" && <button onClick={() => handleDrillAction("jump")} disabled={busy} className="btn btn-ghost">跳级到换题</button>}<button onClick={() => handleDrillAction("end")} disabled={busy} className="btn btn-ghost">结束</button></div>
+            <textarea value={drillText} onChange={e => setDrillText(e.target.value)} placeholder={drill.drill_stage === "free_speak" || drill.drill_stage === "transfer" ? "这一级需要语音：点击下方「录音说出」…" : "用英文说出这一句（不用逐字一样，意思对即可）…"} disabled={busy} maxLength={2000} style={{ width: "100%", minHeight: "72px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d7ded4", fontSize: "15px", resize: "vertical" }} />
+            <div className="flex items-center gap-2 flex-wrap mt-3">{(drill.drill_stage === "free_speak" || drill.drill_stage === "transfer") ? <button onClick={() => toggleRecord("drill")} disabled={busy || recording} className="btn btn-primary"><Icon name={recording && recordMode === "drill" ? "stop" : "mic"} size={16} />{recording && recordMode === "drill" ? "停止并提交" : "录音说出"}</button> : <button onClick={handleDrillAttempt} disabled={busy || !drillText.trim()} className="btn btn-primary">提交</button>}<button onClick={() => handleDrillAction("downgrade")} disabled={busy} className="btn btn-ghost">降一级</button><button onClick={() => handleDrillAction("skip")} disabled={busy} className="btn btn-ghost">跳过这级</button>{drill.drill_stage !== "transfer" && <button onClick={() => handleDrillAction("jump")} disabled={busy} className="btn btn-ghost">跳级到换题</button>}<button onClick={() => handleDrillAction("end")} disabled={busy} className="btn btn-ghost">结束</button>{recording && recordMode === "drill" && <span className={styles.recordingTimer}>{timerText()}</span>}</div>
             <p className="text-xs muted mt-3">看全文/补关键词=有参考练习；看结构=提示下完成；脱稿说=独立表达；换题=迁移证据。</p>
           </section>}
           {drill?.completed && <div className="notice mb-4"><Icon name="check" size={17} /><p>{drill.outcome === "transfer" ? "换题成功，已形成迁移证据，写回待复练记录。" : drill.outcome === "independent" ? "脱稿完成，已记为本次独立表达。" : "脱稿练习已结束。独立/换题结果会按帮助证据写回待复练。"}</p></div>}

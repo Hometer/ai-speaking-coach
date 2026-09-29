@@ -88,3 +88,8 @@ a.todayCard:hover { background: #f1f4e9; border-color: #cdd8be; }
 .sceneChips button { border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; font-size: 11px; background: #fdfefa; }
 .sceneChips .selected { background: #eef3e8; border-color: #8aa57f; color: #325d36; font-weight: 600; }
 @media (max-width: 900px) { .sceneChips button { padding: 9px 11px; } }
+
+.deviceGrid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.deviceOk { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #3a7d44; background: #eef6ee; border-radius: 6px; padding: 4px 8px; }
+.deviceBad { display: inline-flex; flex-direction: column; gap: 2px; font-size: 12px; color: #a35b2a; background: #fdf3e7; border-radius: 6px; padding: 4px 8px; }
+.deviceBad small { color: #8a6a4a; }

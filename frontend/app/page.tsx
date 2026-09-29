@@ -7,6 +7,7 @@ import {
   clearInviteCode,
   createSession,
   dueToday,
+  getInviteCode,
   getPlan,
   getScenario,
   hasInviteCode,
@@ -32,19 +33,45 @@ const seriesOrder = [
   { key: "daily", label: "日常交流" },
 ];
 
-async function checkDevice(): Promise<{ ok: boolean; summary: string }> {
-  const problems: string[] = [];
+type DeviceItem = { key: string; label: string; ok: boolean; hint: string };
+
+async function checkDevice(): Promise<{ ok: boolean; summary: string; items: DeviceItem[] }> {
+  const items: DeviceItem[] = [];
+  // 1. 麦克风权限 + 2. 录音输入
+  let micOk = false;
+  let inputOk = false;
   if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micOk = true;
+      inputOk = stream.getAudioTracks().length > 0;
       stream.getTracks().forEach((t) => t.stop());
     } catch {
-      problems.push("麦克风权限未开启");
+      micOk = false;
     }
-  } else {
-    problems.push("当前浏览器不支持录音");
   }
-  return { ok: problems.length === 0, summary: problems.join("、") || "ok" };
+  items.push({ key: "mic", label: "麦克风权限", ok: micOk, hint: "在浏览器地址栏左侧授权本站使用麦克风" });
+  items.push({ key: "input", label: "录音输入", ok: inputOk, hint: "检查系统麦克风是否可用、未被占用" });
+  // 3. 音频播放
+  let playOk = false;
+  try {
+    const a = new Audio();
+    playOk = !!a.canPlayType && (!!a.canPlayType("audio/mp3") || !!a.canPlayType("audio/webm"));
+  } catch {
+    playOk = false;
+  }
+  items.push({ key: "play", label: "音频播放", ok: playOk, hint: "检查扬声器音量与设备连接" });
+  // 4. 网络连通
+  let netOk = false;
+  try {
+    const r = await fetch("/api/v1/scenarios", { headers: { "X-Invite-Code": getInviteCode() } });
+    netOk = r.ok;
+  } catch {
+    netOk = false;
+  }
+  items.push({ key: "net", label: "网络连通", ok: netOk, hint: "检查网络连接后重试" });
+  const problems = items.filter((i) => !i.ok).map((i) => i.label);
+  return { ok: items.every((i) => i.ok), summary: problems.join("、") || "ok", items };
 }
 
 export default function Home() {
@@ -62,6 +89,7 @@ export default function Home() {
   const [dueCount, setDueCount] = useState<number | null>(null);
   const [queueCount, setQueueCount] = useState<number | null>(null);
   const [planToday, setPlanToday] = useState<{ day: number; label: string } | null>(null);
+  const [deviceItems, setDeviceItems] = useState<DeviceItem[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -138,6 +166,7 @@ export default function Home() {
     try {
       // 设备预检（失败不阻断，可转文字练习）
       const device = await checkDevice();
+      setDeviceItems(device.items);
       await recordDeviceCheck(device.ok ? "ok" : "degraded", device.summary).catch(() => {});
       if (!device.ok) {
         setErr(`设备提示：${device.summary}。你仍可开始练习，语音回答可能受限，可用文字替代。`);
@@ -200,6 +229,7 @@ export default function Home() {
               <fieldset><legend className="field-label">这次想练的难度</legend><div className={styles.segments}>{[{value:"simple",label:"简单",note:"轻松开口"},{value:"standard",label:"标准",note:"多一点挑战"}].map(option => <button key={option.value} className={difficulty === option.value ? styles.selected : ""} aria-pressed={difficulty === option.value} onClick={() => setDifficulty(option.value)} disabled={loading}>{option.label}<small>{option.note}</small></button>)}</div></fieldset>
               <fieldset><legend className="field-label">给自己几分钟？</legend><div className={styles.durations}>{[5,10,15].map(value => <button key={value} className={duration === value ? styles.selected : ""} aria-pressed={duration === value} onClick={() => setDuration(value)} disabled={loading}>{value}<small> 分钟</small>{value === 5 && <span>推荐</span>}</button>)}</div></fieldset>
               <button className={`btn btn-primary ${styles.start}`} onClick={start} disabled={loading}><Icon name="mic" size={18} />{loading ? "正在准备练习…" : "开始练习"}<Icon name="arrow" size={18} /></button>
+              {deviceItems.length > 0 && <div className={styles.deviceGrid}>{deviceItems.map(item => <span key={item.key} className={item.ok ? styles.deviceOk : styles.deviceBad} title={item.ok ? "正常" : item.hint}><Icon name={item.ok ? "check" : "shield"} size={12} />{item.label}{!item.ok && <small>{item.hint}</small>}</span>)}</div>}
               <p className={styles.micNote}><Icon name="shield" size={12} /> 开始后，点击录音才会开启麦克风；语音不可用时可用文字</p>
               <button className={`text-link ${styles.logout}`} onClick={logout} disabled={loading}><Icon name="logout" size={13} /> 退出 / 切换邀请凭证</button>
             </div>

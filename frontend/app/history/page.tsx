@@ -20,19 +20,20 @@ export default function HistoryPage() {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [pending, setPending] = useState("");
   const [added, setAdded] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState<{ status?: string; practice_type?: string }>({});
   const detailRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let active = true;
-    listSessions().then(data => { if (active) setItems(data); }).catch(e => { if (active) setErr(e instanceof Error ? e.message : String(e)); }).finally(() => { if (active) setLoading(false); });
+    listSessions(filter).then(data => { if (active) setItems(data); }).catch(e => { if (active) setErr(e instanceof Error ? e.message : String(e)); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [filter]);
 
   useEffect(() => { if (detail) detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }, [detail]);
 
   async function reload() {
     setLoading(true); setErr("");
-    try { setItems(await listSessions()); } catch(e) { setErr(e instanceof Error ? e.message : String(e)); }
+    try { setItems(await listSessions(filter)); } catch(e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   }
 
@@ -85,7 +86,7 @@ export default function HistoryPage() {
         <div className="panel stat-card"><span className="icon-tile"><Icon name="chat" /></span><div><strong>{totalTurns}</strong><p>累计回答轮次</p></div></div>
         <div className="panel stat-card"><span className="icon-tile"><Icon name="check" /></span><div><strong>{endedCount}</strong><p>已结束的练习</p></div></div>
       </div>}
-      <div className="section-head"><h2>我的练习记录</h2>{items.length > 0 && <button onClick={delAll} disabled={!!pending || loading} className="btn btn-ghost btn-small"><Icon name="trash" size={14} />删除全部</button>}</div>
+      <div className="section-head"><h2>我的练习记录</h2><div className="flex gap-2 flex-wrap"><button onClick={() => setFilter({})} className={`btn ${!filter.status && !filter.practice_type ? "btn-secondary" : "btn-ghost"} btn-small`}>全部</button><button onClick={() => setFilter(f => ({ ...f, status: "completed" }))} className={`btn ${filter.status === "completed" ? "btn-secondary" : "btn-ghost"} btn-small`}>已完成</button><button onClick={() => setFilter(f => ({ ...f, status: "incomplete" }))} className={`btn ${filter.status === "incomplete" ? "btn-secondary" : "btn-ghost"} btn-small`}>进行中</button>{items.length > 0 && <button onClick={delAll} disabled={!!pending || loading} className="btn btn-ghost btn-small"><Icon name="trash" size={14} />删除全部</button>}</div></div>
       {err && <div className="error-banner" role="alert">{err}<div className="flex gap-3 mt-2"><button className="text-link" onClick={reload}>重新加载</button><Link className="text-link" href="/">返回首页验证凭证</Link></div></div>}
       {loading ? <div role="status" aria-label="加载练习记录"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div> : items.length === 0 && !err ? (
         <div className="panel empty-state"><span className="icon-tile"><Icon name="history" size={30} /></span><h2>你的故事，从第一次练习开始</h2><p>完成一段对话后，练习记录和回顾会出现在这里。给自己 5 分钟，试着说说你的经历吧。</p><Link href="/" className="btn btn-primary">去开始练习 <Icon name="arrow" size={16} /></Link></div>

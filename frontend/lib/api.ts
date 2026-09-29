@@ -98,8 +98,9 @@ export async function endSession(sessionId: string) {
   return handle<{ summary: Record<string, unknown>; review: Record<string, unknown> | null }>(res);
 }
 
-export async function listSessions(): Promise<SessionListItem[]> {
-  const res = await fetch("/api/v1/sessions", { headers: authHeaders() });
+export async function listSessions(filters: Record<string, string> = {}): Promise<SessionListItem[]> {
+  const qs = new URLSearchParams(filters).toString();
+  const res = await fetch(`/api/v1/sessions${qs ? `?${qs}` : ""}`, { headers: authHeaders() });
   return handle<SessionListItem[]>(res);
 }
 
