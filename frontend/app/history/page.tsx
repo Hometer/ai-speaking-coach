@@ -65,10 +65,10 @@ export default function HistoryPage() {
     finally { setPending(""); }
   }
 
-  async function retry(difficulty = "standard", sceneId = "job_interview") {
+  async function retry(level = "basic", difficulty = "standard", sceneId = "job_interview") {
     if (pending) return;
     setPending("retry"); setErr("");
-    try { const s = await createSession("basic", difficulty, 5, sceneId); router.push(`/practice/${s.session_id}`); }
+    try { const s = await createSession(level, difficulty, 5, sceneId); router.push(`/practice/${s.session_id}`); }
     catch(e) { setErr(e instanceof Error ? e.message : String(e)); setPending(""); }
   }
 
@@ -92,7 +92,7 @@ export default function HistoryPage() {
       ) : <div className="history-list">{items.map(it => <article key={it.session_id} className="panel history-row">
         <span className="icon-tile"><Icon name="briefcase" /></span><div className="history-info"><h3>{it.scene_label || "口语练习"}</h3><div className="history-meta"><span>{formatDate(it.started_at)}</span><span>{it.difficulty === "simple" ? "简单" : "标准"}难度</span><span>{it.turn_count} 轮回答</span></div></div>
         <span className={`badge ${it.goal_status === "independent" ? "" : "badge-neutral"}`}>{it.status === "PAUSED" ? "已暂停" : it.status !== "ENDED" ? "进行中" : EVAL_CN[it.goal_status] || it.goal_status}</span>
-        <div className="row-actions"><button onClick={() => view(it.session_id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === it.session_id ? "加载中…" : "查看回顾"}</button><button onClick={() => retry(it.difficulty, it.scene_id)} disabled={!!pending} className="btn btn-ghost btn-small">再练一次<Icon name="arrow" size={13} /></button><button onClick={() => del(it.session_id)} disabled={!!pending} className="btn btn-ghost btn-small" aria-label={`删除 ${formatDate(it.started_at)} 的记录`}><Icon name="trash" size={15} /></button></div>
+        <div className="row-actions"><button onClick={() => view(it.session_id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === it.session_id ? "加载中…" : "查看回顾"}</button><button onClick={() => retry(it.level, it.difficulty, it.scene_id)} disabled={!!pending} className="btn btn-ghost btn-small">再练一次<Icon name="arrow" size={13} /></button><button onClick={() => del(it.session_id)} disabled={!!pending} className="btn btn-ghost btn-small" aria-label={`删除 ${formatDate(it.started_at)} 的记录`}><Icon name="trash" size={15} /></button></div>
       </article>)}</div>}
       {detail && <section ref={detailRef} className="panel detail-panel" aria-label="对话与回顾">
         <div className="section-head mt-0"><div><div className="eyebrow">SESSION REVIEW</div><h2>对话与回顾</h2></div><button onClick={() => setDetail(null)} className="btn btn-ghost btn-small"><Icon name="close" size={16} />收起</button></div>
@@ -101,7 +101,7 @@ export default function HistoryPage() {
           {t.input_type === "coach" ? <div className="detail-turn"><small>AI 教练</small>{t.reply_text}</div> : t.input_type === "practice" ? <div className="detail-turn user"><small>跟读练习</small>{t.practice_sentence || "短句练习"}</div> : <>{(t.revised_text || t.user_text || t.transcript) && <div className="detail-turn user"><small>你的回答{t.revised_text ? " · 已修订" : ""}</small>{t.revised_text || t.user_text || t.transcript}</div>}{t.reply_text && <div className="detail-turn"><small>AI 教练</small>{t.reply_text}</div>}</>}
         </div>)}
         {detail.review && Array.isArray(detail.review.improvements) && detail.review.improvements.length > 0 && <div className="mt-5"><h3 className="font-semibold mb-2">值得再练的表达</h3>{(detail.review.improvements as Record<string, unknown>[]).map((imp,i) => { const tid = String(imp.turn_id ?? ""); return <div className="detail-turn" key={i}><small>{imp.disputed ? "已标记有误，待复核" : "改进建议"}</small><p>{String(imp.explanation_cn ?? "")}</p><p className="mt-2 font-medium">{String(imp.practice_sentence ?? "")}</p>{tid && !imp.disputed && <button onClick={() => addQueue(detail.session_id, tid)} disabled={!!pending || added.has(tid)} className="btn btn-secondary btn-small mt-2">{added.has(tid) ? "已加入待复练" : "加入待复练"}<Icon name="check" size={13} /></button>}</div>; })}</div>}
-        <div className="flex flex-wrap gap-3 mt-5"><Link className="btn btn-secondary" href={`/practice/${detail.session_id}`}>{detail.status === "ENDED" ? "打开完整回顾" : "回到这次练习"}<Icon name="arrow" size={15} /></Link><button onClick={() => retry(detail.difficulty, detail.scene_id)} disabled={!!pending} className="btn btn-primary">再练一次（同难度新题）</button></div>
+        <div className="flex flex-wrap gap-3 mt-5"><Link className="btn btn-secondary" href={`/practice/${detail.session_id}`}>{detail.status === "ENDED" ? "打开完整回顾" : "回到这次练习"}<Icon name="arrow" size={15} /></Link><button onClick={() => retry(detail.level, detail.difficulty, detail.scene_id)} disabled={!!pending} className="btn btn-primary">再练一次（同难度新题）</button></div>
         <p className="text-xs muted mt-4">反馈仅供练习参考，不代表考试成绩或语言能力认证。</p>
       </section>}
       <footer className="page-footer"><span><Icon name="shield" size={12} /> 会话文本保留 30 天，你也可以随时删除</span><span>Progress starts with practice.</span></footer>

@@ -119,6 +119,7 @@ export interface SessionDetail {
   status: string;
   goal_text: string;
   difficulty: string;
+  level: string;
   end_reason: string | null;
   practice_type: string;
   scene_id: string;
@@ -133,6 +134,8 @@ export interface SessionListItem {
   session_id: string;
   status: string;
   difficulty: string;
+  level: string;
+  practice_type: string;
   started_at: string | null;
   ended_at: string | null;
   turn_count: number;

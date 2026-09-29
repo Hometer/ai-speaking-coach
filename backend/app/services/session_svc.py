@@ -913,6 +913,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
         "status": session.status,
         "goal_text": session.goal_text,
         "difficulty": session.difficulty,
+        "level": session.level or "basic",
         "end_reason": session.end_reason,
         "practice_type": session.practice_type,
         "scene_id": session.scene_id,
