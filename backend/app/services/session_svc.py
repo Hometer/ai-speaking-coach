@@ -19,6 +19,7 @@ from app.services.budget import BudgetGuard, ToolBudget
 from app.services.cleanup import cleanup_old_uploads
 from app.services.coach import get_coach_provider
 from app.services.evaluator import get_evaluator_provider
+from app.services.generation_call import get_last_usage
 from app.services.practice import get_practice_eval_provider
 from app.services.asr import get_asr_provider
 from app.services.review import build_review, dedupe_improvements
@@ -664,7 +665,7 @@ def submit_turn(
         request_key=request_key or None,
     )
     db.add(turn)
-    _log_event(db, session_id, turn_id=turn_id, action_type=decision.action_type, basis=eval_out.result, input_type=input_type, tool_result=eval_out.result, request_key=request_key or None, duration_ms=int((time.perf_counter() - turn_start) * 1000))
+    _log_event(db, session_id, turn_id=turn_id, action_type=decision.action_type, basis=eval_out.result, input_type=input_type, tool_result=eval_out.result, request_key=request_key or None, duration_ms=int((time.perf_counter() - turn_start) * 1000), usage=get_last_usage())
     db.commit()
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
 

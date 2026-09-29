@@ -49,6 +49,7 @@ export default function PracticePage() {
   const [practiceDemo, setPracticeDemo] = useState("");
   const [practiceRecording, setPracticeRecording] = useState("");
   const [slowDemo, setSlowDemo] = useState(false);
+  const [slowRepeat, setSlowRepeat] = useState(false);
   const [practiceResult, setPracticeResult] = useState("");
   const [recording, setRecording] = useState(false);
   const [audioRetryTurnId, setAudioRetryTurnId] = useState<string | null>(null);
@@ -396,9 +397,10 @@ export default function PracticePage() {
       }
       const r = await requestHelp(sessionId, type, sourceText);
       if (type === "repeat") {
-        // 重播已有音频，不追加新消息
+        // 重播已有音频，不追加新消息；可选慢速
         if (r.reply_audio_url) {
           const a = new Audio(r.reply_audio_url);
+          a.playbackRate = slowRepeat ? 0.75 : 1;
           a.play().catch(() => setErr("音频播放失败，请重试。"));
         }
       } else {
@@ -585,7 +587,7 @@ export default function PracticePage() {
             </div>
             {recording && recordMode === "answer" ? <div className={styles.recordingInfo}><span className={styles.recordingTimer}>{timerText()}</span><button onClick={cancelRecord} className="text-link">取消录音，不提交</button></div> : <div className={styles.inputNote}><span>每段录音最长 60 秒</span><span>Enter 发送 · Shift + Enter 换行</span></div>}
             {showHelp && <div id="help-options" className={styles.helpOptions}>
-              <div className={styles.helpHeader}><span>在哪一步卡住了？</span><button onClick={() => setShowHelp(false)} aria-label="收起帮助" className="btn btn-ghost btn-small"><Icon name="close" size={15} /></button></div>
+              <div className={styles.helpHeader}><span>在哪一步卡住了？</span><div className="flex gap-2"><button onClick={() => setSlowRepeat(!slowRepeat)} aria-pressed={slowRepeat} className="btn btn-ghost btn-small">{slowRepeat ? "正常速度" : "慢速重播"}</button><button onClick={() => setShowHelp(false)} aria-label="收起帮助" className="btn btn-ghost btn-small"><Icon name="close" size={15} /></button></div></div>
               {[{type:"repeat",title:"没听清",desc:"再听一次当前问题",icon:"headphones" as const},{type:"explain",title:"没听懂",desc:"用中文解释问题",icon:"chat" as const},{type:"organize",title:"不知道怎么组织",desc:"从关键词开始，逐步获得提示",icon:"spark" as const},{type:"translate",title:"中文转英文",desc:"尝试表达自己的中文意思",icon:"book" as const}].map(option => <button key={option.type} onClick={() => handleHelp(option.type)} disabled={inputDisabled} className={styles.helpOption}><Icon name={option.icon} size={18} /><span>{option.title}<small>{option.desc}</small></span><Icon name="chevron" size={14} /></button>)}
             </div>}
           </div> : null}
