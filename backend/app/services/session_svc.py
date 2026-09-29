@@ -277,6 +277,7 @@ def create_session(
         status=S_PREPARING,
         goal_text=goal_text,
         difficulty=difficulty,
+        level=level,
         scene_id=scene_id,
         scene_version=scene["version"],
         subgoals="{}",
@@ -937,13 +938,25 @@ def _count_user_turns(db: DbSession, session_id: str) -> int:
     )
 
 
-def list_sessions(db: DbSession, user_id: str) -> list[dict[str, Any]]:
-    sessions = (
-        db.query(Session)
-        .filter(Session.user_id == user_id)
-        .order_by(Session.started_at.desc())
-        .all()
-    )
+def list_sessions(db: DbSession, user_id: str, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    filters = filters or {}
+    q = db.query(Session).filter(Session.user_id == user_id)
+    if filters.get("scene_id"):
+        q = q.filter(Session.scene_id == filters["scene_id"])
+    if filters.get("series"):
+        scene_ids = [
+            s["scene_id"] for s in SCENARIOS.values()
+            if isinstance(s, dict) and s.get("series") == filters["series"]
+        ]
+        if scene_ids:
+            q = q.filter(Session.scene_id.in_(scene_ids))
+    if filters.get("practice_type"):
+        q = q.filter(Session.practice_type == filters["practice_type"])
+    if filters.get("status") == "completed":
+        q = q.filter(Session.status == S_ENDED)
+    elif filters.get("status") == "incomplete":
+        q = q.filter(Session.status != S_ENDED)
+    sessions = q.order_by(Session.started_at.desc()).all()
     result = []
     for s in sessions:
         review = _review_of(s)
@@ -952,6 +965,8 @@ def list_sessions(db: DbSession, user_id: str) -> list[dict[str, Any]]:
                 "session_id": s.id,
                 "status": s.status,
                 "difficulty": s.difficulty,
+                "level": s.level or "basic",
+                "practice_type": s.practice_type,
                 "started_at": s.started_at.isoformat() if s.started_at else None,
                 "ended_at": s.ended_at.isoformat() if s.ended_at else None,
                 "turn_count": _count_user_turns(db, s.id),

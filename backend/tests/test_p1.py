@@ -201,7 +201,7 @@ def test_progress_endpoint_returns_factual_metrics(client):
     assert p["completed_count"] >= 1
     for key in ("independent_rate", "help_usage_rate", "due_retest_done_rate", "mastered_count", "voice_evaluable_rate", "drill_completed_count", "transfer_completed_count"):
         assert key in p
-    assert p["calc_version"] == "v2"
+    assert p["calc_version"] == "v3"
 
 
 def test_mock_practice_has_no_word_items(client):

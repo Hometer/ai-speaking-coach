@@ -231,10 +231,11 @@ def session_detail(session_id: str, user_id: str = Depends(get_user_id)):
 
 
 @router.get("/sessions", response_model=list[SessionListItem])
-def list_sessions(user_id: str = Depends(get_user_id)):
+def list_sessions(user_id: str = Depends(get_user_id), scene_id: str | None = None, series: str | None = None, status: str | None = None, practice_type: str | None = None):
     db = SessionLocal()
     try:
-        return session_svc.list_sessions(db, user_id)
+        filters = {k: v for k, v in {"scene_id": scene_id, "series": series, "status": status, "practice_type": practice_type}.items() if v}
+        return session_svc.list_sessions(db, user_id, filters)
     finally:
         db.close()
 

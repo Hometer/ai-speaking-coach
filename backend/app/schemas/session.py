@@ -59,6 +59,8 @@ class SessionListItem(BaseModel):
     session_id: str
     status: str
     difficulty: str
+    level: str = "basic"
+    practice_type: str = "interview"
     started_at: str | None = None
     ended_at: str | None = None
     turn_count: int = 0

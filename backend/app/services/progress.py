@@ -1,4 +1,5 @@
 """进步中心：事实型指标（后端计算，前端不自行拼接权威结论）。"""
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session as DbSession
@@ -10,10 +11,10 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     sessions = db.query(Session).filter(Session.user_id == user_id).all()
     session_ids = [s.id for s in sessions]
 
-    # 完成练习数：已生成回顾或已结束的会话
-    completed_count = sum(1 for s in sessions if s.review or s.status == "ENDED")
+    # 完成练习数：已结束且有回顾（AC10-15，任意结束不算完成）
+    completed_count = sum(1 for s in sessions if s.status == "ENDED" and s.review)
 
-    # 独立完成率：独立评估数 / 有效评估总数（independent/hinted/incomplete）
+    # 独立完成率：独立评估数 / 可评估子目标尝试数（independent/hinted/incomplete）
     evals = (
         db.query(Evaluation).filter(Evaluation.session_id.in_(session_ids)).all()
         if session_ids
@@ -34,15 +35,17 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     helped = sum(1 for t in user_turns if t.hint_used or t.help_type in ("organize", "translate"))
     help_usage_rate = round(helped / len(user_turns), 3) if user_turns else 0.0
 
-    # 到期复练完成率 + 已掌握项目数
+    # 到期复练完成率：分母为有效到期项目（due 已过且非失效/争议），分子为其中独立完成
     queue = db.query(ReviewQueueItem).filter(ReviewQueueItem.user_id == user_id).all()
     mastered_count = sum(1 for q in queue if q.status == "mastered")
-    retested = [q for q in queue if q.retest_result and q.status != "invalid"]
-    due_retest_done_rate = (
-        round(sum(1 for q in retested if q.retest_result == "independent") / len(retested), 3)
-        if retested
-        else 0.0
-    )
+    now = datetime.now(timezone.utc)
+    due_items = [
+        q for q in queue
+        if q.due_at is not None and q.due_at <= now
+        and q.status in ("pending", "awaiting_retest", "mastered")
+    ]
+    due_done = sum(1 for q in due_items if q.retest_result == "independent")
+    due_retest_done_rate = round(due_done / len(due_items), 3) if due_items else 0.0
 
     # 语音可评估率：有效语音评测数 / 提交语音数
     voice_turns = [t for t in user_turns if t.input_type == "voice"]
@@ -65,5 +68,5 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
         "voice_evaluable_rate": voice_evaluable_rate,
         "drill_completed_count": drill_completed_count,
         "transfer_completed_count": transfer_completed_count,
-        "calc_version": "v2",
+        "calc_version": "v3",
     }

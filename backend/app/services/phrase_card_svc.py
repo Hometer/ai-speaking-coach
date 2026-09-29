@@ -5,6 +5,7 @@
 """
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
@@ -88,7 +89,19 @@ def generate_card(db: DbSession, user_id: str, source_session_id: str, source_tu
         return _to_dict(existing)
     db.add(card)
     db.add(EventLog(session_id=source_session_id, turn_id=source_turn_id, action_type="phrase_card", basis="generated"))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # 并发同来源：唯一约束兑底，返回已存在的那张
+        db.rollback()
+        existing = (
+            db.query(PhraseCard)
+            .filter(PhraseCard.user_id == user_id, PhraseCard.source_turn_id == source_turn_id)
+            .first()
+        )
+        if existing is not None:
+            return _to_dict(existing)
+        raise
     db.refresh(card)
     return _to_dict(card)
 

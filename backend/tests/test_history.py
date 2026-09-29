@@ -338,3 +338,20 @@ def test_cleanup_expired_sessions_propagates_deletion(client):
         assert item is None
         assert db.query(DailyReviewAttempt).filter(DailyReviewAttempt.session_id == s["session_id"]).count() == 0
         assert db.query(DrillAttempt).filter(DrillAttempt.drill_session_id == s["session_id"]).count() == 0
+
+
+def test_list_sessions_filter_by_status_and_type(client):
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "this is my answer")
+    _end(client, s["session_id"])
+    s2 = _create_session(client)  # 未结束
+
+    done = client.get("/api/v1/sessions?status=completed", headers=USER).json()
+    assert any(x["session_id"] == s["session_id"] for x in done)
+    assert not any(x["session_id"] == s2["session_id"] for x in done)
+
+    inc = client.get("/api/v1/sessions?status=incomplete", headers=USER).json()
+    assert any(x["session_id"] == s2["session_id"] for x in inc)
+
+    all_items = client.get("/api/v1/sessions", headers=USER).json()
+    assert all("practice_type" in x and "level" in x for x in all_items)

@@ -28,6 +28,7 @@ class Session(Base):
     status: Mapped[str] = mapped_column(String(32), default="PREPARING")
     goal_text: Mapped[str] = mapped_column(Text, default="")
     difficulty: Mapped[str] = mapped_column(String(16), default="standard")
+    level: Mapped[str] = mapped_column(String(16), default="basic")  # 创建时水平（再练保留）
     end_reason: Mapped[str] = mapped_column(String(32), nullable=True)
     review: Mapped[str] = mapped_column(Text, default="")
     subgoals: Mapped[str] = mapped_column(Text, default="{}")
@@ -273,6 +274,7 @@ class DailyReviewAttempt(Base):
 class PhraseCard(Base):
     """语块卡（P1-4，REQ-31）：从有效建议生成，不扩写用户事实，随来源传播失效。"""
     __tablename__ = "phrase_cards"
+    __table_args__ = (UniqueConstraint("user_id", "source_turn_id", name="ux_phrase_card_source"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)

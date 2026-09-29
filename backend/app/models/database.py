@@ -150,6 +150,8 @@ def migrate_db() -> None:
             conn.execute(text("ALTER TABLE sessions ADD COLUMN request_key VARCHAR(64)"))
         if "in_flight" not in scol2:
             conn.execute(text("ALTER TABLE sessions ADD COLUMN in_flight BOOLEAN DEFAULT 0"))
+        if "level" not in scol2:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN level VARCHAR(16) DEFAULT 'basic'"))
         tcol2 = {r[1] for r in conn.execute(text("PRAGMA table_info(turns)"))}
         if "request_key" not in tcol2:
             conn.execute(text("ALTER TABLE turns ADD COLUMN request_key VARCHAR(64)"))
@@ -160,4 +162,15 @@ def migrate_db() -> None:
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_turns_request_key "
             "ON turns(request_key) WHERE request_key IS NOT NULL AND request_key != ''"
+        ))
+
+        # 语块卡：并发同来源唯一
+        conn.execute(text(
+            "DELETE FROM phrase_cards WHERE id NOT IN ("
+            "  SELECT MIN(id) FROM phrase_cards GROUP BY user_id, source_turn_id"
+            ")"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_phrase_card_source "
+            "ON phrase_cards(user_id, source_turn_id)"
         ))
