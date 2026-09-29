@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { deleteQueueItem, disputeQueueItem, listQueue, retestQueueItem, skipQueueItem } from "@/lib/api";
+import { deleteQueueItem, disputeQueueItem, listQueue, retestQueueItem, revealQueueItem, skipQueueItem } from "@/lib/api";
 import type { QueueItem } from "@/lib/types";
 import Icon from "@/components/Icon";
 
@@ -60,6 +60,10 @@ export default function QueuePage() {
     finally { setPending(""); }
   }
 
+  async function reveal(id: number) {
+    await act(id, revealQueueItem);
+  }
+
   const active = items.filter((i) => i.status === "pending" || i.status === "awaiting_retest");
 
   return (
@@ -81,7 +85,7 @@ export default function QueuePage() {
             <article key={it.id} className="panel history-row">
               <span className="icon-tile"><Icon name="check" /></span>
               <div className="history-info">
-                <h3>{it.suggestion_sentence || "（无建议句）"}</h3>
+                <h3>{it.help_shown && it.suggestion_sentence ? it.suggestion_sentence : (it.meaning_zh || "（暂无提示）")}</h3>
                 <div className="history-meta">
                   <span>{STATUS_CN[it.status] || it.status}</span>
                   {it.due_at && <span>到期 {new Date(it.due_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
@@ -94,6 +98,7 @@ export default function QueuePage() {
                   <>
                     {isDue ? <><input className="field field-small" placeholder="写下复测回答" value={answers[it.id] || ""} onChange={(e) => setAnswers((prev) => ({ ...prev, [it.id]: e.target.value }))} />
                     <button onClick={() => retest(it.id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === String(it.id) ? "提交中…" : "复测"}</button></> : <span className="text-xs muted">到期后可复测</span>}
+                    {!it.help_shown && <button onClick={() => reveal(it.id)} disabled={!!pending} className="btn btn-ghost btn-small">看答案</button>}
                     <button onClick={() => act(it.id, skipQueueItem)} disabled={!!pending} className="btn btn-ghost btn-small">跳过</button>
                   </>
                 ) : null}

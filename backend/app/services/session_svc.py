@@ -237,10 +237,36 @@ def create_session(
     difficulty: str,
     duration_minutes: float = 5.0,
     scene_id: str = "job_interview",
+    request_key: str = "",
 ) -> dict[str, Any]:
     _get_or_create_user(db, user_id, level)
     scene = get_scene(scene_id)
     goal_text = scene["goal_text"]
+
+    # 幂等：同一请求键返回首次结果
+    if request_key:
+        existing = (
+            db.query(Session)
+            .filter(Session.user_id == user_id, Session.request_key == request_key)
+            .first()
+        )
+        if existing:
+            opening = (
+                db.query(Turn)
+                .filter(Turn.session_id == existing.id, Turn.input_type == "coach")
+                .order_by(Turn.seq)
+                .first()
+            )
+            return {
+                "session_id": existing.id,
+                "status": existing.status,
+                "goal_text": existing.goal_text,
+                "scene_id": existing.scene_id,
+                "scene_label": scene["label"],
+                "reply_text": opening.reply_text if opening else "",
+                "reply_audio_url": opening.reply_audio_url if opening else "",
+            }
+
     session_id = uuid.uuid4().hex
     guard = BudgetGuard(db)
     guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
@@ -256,6 +282,7 @@ def create_session(
         subgoals="{}",
         duration_minutes=duration_minutes,
         rechecked=False,
+        request_key=request_key or None,
         active_since=_now(),
     )
     db.add(session)
@@ -410,6 +437,7 @@ def submit_turn(
     input_type: str,
     user_text: str | None = None,
     audio_bytes: bytes | None = None,
+    request_key: str = "",
 ) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
     if session.status == S_ENDED:
@@ -418,6 +446,16 @@ def submit_turn(
         raise AppError("SESSION_PAUSED", "会话已暂停，请先恢复", status_code=409)
     if session.status not in (S_WAITING, S_PRACTICE, S_RECHECK):
         raise AppError("INVALID_STATE", "当前状态不能提交回合", status_code=409)
+
+    # 幂等：同一请求键返回首次结果
+    if request_key:
+        existing = (
+            db.query(Turn)
+            .filter(Turn.session_id == session_id, Turn.request_key == request_key)
+            .first()
+        )
+        if existing:
+            return _turn_done(db, session, existing)
 
     # 时长校验（F-07）：精确累计非暂停时长，到时停止新提交并收尾
     if _active_elapsed_seconds(session) > session.duration_minutes * 60:
@@ -592,6 +630,7 @@ def submit_turn(
         practice_sentence=decision.practice_sentence,
         eval_result=eval_out.result,
         question_id=question_id,
+        request_key=request_key or None,
     )
     db.add(turn)
     _log_event(db, session_id, turn_id=turn_id, action_type=decision.action_type, basis=eval_out.result, input_type=input_type, tool_result=eval_out.result)

@@ -174,6 +174,8 @@ export interface QueueItem {
   source_turn_id: string;
   target_ability: string;
   suggestion_sentence: string;
+  meaning_zh: string;
+  help_shown: boolean;
   status: string;
   success_count: number;
   due_at: string | null;

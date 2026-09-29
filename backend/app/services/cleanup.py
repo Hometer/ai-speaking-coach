@@ -78,6 +78,32 @@ def cleanup_expired_sessions() -> int:
     return removed
 
 
+def cleanup_idle_sessions() -> int:
+    """空闲到时收尾：活跃时长超过练习时长上限的会话主动结束（不等待用户提交新回合）。"""
+    from app.models.database import SessionLocal
+    from app.models.entities import Session
+    from app.services.session_svc import _active_elapsed_seconds, finalize_session
+
+    ended = 0
+    with SessionLocal() as db:
+        active = db.query(Session).filter(
+            Session.status.in_(["PREPARING", "WAITING_INPUT", "PRACTICE", "RECHECK"])
+        ).all()
+        for s in active:
+            try:
+                limit = (s.duration_minutes or 5.0) * 60
+                if _active_elapsed_seconds(s) > limit:
+                    s.status = "ENDED"
+                    s.end_reason = "time_limit"
+                    s.ended_at = datetime.now(timezone.utc)
+                    finalize_session(db, s)  # 内部 commit
+                    ended += 1
+            except Exception:
+                db.rollback()
+                continue
+    return ended
+
+
 def cleanup_expired_audio() -> None:
     """服务启动及运行中调用，异常退出后在下次启动继续清理。"""
     cleanup_old_uploads()
@@ -86,4 +112,5 @@ def cleanup_expired_audio() -> None:
 
 def cleanup_expired_data() -> None:
     cleanup_expired_audio()
+    cleanup_idle_sessions()
     cleanup_expired_sessions()

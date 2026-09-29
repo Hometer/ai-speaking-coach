@@ -47,6 +47,46 @@ def _done(events):
     return events[-1][1]
 
 
+def test_create_session_idempotent(client):
+    r1 = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard", "request_key": "k-create-1"}, headers=USER)
+    r2 = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard", "request_key": "k-create-1"}, headers=USER)
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert r1.json()["session_id"] == r2.json()["session_id"]
+
+
+def test_submit_turn_idempotent(client):
+    s = _create_session(client)
+    body = {"text": "I have three years of experience.", "request_key": "k-turn-1"}
+    t1 = _done(_parse_sse(client.post(f"/api/v1/sessions/{s['session_id']}/turns/text", json=body, headers=USER).text))
+    t2 = _done(_parse_sse(client.post(f"/api/v1/sessions/{s['session_id']}/turns/text", json=body, headers=USER).text))
+    assert t1["turn_id"] == t2["turn_id"]
+
+
+def test_idle_session_ended(client):
+    from datetime import datetime, timedelta, timezone
+    from app.models.database import SessionLocal
+    from app.models.entities import Session
+    from app.services.cleanup import cleanup_idle_sessions
+
+    s = _create_session(client)
+    db = SessionLocal()
+    try:
+        sess = db.get(Session, s["session_id"])
+        sess.active_since = datetime.now(timezone.utc) - timedelta(minutes=10)
+        sess.duration_minutes = 5.0
+        db.commit()
+    finally:
+        db.close()
+    assert cleanup_idle_sessions() >= 1
+    db = SessionLocal()
+    try:
+        sess = db.get(Session, s["session_id"])
+        assert sess.status == "ENDED"
+        assert sess.end_reason == "time_limit"
+    finally:
+        db.close()
+
+
 def test_create_session_returns_goal_and_opening(client):
     s = _create_session(client)
     assert s["status"] == "WAITING_INPUT"

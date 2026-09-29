@@ -143,3 +143,21 @@ def migrate_db() -> None:
         for col, ddl in draadditions.items():
             if col not in dracols:
                 conn.execute(text(f"ALTER TABLE daily_review_attempts ADD COLUMN {col} {ddl}"))
+
+        # 幂等键 + 处理中标记
+        scol2 = {r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))}
+        if "request_key" not in scol2:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN request_key VARCHAR(64)"))
+        if "in_flight" not in scol2:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN in_flight BOOLEAN DEFAULT 0"))
+        tcol2 = {r[1] for r in conn.execute(text("PRAGMA table_info(turns)"))}
+        if "request_key" not in tcol2:
+            conn.execute(text("ALTER TABLE turns ADD COLUMN request_key VARCHAR(64)"))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_sessions_request_key "
+            "ON sessions(request_key) WHERE request_key IS NOT NULL AND request_key != ''"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_turns_request_key "
+            "ON turns(request_key) WHERE request_key IS NOT NULL AND request_key != ''"
+        ))

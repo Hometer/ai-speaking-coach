@@ -227,12 +227,17 @@ export async function dueQueueItem(): Promise<QueueItem | null> {
   return handle<QueueItem | null>(res);
 }
 
-export async function retestQueueItem(id: number, answer: string, hintUsed = false): Promise<QueueItem> {
+export async function retestQueueItem(id: number, answer: string, inputType = "text", attemptKey = ""): Promise<QueueItem> {
   const res = await fetch(`/api/v1/review-queue/${id}/retest`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ answer, hint_used: hintUsed }),
+    body: JSON.stringify({ answer, input_type: inputType, attempt_key: attemptKey }),
   });
+  return handle<QueueItem>(res);
+}
+
+export async function revealQueueItem(id: number): Promise<QueueItem> {
+  const res = await fetch(`/api/v1/review-queue/${id}/reveal`, { method: "POST", headers: authHeaders() });
   return handle<QueueItem>(res);
 }
 
@@ -366,11 +371,11 @@ export async function retryTurnAudio(sessionId: string, turnId: string): Promise
   return handle<TurnDone>(res);
 }
 
-export async function drillAttempt(sessionId: string, text: string): Promise<DrillAttemptResult> {
+export async function drillAttempt(sessionId: string, text: string, inputType = "text", attemptKey = ""): Promise<DrillAttemptResult> {
   const res = await fetch(`/api/v1/sessions/${sessionId}/drill-attempt`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, input_type: inputType, attempt_key: attemptKey }),
   });
   return handle<DrillAttemptResult>(res);
 }
@@ -399,11 +404,11 @@ export async function dailyReviewView(sessionId: string): Promise<DailyReviewCur
   return handle<DailyReviewCurrent>(res);
 }
 
-export async function dailyReviewAttempt(sessionId: string, answer: string, helpUsed: boolean): Promise<DailyReviewAttemptResult> {
+export async function dailyReviewAttempt(sessionId: string, answer: string, helpUsed: boolean, inputType = "text", attemptKey = ""): Promise<DailyReviewAttemptResult> {
   const res = await fetch(`/api/v1/review-queue/daily-review/${sessionId}/attempt`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ answer, help_used: helpUsed }),
+    body: JSON.stringify({ answer, help_used: helpUsed, input_type: inputType, attempt_key: attemptKey }),
   });
   return handle<DailyReviewAttemptResult>(res);
 }

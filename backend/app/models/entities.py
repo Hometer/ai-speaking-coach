@@ -55,6 +55,8 @@ class Session(Base):
     current_question_id: Mapped[str] = mapped_column(String(64), default="")
     current_question_text: Mapped[str] = mapped_column(Text, default="")
     current_question_audio_url: Mapped[str] = mapped_column(String(255), default="")
+    request_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 创建会话幂等键
+    in_flight: Mapped[bool] = mapped_column(default=False)  # 处理中标记（刷新恢复）
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
@@ -88,6 +90,7 @@ class Turn(Base):
     is_answer_help: Mapped[bool] = mapped_column(default=False)
     audio_status: Mapped[str] = mapped_column(String(16), default="ok")  # pending / ok / failed
     recording_url: Mapped[str] = mapped_column(String(255), default="")  # 本人录音回放（会话内）
+    request_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 提交回合幂等键
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     session: Mapped["Session"] = relationship(back_populates="turns")

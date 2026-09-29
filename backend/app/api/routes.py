@@ -74,7 +74,7 @@ def get_audio(filename: str, user_id: str = Depends(get_user_id)):
 def create_session(req: SessionCreateRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes, req.scene_id)
+        return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes, req.scene_id, req.request_key)
     finally:
         db.close()
 
@@ -139,7 +139,7 @@ def text_turn_stream(session_id: str, req: TextTurnRequest, user_id: str = Depen
     def gen():
         db = SessionLocal()
         try:
-            partial = session_svc.submit_turn(db, session_id, user_id, "text", user_text=req.text)
+            partial = session_svc.submit_turn(db, session_id, user_id, "text", user_text=req.text, request_key=req.request_key)
             yield _sse("chunk", {"text": partial["reply_text"]})
             done = session_svc.synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
             yield _sse("done", done)

@@ -12,6 +12,7 @@ class SessionCreateRequest(BaseModel):
     difficulty: Difficulty = "standard"
     duration_minutes: float = Field(default=5.0, ge=3.0, le=15.0)
     scene_id: str = "job_interview"
+    request_key: str = Field(default="", description="幂等键")
 
 
 class SessionCreatedResponse(BaseModel):
