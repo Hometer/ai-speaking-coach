@@ -152,6 +152,7 @@ class EventLog(Base):
     input_type: Mapped[str] = mapped_column(String(16), default="")
     tool_result: Mapped[str] = mapped_column(String(32), default="")
     error: Mapped[str] = mapped_column(String(64), default="")
+    request_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     usage: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

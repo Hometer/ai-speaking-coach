@@ -1,6 +1,7 @@
 """会话生命周期与状态机（Harness 维护状态，模型不可改写）。"""
 import json
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -133,9 +134,19 @@ def _log_event(
     input_type: str = "",
     tool_result: str = "",
     error: str = "",
+    request_key: str | None = None,
     duration_ms: int = 0,
     usage: str = "",
 ) -> None:
+    # 请求去重：同一 request_key 的事件只记一次
+    if request_key:
+        dup = (
+            db.query(EventLog)
+            .filter(EventLog.session_id == session_id, EventLog.request_key == request_key)
+            .first()
+        )
+        if dup is not None:
+            return
     db.add(
         EventLog(
             session_id=session_id,
@@ -145,6 +156,7 @@ def _log_event(
             input_type=input_type,
             tool_result=tool_result,
             error=error,
+            request_key=request_key,
             duration_ms=duration_ms,
             usage=usage,
         )
@@ -458,6 +470,8 @@ def submit_turn(
         if existing:
             return _turn_done(db, session, existing)
 
+    turn_start = time.perf_counter()
+
     # 时长校验（F-07）：精确累计非暂停时长，到时停止新提交并收尾
     if _active_elapsed_seconds(session) > session.duration_minutes * 60:
         session.status = S_ENDED
@@ -634,7 +648,7 @@ def submit_turn(
         request_key=request_key or None,
     )
     db.add(turn)
-    _log_event(db, session_id, turn_id=turn_id, action_type=decision.action_type, basis=eval_out.result, input_type=input_type, tool_result=eval_out.result)
+    _log_event(db, session_id, turn_id=turn_id, action_type=decision.action_type, basis=eval_out.result, input_type=input_type, tool_result=eval_out.result, request_key=request_key or None, duration_ms=int((time.perf_counter() - turn_start) * 1000))
     db.commit()
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
 

@@ -174,3 +174,8 @@ def migrate_db() -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_phrase_card_source "
             "ON phrase_cards(user_id, source_turn_id)"
         ))
+
+        # 事件埋点：请求去重键
+        ecols = {r[1] for r in conn.execute(text("PRAGMA table_info(event_logs)"))}
+        if "request_key" not in ecols:
+            conn.execute(text("ALTER TABLE event_logs ADD COLUMN request_key VARCHAR(64)"))
