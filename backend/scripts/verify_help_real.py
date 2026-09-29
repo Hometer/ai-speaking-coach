@@ -9,10 +9,11 @@
 """
 import argparse
 import json
+import os
 
 import httpx
 
-BASE = "http://127.0.0.1:8000"
+BASE = os.getenv("BACKEND_BASE", "http://127.0.0.1:8000")
 INVITE = {"X-Invite-Code": "test-a"}
 
 
