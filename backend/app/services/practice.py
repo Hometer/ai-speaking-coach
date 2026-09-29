@@ -94,6 +94,62 @@ def _parse_ise_xml(xml_text: str) -> float | None:
     return None
 
 
+def _extract_word_items(xml_text: str) -> list[dict[str, Any]]:
+    """从评测 XML 提取词级节点（含原始位置），低分优先，最多三处。"""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return []
+    items: list[dict[str, Any]] = []
+    for node in root.iter():
+        if "word" not in node.tag.lower():
+            continue
+        ts = node.get("total_score")
+        if ts is None:
+            continue
+        word_text = "".join(node.itertext()).strip()
+        if not word_text:
+            continue
+        try:
+            score = float(ts)
+        except ValueError:
+            continue
+        items.append(
+            {
+                "word": word_text,
+                "score": score,  # 5 分制原始
+                "beg_pos": node.get("beg_pos") or node.get("start") or "",
+                "end_pos": node.get("end_pos") or node.get("end") or "",
+            }
+        )
+    items.sort(key=lambda x: x["score"])
+    return items[:3]
+
+
+def _xml_text_from_data(data: Any) -> str | None:
+    """从返回帧 data 中提取 XML 文本（支持 base64 或原始字符串）。"""
+    if data is None:
+        return None
+    if isinstance(data, str):
+        if data.lstrip().startswith("<"):
+            return data
+        try:
+            decoded = base64.b64decode(data).decode("utf-8", errors="ignore")
+            if decoded.lstrip().startswith("<"):
+                return decoded
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+    if isinstance(data, dict):
+        return _xml_text_from_data(data.get("data"))
+    if isinstance(data, list):
+        for v in data:
+            xml = _xml_text_from_data(v)
+            if xml:
+                return xml
+    return None
+
+
 def _extract_ise_score(data: Any) -> float | None:
     """从返回帧的 data 中提取 total_score（讯飞 5 分制）。"""
     if data is None:
@@ -124,9 +180,10 @@ def _extract_ise_score(data: Any) -> float | None:
 
 
 def parse_result(frames: list[dict[str, Any]]) -> dict[str, Any]:
-    """解析服务端回传帧，返回 {score, dimension, notes}（score 为百分制）。"""
+    """解析服务端回传帧，返回 {score, dimension, notes, word_items}（score 为百分制）。"""
     error: str | None = None
     score: float | None = None
+    word_items: list[dict[str, Any]] = []
     for f in frames:
         code = f.get("code")
         if code is not None and str(code) != "0":
@@ -135,12 +192,17 @@ def parse_result(frames: list[dict[str, Any]]) -> dict[str, Any]:
             s = _extract_ise_score(f.get("data"))
             if s is not None:
                 score = s
+            xml_text = _xml_text_from_data(f.get("data"))
+            if xml_text:
+                items = _extract_word_items(xml_text)
+                if items:
+                    word_items = items
     if error:
         raise AppError("PRACTICE_EVAL_ERROR", f"评测失败：{error[:120]}", status_code=502)
     if score is None:
         raise AppError("PRACTICE_EVAL_EMPTY", "评测未返回分数", status_code=502)
     # 讯飞英文评测为 5 分制，换算为百分制展示
-    return {"score": round(score * 20, 1), "dimension": "word/phrase", "notes": []}
+    return {"score": round(score * 20, 1), "dimension": "word/phrase", "notes": [], "word_items": word_items}
 
 
 class PracticeEvalProvider(ABC):

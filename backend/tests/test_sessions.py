@@ -468,6 +468,32 @@ def test_practice_failure_releases_budget_and_removes_recording(client, monkeypa
     assert set(audio_dir.glob("*")) == before
 
 
+def test_practice_eval_failure_keeps_recording(client, monkeypatch):
+    from app.core.errors import AppError
+    from app.services import session_svc
+
+    s = _create_session(client)
+    _done(_send_text(client, s["session_id"], "just working"))
+
+    class FailingEvalProvider:
+        def evaluate(self, audio_path, sentence):
+            raise AppError("PRACTICE_EVAL_ERROR", "评测失败", status_code=502)
+
+    monkeypatch.setattr(session_svc, "get_practice_eval_provider", lambda: FailingEvalProvider())
+    r = client.post(
+        f"/api/v1/sessions/{s['session_id']}/practice",
+        data={"sentence": "I have three years of experience."},
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["eval"]["score"] is None
+    assert body["recording_url"]
+    fn = body["recording_url"].rsplit("/", 1)[-1]
+    assert (config.settings.data_dir / "audio" / fn).exists()  # 录音保留
+
+
 def test_sentence_practice_creation_failure_releases_budget(client, monkeypatch):
     from app.models.entities import BudgetLedger, Session
     from app.services import session_svc

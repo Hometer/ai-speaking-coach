@@ -36,17 +36,42 @@ def test_qa_forbidden_for_normal_user(client):
 
 def test_qa_accessible_for_reviewer(client):
     _enable_qa()
+    # 先创建真实会话，标签必须绑定存在的来源
+    s = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard"}, headers=USER)
+    assert s.status_code == 200, s.text
+    sid = s.json()["session_id"]
+
     r = client.get("/api/v1/qa/sessions", headers=QA)
     assert r.status_code == 200
     r2 = client.post(
         "/api/v1/qa/labels",
-        json={"session_id": "s1", "turn_id": "t1", "issue_type": "mis_correction", "conclusion": "confirmed"},
+        json={"session_id": sid, "turn_id": "", "issue_type": "mis_correction", "conclusion": "confirmed"},
         headers=QA,
     )
     assert r2.status_code == 200, r2.text
     r3 = client.get("/api/v1/qa/stats", headers=QA)
     assert r3.status_code == 200
     assert r3.json()["total"] >= 1
+
+
+def test_qa_label_rejects_invalid_source_and_type(client):
+    _enable_qa()
+    # 不存在的会话 → 404
+    r = client.post(
+        "/api/v1/qa/labels",
+        json={"session_id": "missing", "turn_id": "", "issue_type": "mis_correction", "conclusion": "confirmed"},
+        headers=QA,
+    )
+    assert r.status_code == 404, r.text
+    # 非法问题类型 → 422
+    s = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard"}, headers=USER)
+    sid = s.json()["session_id"]
+    r2 = client.post(
+        "/api/v1/qa/labels",
+        json={"session_id": sid, "turn_id": "", "issue_type": "bogus_type", "conclusion": "confirmed"},
+        headers=QA,
+    )
+    assert r2.status_code == 422, r2.text
 
 
 def test_revoked_qa_invite_cannot_access_workbench(client):

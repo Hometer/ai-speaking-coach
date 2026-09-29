@@ -1,7 +1,7 @@
 """SQLAlchemy 实体模型（阶段 2.2 初版 schema）。"""
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.database import Base
@@ -110,12 +110,14 @@ class Evaluation(Base):
 
 class BudgetLedger(Base):
     __tablename__ = "budget_ledger"
+    __table_args__ = (UniqueConstraint("scope", "scope_key", name="ux_budget_scope_key"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     scope: Mapped[str] = mapped_column(String(16))  # session / user / project
     scope_key: Mapped[str] = mapped_column(String(128), index=True)
     reserved: Mapped[float] = mapped_column(Float, default=0.0)
-    spent: Mapped[float] = mapped_column(Float, default=0.0)
+    spent: Mapped[float] = mapped_column(Float, default=0.0)  # 估算记账（用于预算上限）
+    actual_spent: Mapped[float] = mapped_column(Float, default=0.0)  # 供应商实际用量（追溯）
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
 
@@ -126,8 +128,12 @@ class Memory(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     text: Mapped[str] = mapped_column(Text, default="")
     source_session_id: Mapped[str] = mapped_column(String(64), default="")
+    source_turn_id: Mapped[str] = mapped_column(String(64), default="")
+    scene_id: Mapped[str] = mapped_column(String(32), default="")
     status: Mapped[str] = mapped_column(String(16), default="candidate")
     evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[str] = mapped_column(String(16), default="v1")
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

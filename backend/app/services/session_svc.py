@@ -500,7 +500,7 @@ def submit_turn(
         user = db.get(User, session.user_id)
         memories = []
         if memory_svc.is_memory_enabled(db, user_id):
-            memories = [m.text for m in memory_svc.get_usable_memories(db, user_id)]
+            memories = [m.text for m in memory_svc.get_usable_memories(db, user_id, session.scene_id)]
         decision = coach.decide(
             {
                 "goal": session.goal_text,
@@ -689,8 +689,43 @@ def submit_practice(
         recording_url = _save_audio(audio_bytes, fmt)
 
         provider = get_practice_eval_provider()
-        eval_result = provider.evaluate(audio_path, sentence)
-        # 评价绑定录音版本 / 参考句版本 / 阶梯阶段
+        try:
+            eval_result = provider.evaluate(audio_path, sentence)
+        except AppError as exc:
+            # 评测失败：保留本人录音供对比，无评分，不冒充结果（AC10-06）
+            eval_result = {"score": None, "dimension": "sentence", "word_items": [], "error_code": exc.code}
+            eval_result["recording_url"] = recording_url
+            eval_result["reference_version"] = session.scene_version or ""
+            eval_result["drill_stage"] = session.drill_stage or ""
+            turn = Turn(
+                id=uuid.uuid4().hex,
+                session_id=session_id,
+                seq=_next_seq(db, session_id),
+                input_type="practice",
+                practice_sentence=sentence,
+                practice_eval=json.dumps(eval_result, ensure_ascii=False),
+                reply_text="",
+                reply_audio_url="",
+                action_type="follow_up",
+                audio_status="failed",
+                recording_url=recording_url,
+            )
+            db.add(turn)
+            _log_event(db, session_id, turn_id=turn.id, action_type="practice", basis="follow_up", input_type="practice", tool_result="unscored", error=exc.code)
+            session.status = S_WAITING
+            db.commit()
+            guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
+            if audio_path is not None:
+                audio_path.unlink(missing_ok=True)
+            return {
+                "session_id": session_id,
+                "status": S_WAITING,
+                "eval": eval_result,
+                "recording_url": recording_url,
+                "recheck_reply_text": "",
+                "recheck_audio_url": "",
+            }
+        # 评价成功：绑定录音版本 / 参考句版本 / 阶梯阶段
         eval_result["recording_url"] = recording_url
         eval_result["reference_version"] = session.scene_version or ""
         eval_result["drill_stage"] = session.drill_stage or ""

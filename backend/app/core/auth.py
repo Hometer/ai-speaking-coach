@@ -14,8 +14,11 @@ DEFAULT_INVITES = [
 
 
 def seed_invites() -> None:
+    from app.core.config import settings
     from app.models.database import SessionLocal as S
 
+    if not settings.seed_demo_invites:
+        return
     db = S()
     try:
         for item in DEFAULT_INVITES:

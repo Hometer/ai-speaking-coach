@@ -20,11 +20,9 @@ def _improvement(t: Turn, scene: dict) -> dict[str, Any]:
 
 
 def _ratings(goal_status: str, good_count: int) -> dict[str, str]:
-    if goal_status == "independent":
-        return {"vocabulary": "adequate", "grammar": "adequate", "communication": "complete"}
-    if good_count >= 1:
-        return {"vocabulary": "adequate", "grammar": "needs_work", "communication": "in_progress"}
-    return {"vocabulary": "needs_work", "grammar": "needs_work", "communication": "in_progress"}
+    # 语法/词汇不因"目标独立"自动推断达标；无可靠证据不评级（REQ-08）。
+    communication = "complete" if goal_status == "independent" else "in_progress"
+    return {"vocabulary": "not_evaluated", "grammar": "not_evaluated", "communication": communication}
 
 
 def dedupe_improvements(review: dict[str, Any]) -> dict[str, Any]:
@@ -37,7 +35,7 @@ def dedupe_improvements(review: dict[str, Any]) -> dict[str, Any]:
             continue
         seen.add(key)
         unique.append(item)
-    return {**review, "improvements": unique[:3]}
+    return {**review, "improvements": unique[:2]}
 
 
 def build_review(db: DbSession, session, end_reason: str) -> dict[str, Any]:
@@ -71,7 +69,7 @@ def build_review(db: DbSession, session, end_reason: str) -> dict[str, Any]:
         _improvement(t, scene)
         for t in user_turns
         if t.eval_result in ("incomplete", "hinted") and (t.user_text or t.transcript)
-    ][:3]
+    ][:2]
 
     breakdown = {"voice": 0, "text": 0, "practice": 0, "hinted": 0}
     for t in turns:

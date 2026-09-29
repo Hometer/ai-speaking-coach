@@ -57,6 +57,30 @@ def test_parse_result_success_from_base64_xml():
     assert r["score"] == 96.0
 
 
+def test_parse_result_extracts_word_items():
+    xml = (
+        '<xml_result><read_chapter total_score="4.0">'
+        '<word beg_pos="0" end_pos="5" total_score="4.5">hello</word>'
+        '<word beg_pos="6" end_pos="11" total_score="2.0">world</word>'
+        '<word beg_pos="12" end_pos="18" total_score="3.5">friend</word>'
+        '<word beg_pos="19" end_pos="23" total_score="1.0">bad</word>'
+        '</read_chapter></xml_result>'
+    )
+    b64 = base64.b64encode(xml.encode()).decode()
+    r = parse_result([{"code": 0, "data": {"data": b64}}])
+    assert r["score"] == 80.0  # 4.0 * 20
+    words = [w["word"] for w in r["word_items"]]
+    assert words == ["bad", "world", "friend"]  # 低分优先，最多三处
+    assert r["word_items"][0]["beg_pos"] == "19"
+
+
+def test_parse_result_no_word_items_when_absent():
+    xml = '<xml_result><read_chapter total_score="4.8"/></xml_result>'
+    b64 = base64.b64encode(xml.encode()).decode()
+    r = parse_result([{"code": 0, "data": {"data": b64}}])
+    assert r["word_items"] == []
+
+
 def test_parse_result_error():
     with pytest.raises(AppError) as e:
         parse_result([{"code": 10105, "message": "illegal access"}])

@@ -76,3 +76,42 @@ def migrate_db() -> None:
         for col, ddl in qadditions.items():
             if col not in qcols:
                 conn.execute(text(f"ALTER TABLE review_queue_items ADD COLUMN {col} {ddl}"))
+
+        # budget_ledger：补实际用量列 + 唯一约束（先合并存量重复再建唯一索引）
+        bcols = {r[1] for r in conn.execute(text("PRAGMA table_info(budget_ledger)"))}
+        if "actual_spent" not in bcols:
+            conn.execute(text("ALTER TABLE budget_ledger ADD COLUMN actual_spent FLOAT DEFAULT 0.0"))
+        conn.execute(text(
+            "UPDATE budget_ledger SET "
+            "reserved = reserved + COALESCE((SELECT SUM(d.reserved) FROM budget_ledger d "
+            "  WHERE d.scope = budget_ledger.scope AND d.scope_key = budget_ledger.scope_key "
+            "  AND d.id != budget_ledger.id), 0), "
+            "spent = spent + COALESCE((SELECT SUM(d.spent) FROM budget_ledger d "
+            "  WHERE d.scope = budget_ledger.scope AND d.scope_key = budget_ledger.scope_key "
+            "  AND d.id != budget_ledger.id), 0), "
+            "actual_spent = actual_spent + COALESCE((SELECT SUM(d.actual_spent) FROM budget_ledger d "
+            "  WHERE d.scope = budget_ledger.scope AND d.scope_key = budget_ledger.scope_key "
+            "  AND d.id != budget_ledger.id), 0) "
+            "WHERE id IN (SELECT MIN(id) FROM budget_ledger GROUP BY scope, scope_key)"
+        ))
+        conn.execute(text(
+            "DELETE FROM budget_ledger WHERE id NOT IN ("
+            "  SELECT MIN(id) FROM budget_ledger GROUP BY scope, scope_key"
+            ")"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_budget_scope_key "
+            "ON budget_ledger(scope, scope_key)"
+        ))
+
+        # memories：补来源回合/场景/版本/到期列
+        mcols = {r[1] for r in conn.execute(text("PRAGMA table_info(memories)"))}
+        madditions = {
+            "source_turn_id": "VARCHAR(64) DEFAULT ''",
+            "scene_id": "VARCHAR(32) DEFAULT ''",
+            "version": "VARCHAR(16) DEFAULT 'v1'",
+            "expires_at": "DATETIME",
+        }
+        for col, ddl in madditions.items():
+            if col not in mcols:
+                conn.execute(text(f"ALTER TABLE memories ADD COLUMN {col} {ddl}"))

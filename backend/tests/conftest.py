@@ -8,6 +8,7 @@ from app.core import config
 
 _TMP = pathlib.Path(tempfile.mkdtemp(prefix="ai_speaking_test_"))
 config.settings.provider_mode = "mock"
+config.settings.seed_demo_invites = True
 config.settings.data_dir = _TMP / "data"
 config.settings.database_url = f"sqlite:///{_TMP / 'test.db'}"
 

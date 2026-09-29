@@ -35,6 +35,8 @@ class Settings:
         self.upload_retention_minutes = float(os.getenv("UPLOAD_RETENTION_MINUTES", "10"))
         self.upload_max_age_minutes = float(os.getenv("UPLOAD_MAX_AGE_MINUTES", "1440"))
         self.session_retention_days = int(os.getenv("SESSION_RETENTION_DAYS", "30"))
+        # 演示邀请码种子：默认关闭（生产安全），本地开发用 SEED_DEMO_INVITES=1 开启
+        self.seed_demo_invites = os.getenv("SEED_DEMO_INVITES", "0").strip().lower() in ("1", "true", "yes")
         self.ffmpeg_bin = os.getenv("FFMPEG_BIN", "ffmpeg")
         self.xf_appid = os.getenv("XF_APPID", "")
         self.xf_api_key = os.getenv("XF_API_KEY", "")
