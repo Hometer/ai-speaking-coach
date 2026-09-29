@@ -64,6 +64,8 @@ export interface DueTodayItem {
   id: number;
   source_turn_id: string;
   suggestion_sentence: string;
+  meaning_zh: string;
+  help_shown: boolean;
   status: string;
   success_count: number;
   interval_days: number;

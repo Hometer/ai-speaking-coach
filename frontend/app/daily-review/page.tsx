@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Icon from "@/components/Icon";
-import { dailyReviewAction, dailyReviewAttempt, dailyReviewView, dueToday, startDailyReview } from "@/lib/api";
+import { dailyReviewAction, dailyReviewAttempt, dailyReviewView, dueToday, getInviteCode, revealQueueItem, startDailyReview } from "@/lib/api";
 import type { DailyReviewCurrent, DueToday } from "@/lib/types";
 import styles from "./page.module.css";
 
@@ -13,10 +13,13 @@ export default function DailyReviewPage() {
   const [current, setCurrent] = useState<DailyReviewCurrent | null>(null);
   const [answer, setAnswer] = useState("");
   const [showHint, setShowHint] = useState(false);
-  const [helpUsed, setHelpUsed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  const [recording, setRecording] = useState(false);
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -50,12 +53,75 @@ export default function DailyReviewPage() {
     setBusy(true);
     setErr("");
     try {
-      const result = await dailyReviewAttempt(sessionId, answer.trim(), withHelp);
+      const result = await dailyReviewAttempt(sessionId, answer.trim(), withHelp, "text");
       setAnswer("");
       setShowHint(false);
-      setHelpUsed(false);
       setMsg(result.success ? (withHelp ? "这一条已完成，记录为使用提示。" : "这一条已独立完成。") : "还没有对上，可以再试一次或使用提示。");
       setCurrent(result.next);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reveal() {
+    if (!item) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await revealQueueItem(item.id);
+      setShowHint(true);
+      const view = await dailyReviewView(sessionId!);
+      setCurrent(view);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleRecord() {
+    if (busy || !sessionId) return;
+    if (recRef.current && recRef.current.state === "recording") { recRef.current.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "";
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recRef.current = rec;
+      rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+        submitVoice(blob);
+      };
+      rec.start();
+      setRecording(true);
+    } catch {
+      setErr("无法获取麦克风，可用文字输入。");
+    }
+  }
+
+  async function submitVoice(blob: Blob) {
+    if (!sessionId) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const fd = new FormData();
+      fd.append("audio", blob, "daily-review");
+      const res = await fetch(`/api/v1/review-queue/daily-review/${sessionId}/attempt/voice`, {
+        method: "POST",
+        headers: { "X-Invite-Code": getInviteCode() },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
+      setShowHint(false);
+      setMsg(data.success ? "这一条已独立完成（语音）。" : "还没有对上，可以再试一次或使用提示。");
+      setCurrent(data.next);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -73,7 +139,6 @@ export default function DailyReviewPage() {
       setCurrent(result.next);
       setAnswer("");
       setShowHint(false);
-      setHelpUsed(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -149,7 +214,7 @@ export default function DailyReviewPage() {
             <span className={styles.promptIcon}><Icon name={showHint ? "book" : "help"} size={20} /></span>
             <div>
               <p className={styles.promptLabel}>{showHint ? "提示已经展开" : "先不要看答案"}</p>
-              {showHint ? <p className={styles.hintText}>{item.suggestion_sentence}</p> : <p>想一想这条表达原本想传达什么，再用自己的话说出来。</p>}
+              {showHint ? <p className={styles.hintText}>{item.suggestion_sentence}</p> : <p>{item.meaning_zh ? `想表达：${item.meaning_zh}` : "想一想这条表达原本想传达什么，再用自己的话说出来。"}</p>}
             </div>
           </div>
 
@@ -167,8 +232,9 @@ export default function DailyReviewPage() {
           </div>
 
           <div className={styles.primaryActions}>
-            {!showHint && <button onClick={() => { setShowHint(true); setHelpUsed(true); }} disabled={busy} className="btn btn-secondary"><Icon name="help" size={15} />看提示</button>}
-            <button onClick={() => submit(helpUsed)} disabled={busy || !answer.trim()} className="btn btn-primary">{busy ? "提交中…" : "提交回答"}<Icon name="arrow" size={15} /></button>
+            {!showHint && <button onClick={reveal} disabled={busy} className="btn btn-secondary"><Icon name="help" size={15} />看提示</button>}
+            <button onClick={toggleRecord} disabled={busy || recording} className="btn btn-primary"><Icon name={recording ? "stop" : "mic"} size={15} />{recording ? "停止并提交" : "录音回忆"}</button>
+            <button onClick={() => submit(false)} disabled={busy || !answer.trim()} className="btn btn-secondary">提交文字<Icon name="arrow" size={15} /></button>
           </div>
 
           <div className={styles.secondaryActions}>

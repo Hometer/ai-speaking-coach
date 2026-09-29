@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { deleteQueueItem, disputeQueueItem, listQueue, retestQueueItem, revealQueueItem, skipQueueItem } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { deleteQueueItem, disputeQueueItem, getInviteCode, listQueue, retestQueueItem, revealQueueItem, skipQueueItem } from "@/lib/api";
 import type { QueueItem } from "@/lib/types";
 import Icon from "@/components/Icon";
 
@@ -21,6 +21,9 @@ export default function QueuePage() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [pending, setPending] = useState("");
   const [now, setNow] = useState(0);
+  const [recId, setRecId] = useState<number | null>(null);
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     const update = () => setNow(Date.now());
@@ -64,6 +67,45 @@ export default function QueuePage() {
     await act(id, revealQueueItem);
   }
 
+  async function toggleRecord(id: number) {
+    if (pending || !id) return;
+    if (recRef.current && recRef.current.state === "recording") { recRef.current.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunksRef.current = [];
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "";
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recRef.current = rec;
+      rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecId(null);
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+        submitVoice(id, blob);
+      };
+      rec.start();
+      setRecId(id);
+    } catch {
+      setErr("无法获取麦克风，可用文字复测。");
+    }
+  }
+
+  async function submitVoice(id: number, blob: Blob) {
+    setPending(String(id)); setErr("");
+    try {
+      const fd = new FormData();
+      fd.append("audio", blob, "retest");
+      const res = await fetch(`/api/v1/review-queue/${id}/retest/voice`, { method: "POST", headers: { "X-Invite-Code": getInviteCode() }, body: fd });
+      const data = await res.json();
+      if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
+      await reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPending("");
+    }
+  }
+
   const active = items.filter((i) => i.status === "pending" || i.status === "awaiting_retest");
 
   return (
@@ -97,7 +139,8 @@ export default function QueuePage() {
                 {it.status === "pending" || it.status === "awaiting_retest" ? (
                   <>
                     {isDue ? <><input className="field field-small" placeholder="写下复测回答" value={answers[it.id] || ""} onChange={(e) => setAnswers((prev) => ({ ...prev, [it.id]: e.target.value }))} />
-                    <button onClick={() => retest(it.id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === String(it.id) ? "提交中…" : "复测"}</button></> : <span className="text-xs muted">到期后可复测</span>}
+                    <button onClick={() => retest(it.id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === String(it.id) ? "提交中…" : "复测"}</button>
+                    <button onClick={() => toggleRecord(it.id)} disabled={!!pending} className="btn btn-primary btn-small"><Icon name={recId === it.id ? "stop" : "mic"} size={14} />{recId === it.id ? "停止" : "录音复测"}</button></> : <span className="text-xs muted">到期后可复测</span>}
                     {!it.help_shown && <button onClick={() => reveal(it.id)} disabled={!!pending} className="btn btn-ghost btn-small">看答案</button>}
                     <button onClick={() => act(it.id, skipQueueItem)} disabled={!!pending} className="btn btn-ghost btn-small">跳过</button>
                   </>
