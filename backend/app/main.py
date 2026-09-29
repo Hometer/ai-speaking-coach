@@ -1,4 +1,7 @@
 """FastAPI 入口：注册路由、静态页与统一错误处理。"""
+import asyncio
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -9,10 +12,34 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes import router
 from app.core.errors import AppError, error_body
 from app.models.database import init_db
+from app.services.cleanup import cleanup_expired_data
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AI 口语练习 · 后端 MVP", version="0.2.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    async def clean_periodically():
+        while True:
+            await asyncio.sleep(60)
+            try:
+                await asyncio.to_thread(cleanup_expired_data)
+            except Exception:
+                logger.error("periodic_cleanup_failed")
+
+    await asyncio.to_thread(cleanup_expired_data)
+    task = asyncio.create_task(clean_periodically())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="AI 口语练习 · 后端 MVP", version="0.2.0", lifespan=lifespan)
 
 
 @app.exception_handler(AppError)

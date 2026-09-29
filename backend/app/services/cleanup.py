@@ -1,12 +1,15 @@
 """录音清理：删除超过保留时限的上传录音。"""
+import json
+import os
 import time
+from datetime import datetime, timedelta, timezone
 
 from app.core.config import settings
 
 
 def cleanup_old_uploads(max_age_minutes: float | None = None) -> int:
     """删除 data/uploads 中超过保留时限的文件，返回删除数。"""
-    max_age = max_age_minutes if max_age_minutes is not None else settings.upload_retention_minutes
+    max_age = max_age_minutes if max_age_minutes is not None else min(settings.upload_retention_minutes, settings.upload_max_age_minutes)
     uploads_dir = settings.data_dir / "uploads"
     if not uploads_dir.exists():
         return 0
@@ -25,3 +28,62 @@ def cleanup_old_uploads(max_age_minutes: float | None = None) -> int:
 def cleanup_stale_uploads() -> int:
     """兑底清理：删除超过最大保留时限的录音（覆盖异常退出/失联录音）。"""
     return cleanup_old_uploads(max_age_minutes=settings.upload_max_age_minutes)
+
+
+def cleanup_old_recordings() -> int:
+    """清除已落库的本人录音及回放引用；教练合成音频仍随会话保留。"""
+    from app.models.database import SessionLocal
+    from app.models.entities import Turn
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=min(settings.upload_retention_minutes, settings.upload_max_age_minutes))
+    removed = 0
+    with SessionLocal() as db:
+        turns = db.query(Turn).filter(Turn.recording_url != "").all()
+        for turn in turns:
+            created = turn.created_at
+            if created is None or (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created) >= cutoff:
+                continue
+            filename = os.path.basename(turn.recording_url)
+            path = settings.data_dir / "audio" / filename
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                continue
+            turn.recording_url = ""
+            if turn.practice_eval:
+                try:
+                    result = json.loads(turn.practice_eval)
+                    result.pop("recording_url", None)
+                    turn.practice_eval = json.dumps(result, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    pass
+            removed += 1
+        db.commit()
+    return removed
+
+
+def cleanup_expired_sessions() -> int:
+    """按文本留存期限删除整条会话，并传播清理其派生证据。"""
+    from app.models.database import SessionLocal
+    from app.models.entities import Session
+    from app.services.session_svc import delete_session
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=settings.session_retention_days)
+    removed = 0
+    with SessionLocal() as db:
+        expired = db.query(Session).filter(Session.started_at < cutoff).all()
+        for session in expired:
+            delete_session(db, session.id, session.user_id)
+            removed += 1
+    return removed
+
+
+def cleanup_expired_audio() -> None:
+    """服务启动及运行中调用，异常退出后在下次启动继续清理。"""
+    cleanup_old_uploads()
+    cleanup_old_recordings()
+
+
+def cleanup_expired_data() -> None:
+    cleanup_expired_audio()
+    cleanup_expired_sessions()

@@ -20,6 +20,14 @@ export default function QueuePage() {
   const [err, setErr] = useState("");
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [pending, setPending] = useState("");
+  const [now, setNow] = useState(0);
+
+  useEffect(() => {
+    const update = () => setNow(Date.now());
+    const first = window.setTimeout(update, 0);
+    const interval = window.setInterval(update, 30_000);
+    return () => { window.clearTimeout(first); window.clearInterval(interval); };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -67,7 +75,9 @@ export default function QueuePage() {
         <div className="panel empty-state"><span className="icon-tile"><Icon name="check" size={30} /></span><h2>队列还是空的</h2><p>在回顾里看到想再练的表达，点「加入待复练」，它就会出现在这里。</p><Link href="/" className="btn btn-primary">去开始练习 <Icon name="arrow" size={16} /></Link></div>
       ) : (
         <div className="history-list">
-          {items.map((it) => (
+          {items.map((it) => {
+            const isDue = !!it.due_at && new Date(it.due_at).getTime() <= now;
+            return (
             <article key={it.id} className="panel history-row">
               <span className="icon-tile"><Icon name="check" /></span>
               <div className="history-info">
@@ -82,8 +92,8 @@ export default function QueuePage() {
               <div className="row-actions">
                 {it.status === "pending" || it.status === "awaiting_retest" ? (
                   <>
-                    <input className="field field-small" placeholder="写下复测回答" value={answers[it.id] || ""} onChange={(e) => setAnswers((prev) => ({ ...prev, [it.id]: e.target.value }))} />
-                    <button onClick={() => retest(it.id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === String(it.id) ? "提交中…" : "复测"}</button>
+                    {isDue ? <><input className="field field-small" placeholder="写下复测回答" value={answers[it.id] || ""} onChange={(e) => setAnswers((prev) => ({ ...prev, [it.id]: e.target.value }))} />
+                    <button onClick={() => retest(it.id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === String(it.id) ? "提交中…" : "复测"}</button></> : <span className="text-xs muted">到期后可复测</span>}
                     <button onClick={() => act(it.id, skipQueueItem)} disabled={!!pending} className="btn btn-ghost btn-small">跳过</button>
                   </>
                 ) : null}
@@ -91,7 +101,7 @@ export default function QueuePage() {
                 <button onClick={() => act(it.id, deleteQueueItem)} disabled={!!pending} className="btn btn-ghost btn-small" aria-label="删除"><Icon name="trash" size={15} /></button>
               </div>
             </article>
-          ))}
+          ); })}
         </div>
       )}
       {active.length > 0 && <p className="text-xs muted mt-4">每次首页只推荐一项到期复练；独立说对两次（间隔至少 24 小时）才算掌握。</p>}

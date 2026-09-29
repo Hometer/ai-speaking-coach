@@ -259,29 +259,36 @@ def create_session(
         active_since=_now(),
     )
     db.add(session)
-
-    coach = get_coach_provider()
-    decision = coach.opening(scene, level)
-    tts = get_tts_provider()
-    audio_url, _ = _synth_and_save(tts, decision.reply_text)
-    session.status = S_WAITING
-    opening_turn_id = uuid.uuid4().hex
-    session.current_question_id = opening_turn_id
-    session.current_question_text = decision.reply_text
-    session.current_question_audio_url = audio_url
-    db.add(
-        Turn(
-            id=opening_turn_id,
-            session_id=session_id,
-            seq=0,
-            input_type="coach",
-            reply_text=decision.reply_text,
-            reply_audio_url=audio_url,
-            action_type="follow_up",
-            question_id=opening_turn_id,
+    audio_url = ""
+    try:
+        coach = get_coach_provider()
+        decision = coach.opening(scene, level)
+        tts = get_tts_provider()
+        audio_url, _ = _synth_and_save(tts, decision.reply_text)
+        session.status = S_WAITING
+        opening_turn_id = uuid.uuid4().hex
+        session.current_question_id = opening_turn_id
+        session.current_question_text = decision.reply_text
+        session.current_question_audio_url = audio_url
+        db.add(
+            Turn(
+                id=opening_turn_id,
+                session_id=session_id,
+                seq=0,
+                input_type="coach",
+                reply_text=decision.reply_text,
+                reply_audio_url=audio_url,
+                action_type="follow_up",
+                question_id=opening_turn_id,
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        if audio_url:
+            _delete_audio_files({os.path.basename(audio_url)})
+        raise
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
 
     return {
@@ -361,23 +368,31 @@ def create_sentence_practice(
         active_since=_now(),
     )
     db.add(session)
-    tts = get_tts_provider()
-    audio_url, _ = _synth_and_save(tts, sentence)
-    opening_text = f"Let's practice this sentence: {sentence}"
-    db.add(
-        Turn(
-            id=uuid.uuid4().hex,
-            session_id=session_id,
-            seq=0,
-            input_type="coach",
-            reply_text=opening_text,
-            reply_audio_url=audio_url,
-            action_type="suggest_practice",
-            practice_sentence=sentence,
+    audio_url = ""
+    try:
+        tts = get_tts_provider()
+        audio_url, _ = _synth_and_save(tts, sentence)
+        opening_text = f"Let's practice this sentence: {sentence}"
+        db.add(
+            Turn(
+                id=uuid.uuid4().hex,
+                session_id=session_id,
+                seq=0,
+                input_type="coach",
+                reply_text=opening_text,
+                reply_audio_url=audio_url,
+                action_type="suggest_practice",
+                practice_sentence=sentence,
+            )
         )
-    )
-    session.status = S_PRACTICE
-    db.commit()
+        session.status = S_PRACTICE
+        db.commit()
+    except Exception:
+        db.rollback()
+        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        if audio_url:
+            _delete_audio_files({os.path.basename(audio_url)})
+        raise
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
     return {
         "session_id": session_id,
@@ -641,7 +656,13 @@ def synthesize_turn_audio(
     turn.audio_status = audio_status
     if session.current_question_id == turn_id:
         session.current_question_audio_url = audio_url
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        if audio_url:
+            _delete_audio_files({os.path.basename(audio_url)})
+        raise
     return _turn_done(db, session, turn)
 
 
@@ -652,69 +673,82 @@ def submit_practice(
     if session.status != S_PRACTICE:
         raise AppError("INVALID_STATE", "当前状态不能提交跟读", status_code=409)
 
+    fmt = _validate_audio(audio_bytes)
     guard = BudgetGuard(db)
     guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
+    audio_path = None
+    recording_url = ""
+    audio_url = ""
+    try:
+        uploads_dir = settings.data_dir / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        audio_path = uploads_dir / f"{uuid.uuid4().hex}.{fmt}"
+        audio_path.write_bytes(audio_bytes)
 
-    fmt = _validate_audio(audio_bytes)
-    uploads_dir = settings.data_dir / "uploads"
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-    audio_path = uploads_dir / f"{uuid.uuid4().hex}.{fmt}"
-    audio_path.write_bytes(audio_bytes)
+        # 保存本人录音供回放/对比（会话内）
+        recording_url = _save_audio(audio_bytes, fmt)
 
-    # 保存本人录音供回放/对比（会话内）
-    recording_url = _save_audio(audio_bytes, fmt)
+        provider = get_practice_eval_provider()
+        eval_result = provider.evaluate(audio_path, sentence)
+        # 评价绑定录音版本 / 参考句版本 / 阶梯阶段
+        eval_result["recording_url"] = recording_url
+        eval_result["reference_version"] = session.scene_version or ""
+        eval_result["drill_stage"] = session.drill_stage or ""
 
-    provider = get_practice_eval_provider()
-    eval_result = provider.evaluate(audio_path, sentence)
-    # 评价绑定录音版本 / 参考句版本 / 阶梯阶段
-    eval_result["recording_url"] = recording_url
-    eval_result["reference_version"] = session.scene_version or ""
-    eval_result["drill_stage"] = session.drill_stage or ""
+        score = eval_result.get("score")
+        valid = score is not None
 
-    score = eval_result.get("score")
-    valid = score is not None
+        coach = get_coach_provider()
+        decision = coach.decide(
+            {
+                "goal": session.goal_text,
+                "difficulty": session.difficulty,
+                "subgoal": _current_subgoal(session, _load_subgoals(session)),
+                "practice": {
+                    "score": score,
+                    "valid": valid,
+                    "reference_sentence": sentence,
+                },
+                "history": _recent_history(db, session_id),
+            }
+        )
+        tts = get_tts_provider()
+        audio_url, _ = _synth_and_save(tts, decision.reply_text)
 
-    coach = get_coach_provider()
-    decision = coach.decide(
-        {
-            "goal": session.goal_text,
-            "difficulty": session.difficulty,
-            "subgoal": _current_subgoal(session, _load_subgoals(session)),
-            "practice": {
-                "score": score,
-                "valid": valid,
-                "reference_sentence": sentence,
-            },
-            "history": _recent_history(db, session_id),
-        }
-    )
-    tts = get_tts_provider()
-    audio_url, _ = _synth_and_save(tts, decision.reply_text)
+        turn = Turn(
+            id=uuid.uuid4().hex,
+            session_id=session_id,
+            seq=_next_seq(db, session_id),
+            input_type="practice",
+            practice_sentence=sentence,
+            practice_eval=json.dumps(eval_result, ensure_ascii=False),
+            reply_text=decision.reply_text,
+            reply_audio_url=audio_url,
+            action_type=decision.action_type,
+            recording_url=recording_url,
+        )
+        db.add(turn)
+        _log_event(db, session_id, turn_id=turn.id, action_type="practice", basis=decision.action_type, input_type="practice", tool_result="scored" if valid else "unscored")
 
-    turn = Turn(
-        id=uuid.uuid4().hex,
-        session_id=session_id,
-        seq=_next_seq(db, session_id),
-        input_type="practice",
-        practice_sentence=sentence,
-        practice_eval=json.dumps(eval_result, ensure_ascii=False),
-        reply_text=decision.reply_text,
-        reply_audio_url=audio_url,
-        action_type=decision.action_type,
-        recording_url=recording_url,
-    )
-    db.add(turn)
-    _log_event(db, session_id, turn_id=turn.id, action_type="practice", basis=decision.action_type, input_type="practice", tool_result="scored" if valid else "unscored")
-
-    # 状态迁移
-    new_status = S_WAITING
-    if decision.action_type == "suggest_practice":
-        new_status = S_PRACTICE
-    elif decision.action_type == "recheck":
-        session.rechecked = True
-        new_status = S_RECHECK
-    session.status = new_status
-    db.commit()
+        # 状态迁移
+        new_status = S_WAITING
+        if decision.action_type == "suggest_practice":
+            new_status = S_PRACTICE
+        elif decision.action_type == "recheck":
+            session.rechecked = True
+            new_status = S_RECHECK
+        session.status = new_status
+        db.commit()
+    except Exception:
+        db.rollback()
+        guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        if audio_path is not None:
+            audio_path.unlink(missing_ok=True)
+        if recording_url:
+            (settings.data_dir / "audio" / os.path.basename(recording_url)).unlink(missing_ok=True)
+        if audio_url:
+            _delete_audio_files({os.path.basename(audio_url)})
+        raise
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
 
     return {
@@ -858,18 +892,29 @@ def list_sessions(db: DbSession, user_id: str) -> list[dict[str, Any]]:
 
 def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
     """删除会话及其关联数据（记忆/评估/事件/回合级联），返回需删除的音频文件名。"""
+    from app.models.entities import DailyReviewAttempt, DrillAttempt, PhraseCard, QualityLabel, ReviewQueueItem
+
     memory_svc.delete_by_session(db, session.id)
     db.query(Evaluation).filter(Evaluation.session_id == session.id).delete()
     db.query(EventLog).filter(EventLog.session_id == session.id).delete()
+    db.query(DailyReviewAttempt).filter(DailyReviewAttempt.session_id == session.id).delete()
+    db.query(DrillAttempt).filter(DrillAttempt.drill_session_id == session.id).delete()
+    db.query(QualityLabel).filter(QualityLabel.session_id == session.id).delete()
     audio_filenames: set[str] = set()
     for t in db.query(Turn).filter(Turn.session_id == session.id).all():
         if t.reply_audio_url:
             audio_filenames.add(os.path.basename(t.reply_audio_url))
         if t.recording_url:
             audio_filenames.add(os.path.basename(t.recording_url))
-    from app.services import phrase_card_svc
-    phrase_card_svc.invalidate_by_source(db, session.id)
-    # 删除传播：以本会话为来源的单句复练标失效并清空复制文本
+        if t.input_type in ("voice", "text"):
+            _invalidate_derived_turn(db, session.user_id, t.id)
+    # 删除来源时移除只有该来源支撑的派生项；用户在后续练习中自己提交的回答保留。
+    for item in db.query(ReviewQueueItem).filter(ReviewQueueItem.source_session_id == session.id).all():
+        db.delete(item)
+    for card in db.query(PhraseCard).filter(PhraseCard.source_session_id == session.id).all():
+        db.delete(card)
+    for attempt in db.query(DrillAttempt).filter(DrillAttempt.source_session_id == session.id).all():
+        attempt.visible_help = ""
     for sp in (
         db.query(Session)
         .filter(Session.practice_type == "sentence_practice", Session.source_session_id == session.id)
@@ -877,6 +922,18 @@ def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
     ):
         sp.source_invalid = True
         sp.practice_sentence = ""
+        sp.practice_goal = ""
+        sp.drill_target = ""
+        sp.drill_meaning = ""
+        sp.drill_chunk = ""
+        sp.current_question_text = ""
+        for turn in db.query(Turn).filter(Turn.session_id == sp.id).all():
+            if turn.action_type == "suggest_practice" and turn.practice_sentence:
+                turn.reply_text = ""
+                if turn.reply_audio_url:
+                    audio_filenames.add(os.path.basename(turn.reply_audio_url))
+                    turn.reply_audio_url = ""
+            turn.practice_sentence = ""
     db.delete(session)  # ORM 级联删除 turns
     return audio_filenames
 
@@ -924,13 +981,13 @@ def skip_practice(db: DbSession, session_id: str, user_id: str) -> dict[str, Any
         raise AppError("INVALID_STATE", "当前状态不能跳过跟读", status_code=409)
     guard = BudgetGuard(db)
     guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
+    audio_url = ""
     try:
-        session.status = S_WAITING
-        db.commit()
         coach = get_coach_provider()
         decision = coach.decide({"skipped_practice": True})
         tts = get_tts_provider()
         audio_url, _ = _synth_and_save(tts, decision.reply_text)
+        session.status = S_WAITING
         db.add(
             Turn(
                 id=uuid.uuid4().hex,
@@ -946,6 +1003,8 @@ def skip_practice(db: DbSession, session_id: str, user_id: str) -> dict[str, Any
     except Exception:
         db.rollback()
         guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        if audio_url:
+            _delete_audio_files({os.path.basename(audio_url)})
         raise
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
     return {"session_id": session_id, "status": S_WAITING, "reply_text": decision.reply_text, "reply_audio_url": audio_url}

@@ -157,6 +157,32 @@ def test_source_dispute_invalidates_sentence_practice(client):
     assert detail["source_invalid"] is True
 
 
+def test_delete_source_scrubs_copied_learning_text(client):
+    from app.models.database import SessionLocal
+    from app.models.entities import PhraseCard, ReviewQueueItem, Session, Turn
+
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "just working")
+    imp = _end(client, s["session_id"])["review"]["improvements"][0]
+    source_id = s["session_id"]
+    turn_id = imp["turn_id"]
+    queue = client.post("/api/v1/review-queue", json={"source_session_id": source_id, "source_turn_id": turn_id}, headers=USER)
+    card = client.post("/api/v1/phrase-cards", json={"source_session_id": source_id, "source_turn_id": turn_id}, headers=USER)
+    practice = client.post("/api/v1/sessions/practice-sentence", json={"source_session_id": source_id, "turn_id": turn_id}, headers=USER)
+    assert queue.status_code == card.status_code == practice.status_code == 200
+
+    assert client.delete(f"/api/v1/sessions/{source_id}", headers=USER).status_code == 200
+    with SessionLocal() as db:
+        item = db.get(ReviewQueueItem, queue.json()["id"])
+        assert item is None
+        saved_card = db.get(PhraseCard, card.json()["id"])
+        assert saved_card is None
+        sp = db.get(Session, practice.json()["session_id"])
+        assert sp.source_invalid and not any((sp.practice_sentence, sp.practice_goal, sp.drill_target, sp.drill_meaning))
+        opening = db.query(Turn).filter(Turn.session_id == sp.id).first()
+        assert opening.reply_text == opening.practice_sentence == opening.reply_audio_url == ""
+
+
 def test_delete_all_removes_all_records(client):
     from app.models.database import SessionLocal
     from app.models.entities import EventLog, Evaluation, Turn
@@ -248,3 +274,67 @@ def test_cleanup_old_uploads():
     cleanup_old_uploads(max_age_minutes=10)
     assert not old.exists()
     assert recent.exists()
+
+
+def test_cleanup_expired_audio_clears_recording_and_reference(client):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.database import SessionLocal
+    from app.models.entities import Turn
+    from app.services.cleanup import cleanup_expired_audio
+
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "just working")
+    r = client.post(
+        f"/api/v1/sessions/{s['session_id']}/practice",
+        data={"sentence": "I have three years of experience."},
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    recording_url = r.json()["recording_url"]
+    path = config.settings.data_dir / "audio" / recording_url.rsplit("/", 1)[-1]
+    assert path.exists()
+    with SessionLocal() as db:
+        turn = db.query(Turn).filter(Turn.recording_url == recording_url).one()
+        turn.created_at = datetime.now(timezone.utc) - timedelta(minutes=11)
+        db.commit()
+
+    cleanup_expired_audio()
+    assert not path.exists()
+    with SessionLocal() as db:
+        turn = db.query(Turn).filter(Turn.session_id == s["session_id"], Turn.input_type == "practice").one()
+        assert turn.recording_url == ""
+        assert "recording_url" not in json.loads(turn.practice_eval)
+
+
+def test_cleanup_expired_sessions_propagates_deletion(client):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.database import SessionLocal
+    from app.models.entities import DailyReviewAttempt, DrillAttempt, ReviewQueueItem, Session
+    from app.services.cleanup import cleanup_expired_sessions
+
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "just working")
+    imp = _end(client, s["session_id"])["review"]["improvements"][0]
+    queue = client.post(
+        "/api/v1/review-queue",
+        json={"source_session_id": s["session_id"], "source_turn_id": imp["turn_id"]},
+        headers=USER,
+    )
+    assert queue.status_code == 200
+    with SessionLocal() as db:
+        source = db.get(Session, s["session_id"])
+        source.started_at = datetime.now(timezone.utc) - timedelta(days=31)
+        db.add(DailyReviewAttempt(user_id=source.user_id, session_id=source.id, queue_item_id=queue.json()["id"], attempt_answer="private daily answer", result="failed"))
+        db.add(DrillAttempt(user_id=source.user_id, source_session_id=source.id, source_turn_id=imp["turn_id"], drill_session_id=source.id, answer_text="private drill answer", visible_help="copied source", result="failed"))
+        db.commit()
+
+    assert cleanup_expired_sessions() == 1
+    assert client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).status_code == 404
+    with SessionLocal() as db:
+        item = db.get(ReviewQueueItem, queue.json()["id"])
+        assert item is None
+        assert db.query(DailyReviewAttempt).filter(DailyReviewAttempt.session_id == s["session_id"]).count() == 0
+        assert db.query(DrillAttempt).filter(DrillAttempt.drill_session_id == s["session_id"]).count() == 0

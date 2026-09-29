@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.auth import get_qa_user_id, get_user_id
+from app.core.config import settings
 from app.core.errors import AppError, error_body
 from app.models.database import SessionLocal
 from app.models.entities import DeviceCheck
@@ -154,7 +155,7 @@ def text_turn_stream(session_id: str, req: TextTurnRequest, user_id: str = Depen
 
 @router.post("/sessions/{session_id}/turns/voice")
 def voice_turn_stream(session_id: str, audio: UploadFile = File(...), user_id: str = Depends(get_user_id)):
-    data = audio.file.read()
+    data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
 
     def gen():
         db = SessionLocal()
@@ -203,7 +204,7 @@ def drill_action(session_id: str, req: DrillActionRequest, user_id: str = Depend
 
 @router.post("/sessions/{session_id}/practice", response_model=PracticeResponse)
 def practice(session_id: str, sentence: str = Form(...), audio: UploadFile = File(...), user_id: str = Depends(get_user_id)):
-    data = audio.file.read()
+    data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
     db = SessionLocal()
     try:
         return session_svc.submit_practice(db, session_id, user_id, data, sentence)

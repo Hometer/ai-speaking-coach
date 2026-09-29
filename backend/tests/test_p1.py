@@ -67,6 +67,26 @@ def test_add_to_queue_and_retest_mastery(client):
     rl = client.get("/api/v1/review-queue", headers=USER)
     assert any(x["id"] == item["id"] for x in rl.json())
 
+    # 首次复测也必须到期，不能刚加入就增加成功次数。
+    early = client.post(
+        f"/api/v1/review-queue/{item['id']}/retest",
+        json={"answer": "I have a reservation under the name Li, please confirm it."},
+        headers=USER,
+    )
+    assert early.status_code == 409
+    assert early.json()["error"]["code"] == "NOT_DUE"
+
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.database import SessionLocal
+    from app.models.entities import ReviewQueueItem
+
+    db = SessionLocal()
+    qi = db.get(ReviewQueueItem, item["id"])
+    qi.due_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+    db.close()
+
     # 第一次复测独立成功 -> awaiting_retest
     r1 = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
@@ -87,11 +107,6 @@ def test_add_to_queue_and_retest_mastery(client):
     assert r2.json()["error"]["code"] == "NOT_DUE"
 
     # 到期后（due_at 改为过去）再复测 -> mastered
-    from datetime import datetime, timedelta, timezone
-
-    from app.models.database import SessionLocal
-    from app.models.entities import ReviewQueueItem
-
     db = SessionLocal()
     qi = db.get(ReviewQueueItem, item["id"])
     qi.due_at = datetime.now(timezone.utc) - timedelta(hours=1)

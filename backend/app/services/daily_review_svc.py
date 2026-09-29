@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
-from app.models.entities import DailyReviewAttempt, EventLog, ReviewQueueItem, Session
+from app.models.entities import DailyReviewAttempt, EventLog, ReviewQueueItem, Session, Turn
 from app.services.review_queue import STATUS_AWAITING_RETEST, STATUS_DISPUTED, STATUS_MASTERED, STATUS_PENDING
 
 INTERVALS = [1, 3, 7, 14]
@@ -51,7 +51,11 @@ def _next_interval(days: int) -> int:
 
 def _source_valid(db: DbSession, item: ReviewQueueItem) -> bool:
     src = db.get(Session, item.source_session_id)
-    return src is not None and src.user_id == item.user_id
+    turn = db.get(Turn, item.source_turn_id)
+    return bool(
+        src is not None and src.user_id == item.user_id
+        and turn is not None and turn.session_id == src.id and turn.eval_result != "revised"
+    )
 
 
 def due_items(db: DbSession, user_id: str, limit: int = DAILY_LIMIT) -> list[ReviewQueueItem]:
@@ -125,7 +129,10 @@ def current_item(db: DbSession, session: Session, user_id: str) -> dict[str, Any
     if idx >= len(ids):
         return {"done": True, "index": idx, "total": len(ids)}
     item = db.get(ReviewQueueItem, ids[idx])
-    if item is None or item.user_id != user_id:
+    if item is None or item.user_id != user_id or item.status not in (STATUS_PENDING, STATUS_AWAITING_RETEST) or not _source_valid(db, item) or item.due_at is None or _aware(item.due_at) > _now():
+        session.status = "ENDED"
+        session.end_reason = "source_invalid"
+        db.commit()
         return {"done": True, "index": idx, "total": len(ids)}
     return {"done": False, "index": idx, "total": len(ids), "item": _item_dict(item)}
 
@@ -195,6 +202,13 @@ def control_action(db: DbSession, session_id: str, user_id: str, action: str) ->
     session = db.get(Session, session_id)
     if session is None or session.user_id != user_id:
         raise AppError("FORBIDDEN", "无权访问该会话", status_code=403)
+    if session.practice_type != "daily_review" or session.status == "ENDED":
+        raise AppError("INVALID_STATE", "今日复练已结束或不存在", status_code=409)
+    if action == "end":
+        session.status = "ENDED"
+        session.end_reason = "user_ended"
+        db.commit()
+        return {"next": {"done": True, "index": session.daily_review_index, "total": len(json.loads(session.daily_review_items or "[]"))}}
     cur = current_item(db, session, user_id)
     if cur.get("done"):
         raise AppError("SESSION_ENDED", "今日复练已结束", status_code=409)
@@ -210,9 +224,6 @@ def control_action(db: DbSession, session_id: str, user_id: str, action: str) ->
         db.add(DailyReviewAttempt(user_id=user_id, session_id=session.id, queue_item_id=item.id, result="disputed"))
         item.status = STATUS_DISPUTED
         _advance(db, session)
-    elif action == "end":
-        session.status = "ENDED"
-        session.end_reason = "user_ended"
     else:
         raise AppError("INVALID_INPUT", "未知的复练操作", status_code=422)
     db.commit()

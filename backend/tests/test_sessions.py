@@ -419,3 +419,107 @@ def test_dispute_revokes_queue_source(client):
         f"/api/v1/sessions/{sid}/review/dispute", params={"turn_id": tid}, headers=USER,
     ).status_code == 200
     assert client.get("/api/v1/review-queue", headers=USER).json() == []
+
+
+def test_opening_failure_releases_budget_reservation(client, monkeypatch):
+    from app.models.entities import BudgetLedger, Session
+    from app.services import session_svc
+
+    def fail_provider():
+        raise RuntimeError("injected opening failure")
+
+    monkeypatch.setattr(session_svc, "get_coach_provider", fail_provider)
+    r = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard"}, headers=USER)
+    assert r.status_code == 500
+    db = SessionLocal()
+    try:
+        assert db.query(Session).count() == 0
+        assert all(row.reserved == 0 for row in db.query(BudgetLedger).all())
+    finally:
+        db.close()
+
+
+def test_practice_failure_releases_budget_and_removes_recording(client, monkeypatch):
+    from app.models.entities import BudgetLedger
+    from app.services import session_svc
+
+    s = _create_session(client)
+    _done(_send_text(client, s["session_id"], "just working"))
+    audio_dir = config.settings.data_dir / "audio"
+    before = set(audio_dir.glob("*"))
+
+    class FailingPracticeProvider:
+        def evaluate(self, audio_path, sentence):
+            raise RuntimeError("injected practice failure")
+
+    monkeypatch.setattr(session_svc, "get_practice_eval_provider", lambda: FailingPracticeProvider())
+    r = client.post(
+        f"/api/v1/sessions/{s['session_id']}/practice",
+        data={"sentence": "I have three years of experience."},
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 500
+    db = SessionLocal()
+    try:
+        assert all(row.reserved == 0 for row in db.query(BudgetLedger).all())
+    finally:
+        db.close()
+    assert set(audio_dir.glob("*")) == before
+
+
+def test_sentence_practice_creation_failure_releases_budget(client, monkeypatch):
+    from app.models.entities import BudgetLedger, Session
+    from app.services import session_svc
+
+    s = _create_session(client)
+    tid = _done(_send_text(client, s["session_id"], "just working"))["turn_id"]
+    client.post(f"/api/v1/sessions/{s['session_id']}/end", json={"reason": "user_ended"}, headers=USER)
+
+    def fail_tts_provider():
+        raise RuntimeError("injected TTS setup failure")
+
+    monkeypatch.setattr(session_svc, "get_tts_provider", fail_tts_provider)
+    r = client.post(
+        "/api/v1/sessions/practice-sentence",
+        json={"source_session_id": s["session_id"], "turn_id": tid}, headers=USER,
+    )
+    assert r.status_code == 500
+    db = SessionLocal()
+    try:
+        assert db.query(Session).filter(Session.practice_type == "sentence_practice").count() == 0
+        assert all(row.reserved == 0 for row in db.query(BudgetLedger).all())
+    finally:
+        db.close()
+
+
+def test_skip_practice_failure_keeps_practice_state(client, monkeypatch):
+    from app.models.entities import BudgetLedger, Session
+    from app.services import session_svc
+
+    s = _create_session(client)
+    _done(_send_text(client, s["session_id"], "just working"))
+
+    def fail_provider():
+        raise RuntimeError("injected skip failure")
+
+    monkeypatch.setattr(session_svc, "get_coach_provider", fail_provider)
+    r = client.post(f"/api/v1/sessions/{s['session_id']}/skip-practice", headers=USER)
+    assert r.status_code == 500
+    with SessionLocal() as db:
+        assert db.get(Session, s["session_id"]).status == "PRACTICE"
+        assert all(row.reserved == 0 for row in db.query(BudgetLedger).all())
+
+
+def test_oversized_voice_upload_is_bounded_before_processing(client, monkeypatch):
+    monkeypatch.setattr(config.settings, "max_audio_mb", 0.00001)
+    s = _create_session(client)
+    r = client.post(
+        f"/api/v1/sessions/{s['session_id']}/turns/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    assert events[-1][0] == "error"
+    assert events[-1][1]["error"]["code"] == "FILE_TOO_LARGE"

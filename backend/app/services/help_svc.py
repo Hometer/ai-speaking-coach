@@ -77,36 +77,23 @@ def _has_answer_help(db: DbSession, session_id: str, question_id: str) -> bool:
 def _translate(source_text: str) -> str:
     if settings.provider_mode != "real":
         return "I'd like to say that."  # mock：确定性占位，不编造用户事实
-    import dashscope
+    from app.services.generation_call import call_generation
 
-    dashscope.api_key = settings.dashscope_api_key
-    last_err = "未知错误"
-    attempts = max(1, settings.max_tool_retry + 1)
-    for _ in range(attempts):
-        try:
-            resp = dashscope.Generation.call(
-                model=settings.model_llm,
-                messages=[
-                    {"role": "system", "content": _TRANSLATE_SYSTEM_PROMPT},
-                    {"role": "user", "content": source_text},
-                ],
-                result_format="message",
-            )
-        except Exception as exc:  # noqa: BLE001
-            last_err = f"{type(exc).__name__}: {str(exc)[:80]}"
-            continue
-        if getattr(resp, "status_code", None) != 200:
-            last_err = f"status {getattr(resp, 'status_code', None)} {getattr(resp, 'message', '')[:80]}"
-            continue
-        try:
-            content = resp.output.choices[0].message.content
-        except (AttributeError, IndexError, TypeError):
-            last_err = "翻译返回格式异常"
-            continue
-        if content and content.strip():
-            return content.strip()
-        last_err = "翻译返回为空"
-    raise AppError("TRANSLATE_ERROR", f"翻译失败：{last_err}", status_code=502)
+    resp = call_generation(
+        api_key=settings.dashscope_api_key,
+        model=settings.model_llm,
+        messages=[
+            {"role": "system", "content": _TRANSLATE_SYSTEM_PROMPT},
+            {"role": "user", "content": source_text},
+        ],
+    )
+    try:
+        content = resp.output.choices[0].message.content
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise AppError("TRANSLATE_ERROR", "翻译返回格式异常", status_code=502) from exc
+    if not content or not content.strip():
+        raise AppError("TRANSLATE_ERROR", "翻译返回为空", status_code=502)
+    return content.strip()
 
 
 def _record_help(

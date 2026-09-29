@@ -112,13 +112,14 @@ def submit_retest(db: DbSession, user_id: str, item_id: int, answer: str, hint_u
     if item.status not in (STATUS_PENDING, STATUS_AWAITING_RETEST):
         raise AppError("INVALID_STATE", "该队列项当前不能复测", status_code=409)
 
-    # AC07-08 跨日约束：待复测状态未到期时拒绝，不增加成功次数
-    if item.status == STATUS_AWAITING_RETEST and item.due_at is not None:
-        due = item.due_at
-        if due.tzinfo is None:
-            due = due.replace(tzinfo=timezone.utc)
-        if _now() < due:
-            raise AppError("NOT_DUE", "复测尚未到期，请稍后再试", status_code=409)
+    # 首次与后续复测都只能在到期后提交；不能靠直接调用接口提前增加成功次数。
+    if item.due_at is None:
+        raise AppError("NOT_DUE", "复测尚未安排到期时间", status_code=409)
+    due = item.due_at
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=timezone.utc)
+    if _now() < due:
+        raise AppError("NOT_DUE", "复测尚未到期，请稍后再试", status_code=409)
 
     answer = (answer or "").strip()
     independent = len(answer) >= 8 and not hint_used

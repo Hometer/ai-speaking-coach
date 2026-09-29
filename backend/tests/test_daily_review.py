@@ -120,3 +120,20 @@ def test_skip_and_summary(client):
     view = client.get(f"/api/v1/review-queue/daily-review/{s['session_id']}", headers=USER).json()
     assert view["summary"]["skipped"] == 1
     assert view["done"] is True
+
+
+def test_deleted_source_stops_active_daily_review(client):
+    item, sentence = _make_queue_item(client)
+    _make_due(item["source_turn_id"])
+    started = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
+    assert started["session_id"]
+    assert client.delete(f"/api/v1/sessions/{item['source_session_id']}", headers=USER).status_code == 200
+    assert client.get("/api/v1/review-queue", headers=USER).json() == []
+    view = client.get(f"/api/v1/review-queue/daily-review/{started['session_id']}", headers=USER).json()
+    assert view["done"] is True
+    assert view["summary"]["status"] == "ENDED"
+    attempt = client.post(
+        f"/api/v1/review-queue/daily-review/{started['session_id']}/attempt",
+        json={"answer": sentence, "help_used": False}, headers=USER,
+    )
+    assert attempt.status_code == 409

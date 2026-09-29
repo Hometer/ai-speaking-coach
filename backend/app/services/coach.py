@@ -136,22 +136,20 @@ class DashScopeCoachProvider(CoachProvider):
         self.model = model
 
     def _call(self, user_msg: str, scene_context: str = "an English conversation coach", coach_persona: str = "") -> dict[str, Any]:
-        import dashscope
+        from app.services.generation_call import call_generation
 
-        dashscope.api_key = self.api_key
-        resp = dashscope.Generation.call(
+        resp = call_generation(
+            api_key=self.api_key,
             model=self.model,
             messages=[
                 {"role": "system", "content": coach_system_prompt(scene_context, coach_persona) + "\n" + COACH_DECISION_FORMAT},
                 {"role": "user", "content": user_msg},
             ],
-            result_format="message",
         )
-        if getattr(resp, "status_code", None) != 200:
-            code = getattr(resp, "code", "")
-            message = getattr(resp, "message", "未知错误")
-            raise AppError("COACH_ERROR", f"模型调用失败：{code} {message}".strip(), status_code=502)
-        content = resp.output.choices[0].message.content
+        try:
+            content = resp.output.choices[0].message.content
+        except (AttributeError, IndexError, TypeError) as exc:
+            raise AppError("COACH_PARSE_ERROR", "教练决策返回格式异常", status_code=502) from exc
         data = extract_json_object(content)
         if data is None:
             raise AppError("COACH_PARSE_ERROR", "教练决策返回格式异常", status_code=502)

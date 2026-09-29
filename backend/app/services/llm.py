@@ -23,28 +23,23 @@ class DashScopeLLMProvider(LLMProvider):
         self.model = model
 
     def generate(self, user_text: str) -> str:
-        import dashscope
+        from app.services.generation_call import call_generation
 
-        dashscope.api_key = self.api_key
-        resp = dashscope.Generation.call(
+        resp = call_generation(
+            api_key=self.api_key,
             model=self.model,
             messages=[
                 {"role": "system", "content": COACH_SYSTEM_PROMPT},
                 {"role": "user", "content": user_text},
             ],
-            result_format="message",
         )
-        if getattr(resp, "status_code", None) == 200:
-            try:
-                content = resp.output.choices[0].message.content
-            except (AttributeError, IndexError, TypeError):
-                raise AppError("LLM_PARSE_ERROR", "模型返回格式异常", status_code=502)
-            if not content or not content.strip():
-                raise AppError("LLM_EMPTY", "模型返回为空", status_code=502)
-            return content.strip()
-        code = getattr(resp, "code", "")
-        message = getattr(resp, "message", "未知错误")
-        raise AppError("LLM_ERROR", f"模型调用失败：{code} {message}".strip(), status_code=502)
+        try:
+            content = resp.output.choices[0].message.content
+        except (AttributeError, IndexError, TypeError) as exc:
+            raise AppError("LLM_PARSE_ERROR", "模型返回格式异常", status_code=502) from exc
+        if not content or not content.strip():
+            raise AppError("LLM_EMPTY", "模型返回为空", status_code=502)
+        return content.strip()
 
 
 def get_llm_provider() -> LLMProvider:
