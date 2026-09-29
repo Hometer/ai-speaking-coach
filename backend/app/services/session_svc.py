@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import settings
@@ -1051,7 +1051,8 @@ def resolve_audio_for_user(db: DbSession, filename: str, user_id: str) -> Path:
     if safe_name != filename or not safe_name:
         raise AppError("BAD_FILENAME", "非法的文件名", status_code=400)
     url = f"/api/v1/audio/{safe_name}"
-    turn = db.query(Turn).filter(Turn.reply_audio_url == url).first()
+    # 教练合成音频（reply_audio_url）与本人跟读录音（recording_url）都指向同一音频目录，均需归属校验。
+    turn = db.query(Turn).filter(or_(Turn.reply_audio_url == url, Turn.recording_url == url)).first()
     if turn is None:
         raise AppError("NOT_FOUND", "音频不存在", status_code=404)
     session = db.get(Session, turn.session_id)

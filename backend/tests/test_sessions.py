@@ -144,6 +144,22 @@ def test_practice_recording_binding(client):
     assert "drill_stage" in data["eval"]
 
 
+def test_practice_recording_audio_served(client):
+    """本人跟读录音（recording_url）与教练音频同目录，也能按归属校验后回放。"""
+    s = _create_session(client)
+    _send_text(client, s["session_id"], "just working")  # → PRACTICE
+    r = client.post(
+        f"/api/v1/sessions/{s['session_id']}/practice",
+        data={"sentence": "I have three years of experience."},
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    recording_url = r.json()["recording_url"]
+    audio = client.get(recording_url, headers=USER)
+    assert audio.status_code == 200, audio.text
+
+
 def test_practice_invalid_state_rejected(client):
     s = _create_session(client)
     r = client.post(
