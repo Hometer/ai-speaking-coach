@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.core.errors import AppError
 from app.models.entities import DailyReviewAttempt, EventLog, ReviewQueueItem, Session, Turn
 from app.services.review_queue import STATUS_AWAITING_RETEST, STATUS_DISPUTED, STATUS_MASTERED, STATUS_PENDING
+from app.services.recall_judge import judge_recall
 
 INTERVALS = [1, 3, 7, 14]
 DAILY_LIMIT = 5
@@ -70,7 +71,7 @@ def due_items(db: DbSession, user_id: str, limit: int = DAILY_LIMIT) -> list[Rev
         .all()
     )
     valid = [i for i in items if _aware(i.due_at) <= now and _source_valid(db, i)]
-    valid.sort(key=lambda i: (_aware(i.due_at), 1 if i.retest_result == "hinted" else 0))
+    valid.sort(key=lambda i: (_aware(i.due_at), 0 if i.retest_result == "independent" else 1))
     return valid[:limit]
 
 
@@ -78,7 +79,9 @@ def _item_dict(i: ReviewQueueItem) -> dict[str, Any]:
     return {
         "id": i.id,
         "source_turn_id": i.source_turn_id,
-        "suggestion_sentence": i.suggestion_sentence,
+        "suggestion_sentence": i.suggestion_sentence if i.help_shown else "",
+        "meaning_zh": i.meaning_zh,
+        "help_shown": i.help_shown,
         "status": i.status,
         "success_count": i.success_count,
         "interval_days": i.interval_days,
@@ -146,7 +149,7 @@ def _advance(db: DbSession, session: Session) -> None:
 
 
 def submit_attempt(
-    db: DbSession, session_id: str, user_id: str, answer: str, help_used: bool = False
+    db: DbSession, session_id: str, user_id: str, answer: str, input_type: str = "text", attempt_key: str = ""
 ) -> dict[str, Any]:
     session = db.get(Session, session_id)
     if session is None or session.user_id != user_id:
@@ -159,10 +162,7 @@ def submit_attempt(
         raise AppError("SESSION_ENDED", "今日复练已结束", status_code=409)
     item = db.get(ReviewQueueItem, cur["item"]["id"])
 
-    success = _judge(answer, item.suggestion_sentence)
-    result = "completed" if success else "failed"
-    if help_used and success:
-        result = "completed"
+    result = judge_recall(answer, item.suggestion_sentence, input_type, item.help_shown)
 
     db.add(
         DailyReviewAttempt(
@@ -170,32 +170,43 @@ def submit_attempt(
             session_id=session.id,
             queue_item_id=item.id,
             attempt_answer=answer.strip(),
-            help_used=help_used,
+            input_type=input_type,
+            help_shown=item.help_shown,
+            attempt_key=attempt_key,
             result=result,
         )
     )
     db.add(EventLog(session_id=session.id, turn_id="", action_type="daily_review", basis=result))
 
-    if success:
-        # 写回同一套队列：无帮助独立成功→下一档；有帮助→回 1 天
+    success = result == "independent"
+    if result == "independent":
         item.last_practiced_at = _now()
-        if help_used:
-            item.interval_days = 1
-            item.retest_result = "hinted"
+        item.success_count = (item.success_count or 0) + 1
+        item.interval_days = _next_interval(item.interval_days)
+        item.retest_result = "independent"
+        if item.success_count >= 2:
+            item.status = STATUS_MASTERED
         else:
-            item.success_count = (item.success_count or 0) + 1
-            item.interval_days = _next_interval(item.interval_days)
-            item.retest_result = "independent"
-            if item.success_count >= 2:
-                item.status = STATUS_MASTERED
-            else:
-                item.status = STATUS_AWAITING_RETEST
+            item.status = STATUS_AWAITING_RETEST
         item.due_at = _now() + timedelta(days=item.interval_days)
         _advance(db, session)
+    elif result == "hinted":
+        # 看答案后完成：回 1 天，不计独立
+        item.last_practiced_at = _now()
+        item.interval_days = 1
+        item.retest_result = "hinted"
+        item.due_at = _now() + timedelta(days=item.interval_days)
+        _advance(db, session)
+    elif result == "text_completed":
+        # 文字完成：不升级口语独立，推进到下一项
+        item.last_practiced_at = _now()
+        item.retest_result = "text_completed"
+        _advance(db, session)
+    # failed / pending：不推进，用户可重试或跳过
     db.commit()
 
     nxt = current_item(db, session, user_id)
-    return {"success": success, "result": result, "help_used": help_used, "next": nxt}
+    return {"success": success, "result": result, "help_shown": item.help_shown, "next": nxt}
 
 
 def control_action(db: DbSession, session_id: str, user_id: str, action: str) -> dict[str, Any]:
@@ -237,8 +248,8 @@ def summary(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]:
     attempts = (
         db.query(DailyReviewAttempt).filter(DailyReviewAttempt.session_id == session_id).all()
     )
-    completed = sum(1 for a in attempts if a.result == "completed")
-    helped = sum(1 for a in attempts if a.result == "completed" and a.help_used)
+    completed = sum(1 for a in attempts if a.result == "independent")
+    helped = sum(1 for a in attempts if a.result == "hinted")
     skipped = sum(1 for a in attempts if a.result == "skipped")
     deferred = sum(1 for a in attempts if a.result == "deferred")
     return {

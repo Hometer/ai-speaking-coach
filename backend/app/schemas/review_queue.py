@@ -9,7 +9,9 @@ class AddToQueueRequest(BaseModel):
 
 class RetestRequest(BaseModel):
     answer: str = Field(..., min_length=1)
-    hint_used: bool = False
+    input_type: str = Field(default="text", description="voice/text")
+    attempt_key: str = Field(default="", description="幂等键")
+    hint_used: bool = False  # 已废弃：帮助是否已用由服务端 help_shown 决定
 
 
 class QueueItemResponse(BaseModel):
@@ -17,7 +19,9 @@ class QueueItemResponse(BaseModel):
     source_session_id: str
     source_turn_id: str
     target_ability: str
-    suggestion_sentence: str
+    suggestion_sentence: str = ""  # 未看答案时为空
+    meaning_zh: str = ""
+    help_shown: bool = False
     status: str
     success_count: int
     due_at: str | None = None
@@ -27,7 +31,9 @@ class QueueItemResponse(BaseModel):
 
 class DailyReviewAttemptRequest(BaseModel):
     answer: str = Field(default="", max_length=2000)
-    help_used: bool = False
+    input_type: str = Field(default="text", description="voice/text")
+    attempt_key: str = Field(default="", description="幂等键")
+    help_used: bool = False  # 已废弃：帮助是否已用由服务端 help_shown 决定
 
 
 class DailyReviewActionRequest(BaseModel):

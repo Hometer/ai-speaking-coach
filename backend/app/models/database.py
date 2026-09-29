@@ -115,3 +115,31 @@ def migrate_db() -> None:
         for col, ddl in madditions.items():
             if col not in mcols:
                 conn.execute(text(f"ALTER TABLE memories ADD COLUMN {col} {ddl}"))
+
+        # 学习证据：队列中文意图/服务端帮助，尝试输入模态/帮助/幂等键
+        rqcols = {r[1] for r in conn.execute(text("PRAGMA table_info(review_queue_items)"))}
+        rqadditions = {
+            "meaning_zh": "TEXT DEFAULT ''",
+            "help_shown": "BOOLEAN DEFAULT 0",
+        }
+        for col, ddl in rqadditions.items():
+            if col not in rqcols:
+                conn.execute(text(f"ALTER TABLE review_queue_items ADD COLUMN {col} {ddl}"))
+        dcols = {r[1] for r in conn.execute(text("PRAGMA table_info(drill_attempts)"))}
+        dadditions = {
+            "input_type": "VARCHAR(16) DEFAULT 'text'",
+            "help_shown": "BOOLEAN DEFAULT 0",
+            "attempt_key": "VARCHAR(64) DEFAULT ''",
+        }
+        for col, ddl in dadditions.items():
+            if col not in dcols:
+                conn.execute(text(f"ALTER TABLE drill_attempts ADD COLUMN {col} {ddl}"))
+        dracols = {r[1] for r in conn.execute(text("PRAGMA table_info(daily_review_attempts)"))}
+        draadditions = {
+            "input_type": "VARCHAR(16) DEFAULT 'text'",
+            "help_shown": "BOOLEAN DEFAULT 0",
+            "attempt_key": "VARCHAR(64) DEFAULT ''",
+        }
+        for col, ddl in draadditions.items():
+            if col not in dracols:
+                conn.execute(text(f"ALTER TABLE daily_review_attempts ADD COLUMN {col} {ddl}"))

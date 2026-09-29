@@ -60,7 +60,8 @@ def test_add_to_queue_and_retest_mastery(client):
     assert r.status_code == 200, r.text
     item = r.json()
     assert item["status"] == "pending"
-    assert item["suggestion_sentence"]
+    assert item["suggestion_sentence"] == ""  # 默认隐藏答案
+    assert item["meaning_zh"]  # 给中文意图
     assert item["source_turn_id"] == turn_id
 
     # 列表可见
@@ -70,7 +71,7 @@ def test_add_to_queue_and_retest_mastery(client):
     # 首次复测也必须到期，不能刚加入就增加成功次数。
     early = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have a reservation under the name Li, please confirm it."},
+        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
         headers=USER,
     )
     assert early.status_code == 409
@@ -90,7 +91,7 @@ def test_add_to_queue_and_retest_mastery(client):
     # 第一次复测独立成功 -> awaiting_retest
     r1 = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have a reservation under the name Li, please confirm it."},
+        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
         headers=USER,
     )
     assert r1.status_code == 200, r1.text
@@ -100,7 +101,7 @@ def test_add_to_queue_and_retest_mastery(client):
     # AC07-08：未到期立即第二次复测 -> 409 拒绝，成功次数保持 1
     r2 = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have a reservation under the name Li, please confirm it again."},
+        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
         headers=USER,
     )
     assert r2.status_code == 409
@@ -115,11 +116,66 @@ def test_add_to_queue_and_retest_mastery(client):
 
     r3 = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have a reservation under the name Li, please confirm it again."},
+        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
         headers=USER,
     )
     assert r3.status_code == 200, r3.text
     assert r3.json()["status"] == "mastered"
+
+
+def test_retest_rejects_text_unrelated_and_copied(client):
+    s, turn_id = _make_queue_source(client)
+    item = client.post(
+        "/api/v1/review-queue",
+        json={"source_session_id": s["session_id"], "source_turn_id": turn_id},
+        headers=USER,
+    ).json()
+    from datetime import datetime, timedelta, timezone
+    from app.models.database import SessionLocal
+    from app.models.entities import ReviewQueueItem
+
+    def _make_due():
+        db = SessionLocal()
+        qi = db.get(ReviewQueueItem, item["id"])
+        qi.due_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        db.commit()
+        db.close()
+
+    # 看答案后照抄 → hinted，不升级
+    client.post(f"/api/v1/review-queue/{item['id']}/reveal", headers=USER)
+    _make_due()
+    copied = client.post(
+        f"/api/v1/review-queue/{item['id']}/retest",
+        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
+        headers=USER,
+    )
+    assert copied.json()["retest_result"] == "hinted"
+    assert copied.json()["success_count"] == 0
+
+    # 文字输入（相关）→ text_completed，不升级
+    db = SessionLocal()
+    qi = db.get(ReviewQueueItem, item["id"])
+    qi.help_shown = False
+    db.commit()
+    db.close()
+    _make_due()
+    text = client.post(
+        f"/api/v1/review-queue/{item['id']}/retest",
+        json={"answer": "I have three years of experience in software development.", "input_type": "text"},
+        headers=USER,
+    )
+    assert text.json()["retest_result"] == "text_completed"
+    assert text.json()["success_count"] == 0
+
+    # 无关句 → pending，不升级
+    _make_due()
+    unrelated = client.post(
+        f"/api/v1/review-queue/{item['id']}/retest",
+        json={"answer": "I have a reservation under the name Li.", "input_type": "voice"},
+        headers=USER,
+    )
+    assert unrelated.json()["retest_result"] == "pending"
+    assert unrelated.json()["success_count"] == 0
 
 
 def test_queue_duplicate_is_idempotent(client):

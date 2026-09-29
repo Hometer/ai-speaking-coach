@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.core.errors import AppError
 from app.models.entities import DrillAttempt, EventLog, ReviewQueueItem, Session
 from app.services.prompts.scenarios import SCENARIOS
+from app.services.recall_judge import judge_recall, judge_transfer
 from app.services.session_svc import _require_session
 
 STAGE_ORDER = ["full_text", "fill_blanks", "structure", "free_speak", "transfer"]
@@ -118,7 +119,7 @@ def drill_view(session: Session, db: DbSession | None = None) -> dict[str, Any]:
     }
 
 
-def _record(db: DbSession, session: Session, user_id: str, text: str, result: str, reason: str) -> None:
+def _record(db: DbSession, session: Session, user_id: str, text: str, result: str, reason: str, input_type: str = "text", help_shown: bool = False, attempt_key: str = "") -> None:
     db.add(
         DrillAttempt(
             user_id=user_id,
@@ -128,6 +129,9 @@ def _record(db: DbSession, session: Session, user_id: str, text: str, result: st
             stage=session.drill_stage,
             visible_help=_visible_help(session, session.drill_stage),
             answer_text=text.strip(),
+            input_type=input_type,
+            help_shown=help_shown,
+            attempt_key=attempt_key,
             result=result,
             ended_reason=reason,
         )
@@ -169,7 +173,7 @@ def _write_back_queue(db: DbSession, user_id: str, source_turn_id: str, result: 
 
 
 def submit_drill_attempt(
-    db: DbSession, session_id: str, user_id: str, text: str
+    db: DbSession, session_id: str, user_id: str, text: str, input_type: str = "text", attempt_key: str = ""
 ) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
     if session.practice_type not in ("sentence_practice", "drill"):
@@ -181,11 +185,22 @@ def submit_drill_attempt(
 
     stage = session.drill_stage or "full_text"
     text = (text or "").strip()
-    success = _judge(text, session.drill_target)
 
-    result = STAGE_RESULT[stage] if success else "failed"
+    if stage == "free_speak":
+        # 脱稿说：只看中文意图，语音 + 相关 + 非照抄才独立
+        result = judge_recall(text, session.drill_target, input_type, help_shown=False)
+        success = result == "independent"
+    elif stage == "transfer":
+        # 换题：按新条件，不复述原句
+        result = judge_transfer(text, session.drill_target, input_type, help_shown=False)
+        success = result == "transfer"
+    else:
+        # 有参考阶段（看全文/补词/看结构）：照着说，词重叠判定完成
+        success = _judge(text, session.drill_target)
+        result = STAGE_RESULT[stage] if success else "failed"
+
     reason = "completed" if success else "error"
-    _record(db, session, user_id, text, result, reason)
+    _record(db, session, user_id, text, result, reason, input_type=input_type, help_shown=False, attempt_key=attempt_key)
     db.add(EventLog(session_id=session.id, turn_id="", action_type="drill", basis=result))
 
     if success:

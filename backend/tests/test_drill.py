@@ -50,6 +50,12 @@ def _attempt(client, sid, text):
     return r.json()
 
 
+def _attempt_voice(client, sid, text):
+    r = client.post(f"/api/v1/sessions/{sid}/drill-attempt", json={"text": text, "input_type": "voice"}, headers=USER)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def test_create_drill_session_sets_stage(client):
     source_sid, source_tid, imp = _source_improvement(client)
     d = _create_drill(client, source_sid, source_tid)
@@ -65,19 +71,31 @@ def test_drill_stage_progression_and_evidence(client):
     d = _create_drill(client, source_sid, source_tid)
     sid = d["session_id"]
     target = imp["practice_sentence"]
-    answer = target  # 看全文阶段照着说
 
-    r = _attempt(client, sid, answer)
+    r = _attempt(client, sid, target)
     assert r["result"] == "reference" and r["next_stage"] == "fill_blanks"
-    r = _attempt(client, sid, answer)
+    r = _attempt(client, sid, target)
     assert r["result"] == "reference" and r["next_stage"] == "structure"
-    r = _attempt(client, sid, answer)
+    r = _attempt(client, sid, target)
     assert r["result"] == "hinted" and r["next_stage"] == "free_speak"
-    r = _attempt(client, sid, answer)
+    # 脱稿说/换题：必须语音
+    r = _attempt_voice(client, sid, target)
     assert r["result"] == "independent" and r["next_stage"] == "transfer"
-    r = _attempt(client, sid, answer)
+    r = _attempt_voice(client, sid, "I led a project that improved delivery speed.")
     assert r["result"] == "transfer" and r["next_stage"] == "ended"
     assert r["completed"] is True
+
+
+def test_drill_text_cannot_complete_free_speak(client):
+    source_sid, source_tid, imp = _source_improvement(client)
+    d = _create_drill(client, source_sid, source_tid)
+    sid = d["session_id"]
+    target = imp["practice_sentence"]
+    for _ in range(3):  # 推进到 free_speak
+        _attempt(client, sid, target)
+    r = _attempt(client, sid, target)  # 文字输入不能脱稿独立
+    assert r["result"] == "text_completed"
+    assert r["next_stage"] == "free_speak"  # 不推进
 
 
 def test_drill_loose_match_not_exact(client):
@@ -124,8 +142,9 @@ def test_drill_write_back_to_queue(client):
     d = _create_drill(client, source_sid, source_tid)
     sid = d["session_id"]
     target = imp["practice_sentence"]
-    for _ in range(4):  # 推进到 free_speak 成功（独立）
+    for _ in range(3):  # full_text→fill_blanks→structure→free_speak
         _attempt(client, sid, target)
+    _attempt_voice(client, sid, target)  # free_speak 语音成功 → 写回独立
     items = client.get("/api/v1/review-queue", headers=USER).json()
     item = next(x for x in items if x["source_turn_id"] == source_tid)
     assert item["success_count"] == 1

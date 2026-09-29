@@ -76,10 +76,10 @@ def test_submit_attempt_complete_advances(client):
     s = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
     r = client.post(
         f"/api/v1/review-queue/daily-review/{s['session_id']}/attempt",
-        json={"answer": sentence, "help_used": False},
+        json={"answer": sentence, "input_type": "voice"},
         headers=USER,
     ).json()
-    assert r["success"] is True and r["result"] == "completed"
+    assert r["success"] is True and r["result"] == "independent"
     assert r["next"]["done"] is True
     db = SessionLocal()
     try:
@@ -94,9 +94,11 @@ def test_submit_attempt_with_help_resets_interval(client):
     item, sentence = _make_queue_item(client)
     _make_due(item["source_turn_id"])
     s = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
+    # 看答案：服务端留痕
+    client.post(f"/api/v1/review-queue/{item['id']}/reveal", headers=USER)
     client.post(
         f"/api/v1/review-queue/daily-review/{s['session_id']}/attempt",
-        json={"answer": sentence, "help_used": True},
+        json={"answer": sentence, "input_type": "voice"},
         headers=USER,
     )
     db = SessionLocal()

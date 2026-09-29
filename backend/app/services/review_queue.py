@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
 from app.models.entities import ReviewQueueItem, Session
+from app.services.recall_judge import judge_recall
 
 STATUS_PENDING = "pending"            # 待练
 STATUS_AWAITING_RETEST = "awaiting_retest"  # 待复测（跟读已完成）
@@ -21,13 +22,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _to_dict(item: ReviewQueueItem) -> dict[str, Any]:
+def _to_dict(item: ReviewQueueItem, reveal: bool = False) -> dict[str, Any]:
     return {
         "id": item.id,
         "source_session_id": item.source_session_id,
         "source_turn_id": item.source_turn_id,
         "target_ability": item.target_ability,
-        "suggestion_sentence": item.suggestion_sentence,
+        "suggestion_sentence": item.suggestion_sentence if (reveal or item.help_shown) else "",
+        "meaning_zh": item.meaning_zh,
+        "help_shown": item.help_shown,
         "status": item.status,
         "success_count": item.success_count,
         "due_at": item.due_at.isoformat() if item.due_at else None,
@@ -38,6 +41,8 @@ def _to_dict(item: ReviewQueueItem) -> dict[str, Any]:
 
 def add_to_queue(db: DbSession, user_id: str, source_session_id: str, source_turn_id: str) -> dict[str, Any]:
     """用户确认后把回顾建议加入队列。幂等：同一来源 turn 只创建一个有效项。"""
+    from app.services.prompts.scenarios import SCENARIOS
+
     source = db.get(Session, source_session_id)
     if source is None or source.user_id != user_id:
         raise AppError("FORBIDDEN", "无权使用该来源", status_code=403)
@@ -63,12 +68,16 @@ def add_to_queue(db: DbSession, user_id: str, source_session_id: str, source_tur
     if existing:
         return _to_dict(existing)
 
+    scene = SCENARIOS.get(source.scene_id or "", {})
+    meaning_zh = scene.get("goal_zh", "") or imp.get("explanation_cn", "")
+
     item = ReviewQueueItem(
         user_id=user_id,
         source_session_id=source_session_id,
         source_turn_id=source_turn_id,
         target_ability="expression",
         suggestion_sentence=sentence,
+        meaning_zh=meaning_zh,
         status=STATUS_PENDING,
         due_at=_now() + timedelta(hours=DUE_HOURS),
     )
@@ -104,8 +113,25 @@ def get_due_item(db: DbSession, user_id: str) -> dict[str, Any] | None:
     return _to_dict(item) if item else None
 
 
-def submit_retest(db: DbSession, user_id: str, item_id: int, answer: str, hint_used: bool = False) -> dict[str, Any]:
-    """复测提交（确定性）：独立成功推进，两次独立成功（间隔 >=24h）才掌握。"""
+def reveal_item(db: DbSession, user_id: str, item_id: int) -> dict[str, Any]:
+    """用户显式看答案：服务端落 help_shown，之后复测不再计独立。"""
+    item = db.get(ReviewQueueItem, item_id)
+    if item is None or item.user_id != user_id:
+        raise AppError("NOT_FOUND", "队列项不存在", status_code=404)
+    item.help_shown = True
+    db.commit()
+    return _to_dict(item, reveal=True)
+
+
+def submit_retest(
+    db: DbSession,
+    user_id: str,
+    item_id: int,
+    answer: str,
+    input_type: str = "text",
+    attempt_key: str = "",
+) -> dict[str, Any]:
+    """复测提交（确定性）：语音 + 无帮助 + 相关 + 非照抄才独立；两次独立（间隔 >=24h）才掌握。"""
     item = db.get(ReviewQueueItem, item_id)
     if item is None or item.user_id != user_id:
         raise AppError("NOT_FOUND", "队列项不存在", status_code=404)
@@ -122,11 +148,12 @@ def submit_retest(db: DbSession, user_id: str, item_id: int, answer: str, hint_u
         raise AppError("NOT_DUE", "复测尚未到期，请稍后再试", status_code=409)
 
     answer = (answer or "").strip()
-    independent = len(answer) >= 8 and not hint_used
-    item.last_practiced_at = _now()
-    item.retest_result = "independent" if independent else "hinted"
+    result = judge_recall(answer, item.suggestion_sentence, input_type, item.help_shown)
 
-    if independent:
+    item.last_practiced_at = _now()
+    item.retest_result = result
+
+    if result == "independent":
         item.success_count = (item.success_count or 0) + 1
         if item.success_count >= 2:
             item.status = STATUS_MASTERED
@@ -134,6 +161,7 @@ def submit_retest(db: DbSession, user_id: str, item_id: int, answer: str, hint_u
             item.status = STATUS_AWAITING_RETEST
             item.due_at = _now() + timedelta(hours=DUE_HOURS)
     else:
+        # 文字完成/有帮助/失败/待判断：不升级成功次数，回到待复测并顺延
         item.status = STATUS_AWAITING_RETEST
         item.due_at = _now() + timedelta(hours=DUE_HOURS)
 

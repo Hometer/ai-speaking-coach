@@ -182,6 +182,8 @@ class ReviewQueueItem(Base):
     source_turn_id: Mapped[str] = mapped_column(String(64), default="")
     target_ability: Mapped[str] = mapped_column(String(32), default="")
     suggestion_sentence: Mapped[str] = mapped_column(Text, default="")
+    meaning_zh: Mapped[str] = mapped_column(Text, default="")
+    help_shown: Mapped[bool] = mapped_column(default=False)  # 服务端记录：用户是否看过答案
     evidence_status: Mapped[str] = mapped_column(String(16), default="active")
     status: Mapped[str] = mapped_column(String(24), default="pending")
     success_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -240,6 +242,9 @@ class DrillAttempt(Base):
     stage: Mapped[str] = mapped_column(String(16), default="")  # full_text/fill_blanks/structure/free_speak/transfer
     visible_help: Mapped[str] = mapped_column(Text, default="")  # 实际展示的帮助内容（脱敏）
     answer_text: Mapped[str] = mapped_column(Text, default="")
+    input_type: Mapped[str] = mapped_column(String(16), default="text")
+    help_shown: Mapped[bool] = mapped_column(default=False)
+    attempt_key: Mapped[str] = mapped_column(String(64), default="", index=True)
     result: Mapped[str] = mapped_column(String(16), default="")  # reference/hinted/independent/transfer/pending/failed
     ended_reason: Mapped[str] = mapped_column(String(16), default="")  # completed/skipped/user_ended/error
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
@@ -255,7 +260,9 @@ class DailyReviewAttempt(Base):
     session_id: Mapped[str] = mapped_column(String(64), index=True)
     queue_item_id: Mapped[int] = mapped_column(Integer, default=0)
     attempt_answer: Mapped[str] = mapped_column(Text, default="")
-    help_used: Mapped[bool] = mapped_column(default=False)
+    input_type: Mapped[str] = mapped_column(String(16), default="text")
+    help_shown: Mapped[bool] = mapped_column(default=False)
+    attempt_key: Mapped[str] = mapped_column(String(64), default="", index=True)
     result: Mapped[str] = mapped_column(String(16), default="")  # completed/skipped/deferred/disputed/failed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
