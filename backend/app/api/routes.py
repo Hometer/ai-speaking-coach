@@ -614,11 +614,30 @@ def restart_plan(user_id: str = Depends(get_user_id)):
         db.close()
 
 
-@router.get("/qa/sessions")
-def qa_sessions(user_id: str = Depends(get_qa_user_id)):
+@router.post("/training-plan/pause", response_model=PlanResponse)
+def pause_plan(user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return qa_svc.list_sessions(db)
+        return plan_svc.pause_plan(db, user_id)
+    finally:
+        db.close()
+
+
+@router.post("/training-plan/resume", response_model=PlanResponse)
+def resume_plan(user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return plan_svc.resume_plan(db, user_id)
+    finally:
+        db.close()
+
+
+@router.get("/qa/sessions")
+def qa_sessions(user_id: str = Depends(get_qa_user_id), scene_id: str | None = None, status: str | None = None, version: str | None = None, input_type: str | None = None, help_type: str | None = None, eval_result: str | None = None, issue_type: str | None = None):
+    db = SessionLocal()
+    try:
+        filters = {k: v for k, v in {"scene_id": scene_id, "status": status, "version": version, "input_type": input_type, "help_type": help_type, "eval_result": eval_result, "issue_type": issue_type}.items() if v}
+        return qa_svc.list_sessions(db, filters)
     finally:
         db.close()
 

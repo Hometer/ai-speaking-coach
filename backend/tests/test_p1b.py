@@ -87,3 +87,22 @@ def test_revoked_qa_invite_cannot_access_workbench(client):
     finally:
         db.close()
     assert client.get("/api/v1/qa/sessions", headers=QA).status_code == 401
+
+
+def test_plan_pause_resume(client):
+    client.post("/api/v1/training-plan", json={"goal_type": "daily"}, headers=USER)
+    p = client.post("/api/v1/training-plan/pause", headers=USER).json()
+    assert p["status"] == "paused"
+    r = client.post("/api/v1/training-plan/resume", headers=USER).json()
+    assert r["status"] == "active"
+
+
+def test_qa_label_repeat_increments_version(client):
+    _enable_qa()
+    s = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard"}, headers=USER)
+    sid = s.json()["session_id"]
+    body = {"session_id": sid, "turn_id": "", "issue_type": "mis_correction", "conclusion": "confirmed"}
+    r1 = client.post("/api/v1/qa/labels", json=body, headers=QA).json()
+    assert r1["review_version"] == "v1"
+    r2 = client.post("/api/v1/qa/labels", json={**body, "conclusion": "disputed"}, headers=QA).json()
+    assert r2["review_version"] == "v2"
