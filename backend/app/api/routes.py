@@ -193,6 +193,17 @@ def drill_attempt(session_id: str, req: DrillAttemptRequest, user_id: str = Depe
         db.close()
 
 
+@router.post("/sessions/{session_id}/drill-attempt/voice")
+def drill_attempt_voice(session_id: str, audio: UploadFile = File(...), attempt_key: str = Form(""), user_id: str = Depends(get_user_id)):
+    data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
+    db = SessionLocal()
+    try:
+        text = session_svc.transcribe_voice_bytes(data)
+        return drill_svc.submit_drill_attempt(db, session_id, user_id, text, "voice", attempt_key)
+    finally:
+        db.close()
+
+
 @router.post("/sessions/{session_id}/drill/action")
 def drill_action(session_id: str, req: DrillActionRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
@@ -451,6 +462,17 @@ def daily_review_attempt(session_id: str, req: DailyReviewAttemptRequest, user_i
         db.close()
 
 
+@router.post("/review-queue/daily-review/{session_id}/attempt/voice")
+def daily_review_attempt_voice(session_id: str, audio: UploadFile = File(...), attempt_key: str = Form(""), user_id: str = Depends(get_user_id)):
+    data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
+    db = SessionLocal()
+    try:
+        text = session_svc.transcribe_voice_bytes(data)
+        return daily_review_svc.submit_attempt(db, session_id, user_id, text, "voice", attempt_key)
+    finally:
+        db.close()
+
+
 @router.post("/review-queue/daily-review/{session_id}/action")
 def daily_review_action(session_id: str, req: DailyReviewActionRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
@@ -483,6 +505,17 @@ def retest(item_id: int, req: RetestRequest, user_id: str = Depends(get_user_id)
     db = SessionLocal()
     try:
         return queue_svc.submit_retest(db, user_id, item_id, req.answer, req.input_type, req.attempt_key)
+    finally:
+        db.close()
+
+
+@router.post("/review-queue/{item_id}/retest/voice", response_model=QueueItemResponse)
+def retest_voice(item_id: int, audio: UploadFile = File(...), attempt_key: str = Form(""), user_id: str = Depends(get_user_id)):
+    data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
+    db = SessionLocal()
+    try:
+        text = session_svc.transcribe_voice_bytes(data)
+        return queue_svc.submit_retest(db, user_id, item_id, text, "voice", attempt_key)
     finally:
         db.close()
 

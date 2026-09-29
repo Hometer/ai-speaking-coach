@@ -98,6 +98,23 @@ def test_drill_text_cannot_complete_free_speak(client):
     assert r["next_stage"] == "free_speak"  # 不推进
 
 
+def test_drill_voice_free_speak(client):
+    source_sid, source_tid, imp = _source_improvement(client)
+    d = _create_drill(client, source_sid, source_tid)
+    sid = d["session_id"]
+    target = imp["practice_sentence"]
+    for _ in range(3):  # 推进到 free_speak
+        _attempt(client, sid, target)
+    r = client.post(
+        f"/api/v1/sessions/{sid}/drill-attempt/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["result"] == "independent"
+    assert r.json()["next_stage"] == "transfer"
+
+
 def test_drill_loose_match_not_exact(client):
     source_sid, source_tid, imp = _source_improvement(client)
     d = _create_drill(client, source_sid, source_tid)

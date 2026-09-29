@@ -46,6 +46,7 @@ class SessionDetailResponse(BaseModel):
     goal_text: str
     difficulty: str
     level: str = "basic"
+    current_help_level: int = 0
     end_reason: str | None = None
     practice_type: str = "interview"
     scene_id: str = "job_interview"

@@ -58,6 +58,22 @@ def _save_audio(audio_bytes: bytes, ext: str) -> str:
     return f"/api/v1/audio/{name}"
 
 
+def transcribe_voice_bytes(audio_bytes: bytes) -> str:
+    """把上传音频转写为文本（校验格式 + 落临时文件 + ASR），供语音端点复用。"""
+    from app.services.asr import get_asr_provider
+    from app.services.turn import _validate_audio
+
+    fmt = _validate_audio(audio_bytes)
+    uploads_dir = settings.data_dir / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = uploads_dir / f"{uuid.uuid4().hex}.{fmt}"
+    audio_path.write_bytes(audio_bytes)
+    try:
+        return get_asr_provider().transcribe(audio_path)
+    finally:
+        audio_path.unlink(missing_ok=True)
+
+
 def _synth_and_save(tts, text: str) -> tuple[str, str]:
     """合成音频并落盘，返回 (audio_url, audio_status)。失败返回 ("", "failed")，不抛错。"""
     result = tts.synthesize_result(text)
@@ -914,6 +930,15 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
         "goal_text": session.goal_text,
         "difficulty": session.difficulty,
         "level": session.level or "basic",
+        "current_help_level": (
+            db.query(Turn)
+            .filter(
+                Turn.session_id == session.id,
+                Turn.question_id == session.current_question_id,
+                Turn.help_type == "organize",
+            )
+            .count()
+        ),
         "end_reason": session.end_reason,
         "practice_type": session.practice_type,
         "scene_id": session.scene_id,
