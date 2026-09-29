@@ -1,4 +1,4 @@
-import type { ApiErrorBody, DailyReviewAttemptResult, DailyReviewCurrent, DrillAttemptResult, DrillView, DueToday, MemoryItem, PhraseCard, Progress, QaSession, QueueItem, Scenario, SessionCreated, SessionDetail, SessionListItem, TrainingPlan, TurnDone } from "./types";
+import type { ApiErrorBody, DailyReviewAttemptResult, DailyReviewCurrent, DrillAttemptResult, DrillView, DueToday, MemoryItem, PhraseCard, Progress, QaSession, QueueItem, RiskHold, Scenario, SessionCreated, SessionDetail, SessionListItem, TrainingPlan, TurnDone } from "./types";
 
 // 邀请码存本地，由用户输入，不再前端硬编码共享凭证
 const INVITE_KEY = "invite_code";
@@ -332,6 +332,7 @@ async function parseSSE<T>(res: Response, onChunk?: (text: string) => void): Pro
         const text = (data as { text?: string }).text;
         if (text && onChunk) onChunk(text);
       } else if (event === "done") lastDone = data as T;
+      else if (event === "risk_hold") lastDone = data as T;
       else if (event === "error") lastError = (data as ApiErrorBody).error?.message ?? "未知错误";
     }
   }
@@ -344,7 +345,7 @@ export async function submitTurn(
   sessionId: string,
   opts: { text?: string; audio?: Blob },
   onChunk?: (text: string) => void,
-): Promise<TurnDone> {
+): Promise<TurnDone | RiskHold> {
   let url: string;
   let init: RequestInit;
   if (opts.audio) {

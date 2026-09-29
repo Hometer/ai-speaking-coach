@@ -28,7 +28,7 @@ from app.schemas.session import (
     SessionDetailResponse,
     SessionListItem,
 )
-from app.schemas.turn import TextTurnRequest
+from app.schemas.turn import ConfirmTurnRequest, TextTurnRequest
 from app.schemas.review_queue import AddToQueueRequest, DailyReviewActionRequest, DailyReviewAttemptRequest, PhraseCardRequest, QueueItemResponse, RetestRequest
 from app.schemas.training_plan import CreatePlanRequest, PlanResponse
 from app.schemas.quality_label import AddLabelRequest
@@ -161,6 +161,9 @@ def voice_turn_stream(session_id: str, audio: UploadFile = File(...), user_id: s
         db = SessionLocal()
         try:
             partial = session_svc.submit_turn(db, session_id, user_id, "voice", audio_bytes=data)
+            if partial.get("risk_hold"):
+                yield _sse("risk_hold", partial)
+                return
             yield _sse("chunk", {"text": partial["reply_text"]})
             done = session_svc.synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
             yield _sse("done", done)
@@ -172,6 +175,15 @@ def voice_turn_stream(session_id: str, audio: UploadFile = File(...), user_id: s
             db.close()
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@router.post("/sessions/{session_id}/turns/{turn_id}/confirm")
+def confirm_turn(session_id: str, turn_id: str, req: ConfirmTurnRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return session_svc.confirm_turn(db, session_id, user_id, turn_id, req.confirmed_text, req.action)
+    finally:
+        db.close()
 
 
 @router.post("/sessions/{session_id}/turns/{turn_id}/audio")

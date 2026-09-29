@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { addToQueue, createPhraseCard, createPracticeSentence, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
-import type { DrillView, TurnDone, TurnItem } from "@/lib/types";
+import type { DrillView, RiskHold, TurnItem } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 import Icon from "@/components/Icon";
 import styles from "./page.module.css";
@@ -55,6 +55,7 @@ export default function PracticePage() {
   const [audioRetryTurnId, setAudioRetryTurnId] = useState<string | null>(null);
   const [drill, setDrill] = useState<DrillView | null>(null);
   const [drillText, setDrillText] = useState("");
+  const [riskHold, setRiskHold] = useState<RiskHold | null>(null);
   const [recordMode, setRecordMode] = useState<"answer" | "practice" | "drill" | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
@@ -143,10 +144,14 @@ export default function PracticePage() {
     let coachShown = false;
     try {
       if (typedText) { setText(""); addMsg("user", typedText); }
-      const done: TurnDone = await submitTurn(sessionId, input, (text) => {
+      const done = await submitTurn(sessionId, input, (text) => {
         coachShown = true;
         addMsg("coach", text); // chunk：教练文字生成后立即显示
       });
+      if ("risk_hold" in done) {
+        setRiskHold(done);
+        return;
+      }
       if (!typedText) {
         if (done.transcript) addMsg("user", done.transcript, undefined, done.turn_id);
         else addMsg("user", "（语音回答）", undefined, done.turn_id);
@@ -172,6 +177,32 @@ export default function PracticePage() {
       if (done.status === "ENDED") {
         const detail = await getSession(sessionId);
         setReview(detail.review);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmRisk(text: string, action: string) {
+    if (!riskHold || busy) return;
+    setBusy(true); setErr("");
+    try {
+      const res = await fetch(`/api/v1/sessions/${sessionId}/turns/${riskHold.turn_id}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Invite-Code": getInviteCode() },
+        body: JSON.stringify({ confirmed_text: text, action }),
+      });
+      const done = await res.json();
+      if (!res.ok) { setErr(done?.error?.message ?? `HTTP ${res.status}`); return; }
+      setRiskHold(null);
+      addMsg("user", text, undefined, done.turn_id);
+      addMsg("coach", done.reply_text, done.reply_audio_url, done.turn_id);
+      setStatus(done.status);
+      if (done.action_type === "suggest_practice" && done.practice_sentence) {
+        setPracticeSentence(done.practice_sentence);
+        setPracticeDemo(done.reply_audio_url);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -555,6 +586,17 @@ export default function PracticePage() {
             {busy && <div className={styles.thinking} role="status"><span /><span /><span /> 教练正在处理，请稍候…</div>}
             <div ref={bottomRef} />
           </div>
+
+          {riskHold && <section className={styles.readingCard}>
+            <div className="section-head mt-0 mb-3"><h2><Icon name="mic" size={19} /> 核对一下你说的话</h2><span className="badge">识别可能不准</span></div>
+            <p className={styles.practiceSentence}>{riskHold.transcript}</p>
+            <p className="text-sm muted mt-2">系统觉得这段转写可能不完整或含杂音。请确认、修改，或直接重说一遍。</p>
+            <div className="flex items-center gap-2 flex-wrap mt-3">
+              <button onClick={() => confirmRisk(riskHold.transcript, "confirm")} disabled={busy} className="btn btn-primary">确认无误</button>
+              <button onClick={() => { const t = window.prompt("请修改转写：", riskHold.transcript); if (t && t.trim()) confirmRisk(t.trim(), "revise"); }} disabled={busy} className="btn btn-secondary">修改文字</button>
+              <button onClick={() => setRiskHold(null)} disabled={busy} className="btn btn-ghost">重说一遍</button>
+            </div>
+          </section>}
 
           {drill && !drill.completed && !ended && <section className={styles.readingCard}>
             <div className="section-head mt-0 mb-3"><h2><Icon name="book" size={19} /> 脱稿阶梯 · {drill.stage_label}</h2><span className="badge">逐级减少帮助</span></div>

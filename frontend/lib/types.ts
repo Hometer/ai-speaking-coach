@@ -26,6 +26,14 @@ export interface TurnDone {
   practice_sentence: string;
 }
 
+export interface RiskHold {
+  risk_hold: true;
+  risk_level: "mid" | "high";
+  reason_codes: string[];
+  turn_id: string;
+  transcript: string;
+}
+
 export interface TurnItem {
   turn_id: string;
   seq: number;

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.models.entities import Evaluation, EventLog, Session, Turn, User
+from app.models.entities import AsrRiskRecord, ConversationQualityMark, Evaluation, EventLog, Session, Turn, User
 from app.schemas.coach import CoachDecision
 from app.services import memory as memory_svc
 from app.services.budget import BudgetGuard, ToolBudget
@@ -22,6 +22,7 @@ from app.services.evaluator import get_evaluator_provider
 from app.services.generation_call import get_last_usage
 from app.services.practice import get_practice_eval_provider
 from app.services.asr import get_asr_provider
+from app.services.asr_risk import assess_risk
 from app.services.review import build_review, dedupe_improvements
 from app.services.tts import get_tts_provider
 from app.services.turn import _validate_audio
@@ -176,6 +177,39 @@ def _log_event(
             request_key=request_key,
             duration_ms=duration_ms,
             usage=usage,
+        )
+    )
+
+
+_DIRECT_QUESTION_PATTERNS = [
+    "what about you", "what do you do", "and you", "how about you",
+    "what's your", "what is your", "do you", "are you",
+]
+_ASK_EXPLAIN_PATTERNS = [
+    "what do you mean", "explain", "what does", "can you explain", "什么意思",
+]
+
+
+def _mark_conversation_quality(
+    db: DbSession, session: Session, turn_id: str, text: str, action: str, subgoal: str
+) -> None:
+    """对话节奏质检标记（REQ-34）：确定性信号提示，问号不一律解释为困惑。"""
+    lowered = " ".join((text or "").lower().split())
+    direct = lowered.endswith("?") or any(p in lowered for p in _DIRECT_QUESTION_PATTERNS)
+    ask_explain = any(p in lowered for p in _ASK_EXPLAIN_PATTERNS)
+    gave_info = bool(lowered) and not direct
+    db.add(
+        ConversationQualityMark(
+            user_id=session.user_id,
+            session_id=session.id,
+            turn_id=turn_id,
+            user_direct_question=direct,
+            user_ask_explanation=ask_explain,
+            user_gave_info=gave_info,
+            coach_action=action or "",
+            subgoal_id=subgoal or "",
+            prompt_version="v6",
+            scenario_version=session.scene_version or "",
         )
     )
 
@@ -468,6 +502,7 @@ def submit_turn(
     user_text: str | None = None,
     audio_bytes: bytes | None = None,
     request_key: str = "",
+    pre_transcribed: str | None = None,
 ) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
     if session.status == S_ENDED:
@@ -506,15 +541,43 @@ def submit_turn(
         turn_id = uuid.uuid4().hex
         transcript = ""
         if input_type == "voice":
-            if not audio_bytes:
-                raise AppError("EMPTY_AUDIO", "音频内容为空")
-            fmt = _validate_audio(audio_bytes)
-            uploads_dir = settings.data_dir / "uploads"
-            uploads_dir.mkdir(parents=True, exist_ok=True)
-            audio_path = uploads_dir / f"{turn_id}.{fmt}"
-            audio_path.write_bytes(audio_bytes)
-            transcript = get_asr_provider().transcribe(audio_path)
-            text_for_eval = transcript
+            if pre_transcribed is not None:
+                transcript = pre_transcribed
+                text_for_eval = pre_transcribed
+            else:
+                if not audio_bytes:
+                    raise AppError("EMPTY_AUDIO", "音频内容为空")
+                fmt = _validate_audio(audio_bytes)
+                uploads_dir = settings.data_dir / "uploads"
+                uploads_dir.mkdir(parents=True, exist_ok=True)
+                audio_path = uploads_dir / f"{turn_id}.{fmt}"
+                audio_path.write_bytes(audio_bytes)
+                transcript = get_asr_provider().transcribe(audio_path)
+                text_for_eval = transcript
+                # 识别风险判定（REQ-32）：中/高先确认，不评估、不教练、不写独立证据
+                risk_level, reasons = assess_risk(transcript)
+                if risk_level in ("mid", "high"):
+                    db.add(
+                        AsrRiskRecord(
+                            user_id=user_id,
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            risk_level=risk_level,
+                            reason_codes=";".join(reasons),
+                            original_text=transcript,
+                            action="",
+                            asr_rule_version="v1",
+                        )
+                    )
+                    db.commit()
+                    guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
+                    return {
+                        "risk_hold": True,
+                        "risk_level": risk_level,
+                        "reason_codes": reasons,
+                        "turn_id": turn_id,
+                        "transcript": transcript,
+                    }
         else:
             text_for_eval = user_text or ""
 
@@ -666,6 +729,7 @@ def submit_turn(
     )
     db.add(turn)
     _log_event(db, session_id, turn_id=turn_id, action_type=decision.action_type, basis=eval_out.result, input_type=input_type, tool_result=eval_out.result, request_key=request_key or None, duration_ms=int((time.perf_counter() - turn_start) * 1000), usage=get_last_usage())
+    _mark_conversation_quality(db, session, turn_id, text_for_eval, decision.action_type, subgoal)
     db.commit()
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
 
@@ -685,6 +749,34 @@ def submit_turn(
         "hint_used": hint_used,
         "practice_sentence": decision.practice_sentence,
     }
+
+
+def confirm_turn(
+    db: DbSession, session_id: str, user_id: str, turn_id: str, confirmed_text: str, action: str = "confirm"
+) -> dict[str, Any]:
+    """用户确认或修订可疑转写后继续同题（REQ-32）。"""
+    risk = (
+        db.query(AsrRiskRecord)
+        .filter(
+            AsrRiskRecord.session_id == session_id,
+            AsrRiskRecord.turn_id == turn_id,
+            AsrRiskRecord.user_id == user_id,
+        )
+        .first()
+    )
+    if risk is None:
+        raise AppError("NOT_FOUND", "待确认的转写不存在", status_code=404)
+    risk.confirmed_text = confirmed_text
+    risk.action = action or "confirm"
+    risk.resolved_at = _now()
+    db.commit()
+
+    partial = submit_turn(
+        db, session_id, user_id, "voice",
+        pre_transcribed=confirmed_text,
+        request_key=f"confirm:{turn_id}",
+    )
+    return synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
 
 
 def _turn_done(db: DbSession, session: Session, turn: Turn) -> dict[str, Any]:

@@ -272,6 +272,44 @@ class DailyReviewAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class AsrRiskRecord(Base):
+    """语音转写风险记录（REQ-32）：识别风险等级、原因、确认/修订动作。"""
+    __tablename__ = "asr_risk_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    risk_level: Mapped[str] = mapped_column(String(8), default="low")  # low/mid/high
+    reason_codes: Mapped[str] = mapped_column(String(64), default="")
+    original_text: Mapped[str] = mapped_column(Text, default="")
+    confirmed_text: Mapped[str] = mapped_column(Text, default="")
+    action: Mapped[str] = mapped_column(String(16), default="")  # none/confirm/rerecord/revise/text_fallback
+    asr_rule_version: Mapped[str] = mapped_column(String(16), default="v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    resolved_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+
+class ConversationQualityMark(Base):
+    """对话质检标记（REQ-34）：直接提问应答、动作类型、连续同义追问、话题跳转。"""
+    __tablename__ = "conversation_quality_marks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    user_direct_question: Mapped[bool] = mapped_column(default=False)
+    user_ask_explanation: Mapped[bool] = mapped_column(default=False)
+    user_gave_info: Mapped[bool] = mapped_column(default=False)
+    coach_action: Mapped[str] = mapped_column(String(32), default="")
+    repeated_synonym_followup: Mapped[bool] = mapped_column(default=False)
+    topic_jump: Mapped[bool] = mapped_column(default=False)
+    subgoal_id: Mapped[str] = mapped_column(String(16), default="")
+    prompt_version: Mapped[str] = mapped_column(String(16), default="")
+    scenario_version: Mapped[str] = mapped_column(String(16), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class PhraseCard(Base):
     """语块卡（P1-4，REQ-31）：从有效建议生成，不扩写用户事实，随来源传播失效。"""
     __tablename__ = "phrase_cards"

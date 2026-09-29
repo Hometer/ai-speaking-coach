@@ -7,6 +7,11 @@ class TextTurnRequest(BaseModel):
     request_key: str = Field(default="", description="幂等键")
 
 
+class ConfirmTurnRequest(BaseModel):
+    confirmed_text: str = Field(..., min_length=1, max_length=2000, description="确认或修订后的转写")
+    action: str = Field(default="confirm", description="confirm/revise/text_fallback")
+
+
 class TurnResponse(BaseModel):
     request_id: str
     transcript: str = ""
