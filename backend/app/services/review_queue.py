@@ -46,8 +46,8 @@ def add_to_queue(db: DbSession, user_id: str, source_session_id: str, source_tur
         (i for i in review.get("improvements", []) if i.get("turn_id") == source_turn_id),
         None,
     )
-    if imp is None or imp.get("disputed"):
-        raise AppError("NOT_FOUND", "改进建议不存在或已争议", status_code=404)
+    if imp is None or imp.get("disputed") or review.get("stale"):
+        raise AppError("NOT_FOUND", "改进建议不存在或已失效", status_code=404)
     sentence = imp.get("practice_sentence") or ""
     if not sentence:
         raise AppError("INVALID_STATE", "该建议没有可练句子", status_code=409)

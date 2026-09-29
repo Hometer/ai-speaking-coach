@@ -37,7 +37,7 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     # 到期复练完成率 + 已掌握项目数
     queue = db.query(ReviewQueueItem).filter(ReviewQueueItem.user_id == user_id).all()
     mastered_count = sum(1 for q in queue if q.status == "mastered")
-    retested = [q for q in queue if q.retest_result]
+    retested = [q for q in queue if q.retest_result and q.status != "invalid"]
     due_retest_done_rate = (
         round(sum(1 for q in retested if q.retest_result == "independent") / len(retested), 3)
         if retested
@@ -51,8 +51,10 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
 
     # v0.8 新增：脱稿完成数 / 迁移成功数（按 DrillAttempt 结果计数）
     drill_attempts = db.query(DrillAttempt).filter(DrillAttempt.user_id == user_id).all()
-    drill_completed_count = sum(1 for a in drill_attempts if a.result == "independent")
-    transfer_completed_count = sum(1 for a in drill_attempts if a.result == "transfer")
+    invalid_drill_ids = {s.id for s in sessions if s.source_invalid}
+    valid_drill_attempts = [a for a in drill_attempts if a.drill_session_id not in invalid_drill_ids]
+    drill_completed_count = sum(1 for a in valid_drill_attempts if a.result == "independent")
+    transfer_completed_count = sum(1 for a in valid_drill_attempts if a.result == "transfer")
 
     return {
         "completed_count": completed_count,

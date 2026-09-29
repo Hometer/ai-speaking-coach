@@ -453,6 +453,7 @@ def submit_turn(
                 "hint_used": hint_used,
                 "input_type": input_type,
                 "goal": session.goal_text,
+                "scene_id": session.scene_id,
                 "subgoal": subgoal,
                 "subgoal_standard": SCENARIOS.get(session.scene_id, {}).get("subgoal_standard", {}).get(subgoal, ""),
                 "acceptable_points": SCENARIOS.get(session.scene_id, {}).get("acceptable_points", []),
@@ -499,6 +500,7 @@ def submit_turn(
                 "hint_used": hint_used,
                 "eval_result": eval_out.result,
                 "subgoal": subgoal,
+                "subgoal_standard": SCENARIOS.get(session.scene_id, {}).get("subgoal_standard", {}).get(subgoal, ""),
                 "history": _recent_history(db, session_id),
                 "rechecked": session.rechecked,
                 "memories": memories,
@@ -728,7 +730,10 @@ def submit_practice(
 def _review_of(session: Session) -> dict[str, Any]:
     if session.review:
         try:
-            return dedupe_improvements(json.loads(session.review))
+            review = dedupe_improvements(json.loads(session.review))
+            if review.get("stale"):
+                return {**review, "goal_status": "revised", "evidence": [], "good_fragments": [], "improvements": [], "ratings": {}}
+            return review
         except json.JSONDecodeError:
             return {}
     return {}
@@ -749,7 +754,9 @@ def _summary(db: DbSession, session: Session) -> dict[str, Any]:
             latest_eval = t.eval_result
             break
     goal_status = latest_eval or "not_started"
-    if session.end_reason == "goal_reached":
+    if session.review and _review_of(session).get("stale"):
+        goal_status = "revised"
+    elif session.end_reason == "goal_reached":
         goal_status = "independent"
     return {
         "session_id": session.id,
@@ -985,6 +992,32 @@ def request_hint(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]
     return {"session_id": session_id, "reply_text": decision.reply_text, "reply_audio_url": audio_url, "action_type": decision.action_type}
 
 
+def _invalidate_derived_turn(db: DbSession, user_id: str, turn_id: str) -> None:
+    """修订或争议后，撤销该回合派生的学习材料与进行中的练习。"""
+    from app.services import phrase_card_svc, review_queue
+    from app.models.entities import ReviewQueueItem
+
+    phrase_card_svc.invalidate_by_turn(db, turn_id)
+    review_queue.invalidate_by_turn(db, turn_id)
+    invalid_ids = {
+        item.id for item in db.query(ReviewQueueItem).filter(ReviewQueueItem.source_turn_id == turn_id).all()
+    }
+    if invalid_ids:
+        for daily in db.query(Session).filter(
+            Session.user_id == user_id, Session.practice_type == "daily_review", Session.status != S_ENDED
+        ).all():
+            if invalid_ids.intersection(json.loads(daily.daily_review_items or "[]")):
+                daily.status = S_ENDED
+                daily.end_reason = "source_invalid"
+    for sp in db.query(Session).filter(
+        Session.practice_type == "sentence_practice", Session.source_turn_id == turn_id
+    ).all():
+        sp.source_invalid = True
+        sp.practice_sentence = ""
+        sp.drill_target = ""
+        sp.drill_meaning = ""
+
+
 def dispute_review_improvement(db: DbSession, session_id: str, user_id: str, turn_id: str) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
     review = json.loads(session.review) if session.review else {}
@@ -996,15 +1029,7 @@ def dispute_review_improvement(db: DbSession, session_id: str, user_id: str, tur
     if not found:
         raise AppError("NOT_FOUND", "改进建议不存在", status_code=404)
     session.review = json.dumps(review, ensure_ascii=False)
-    # 争议传播：以该建议为来源的单句复练标来源失效
-    for sp in (
-        db.query(Session)
-        .filter(Session.practice_type == "sentence_practice", Session.source_turn_id == turn_id)
-        .all()
-    ):
-        sp.source_invalid = True
-    from app.services import phrase_card_svc
-    phrase_card_svc.invalidate_by_turn(db, turn_id)
+    _invalidate_derived_turn(db, user_id, turn_id)
     db.commit()
     return {"disputed": True}
 
@@ -1026,8 +1051,7 @@ def revise_turn(db: DbSession, session_id: str, user_id: str, turn_id: str, revi
     db.query(Evaluation).filter(Evaluation.turn_id == turn_id).update({"result": "revised"})
     subgoals = _load_subgoals(session)
     changed = False
-    for name in ("intro", "followup"):
-        sg = subgoals.get(name, {})
+    for sg in subgoals.values():
         if turn_id in sg.get("evidence", []):
             sg["status"] = "revised"
             sg["evidence"] = []
@@ -1041,6 +1065,10 @@ def revise_turn(db: DbSession, session_id: str, user_id: str, turn_id: str, revi
             session.review = json.dumps(review, ensure_ascii=False)
         except json.JSONDecodeError:
             pass
+    # 修订使旧文本的派生学习材料失效；用户后续可基于新评价重新生成。
+    _invalidate_derived_turn(db, user_id, turn_id)
+    # 记忆当前按会话而非回合追溯；修订时保守撤销本会话的候选记忆。
+    memory_svc.delete_by_session(db, session_id)
     db.commit()
     return {"turn_id": turn_id, "revised_text": turn.revised_text, "revision_version": turn.revision_version}
 

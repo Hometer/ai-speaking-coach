@@ -1,5 +1,6 @@
 """独立评估器：与生成分离，输出四态（mock 规则 + 百炼待验）。"""
 import json
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -26,6 +27,10 @@ class MockEvaluatorProvider(EvaluatorProvider):
             return EvaluationOutput(result="insufficient_evidence")
         if hint_used:
             return EvaluationOutput(result="hinted")
+        if context.get("scene_id") == "hotel_checkin" and context.get("subgoal") == "confirm_booking":
+            named_booking = bool(re.search(r"\b(?:under (?:the )?name|my name is)\s+[a-z][a-z'-]+\b", answer, re.I))
+            nights = bool(re.search(r"\b(?:one|two|three|four|five|\d+)\s+nights?\b", answer, re.I))
+            return EvaluationOutput(result="independent" if named_booking or nights else "incomplete")
         points = context.get("acceptable_points") or ["i have", "experience"]
         lowered = answer.lower()
         matches = sum(1 for kw in points if kw.lower() in lowered)

@@ -147,6 +147,9 @@ def _write_back_queue(db: DbSession, user_id: str, source_turn_id: str, result: 
         return
     from app.services.review_queue import STATUS_AWAITING_RETEST, STATUS_MASTERED
 
+    if item.status not in ("pending", STATUS_AWAITING_RETEST):
+        return
+
     # 到期约束（AC07-08）：待复测且未到期不推进
     if item.status == STATUS_AWAITING_RETEST and item.due_at is not None:
         due = item.due_at
@@ -171,6 +174,8 @@ def submit_drill_attempt(
     session = _require_session(db, session_id, user_id)
     if session.practice_type not in ("sentence_practice", "drill"):
         raise AppError("INVALID_STATE", "该会话不是脱稿练习", status_code=409)
+    if session.source_invalid:
+        raise AppError("SOURCE_INVALID", "来源内容已失效，请重新选择练习", status_code=409)
     if session.status == "ENDED" or session.drill_stage == "ended":
         raise AppError("SESSION_ENDED", "脱稿练习已结束", status_code=409)
 
@@ -207,6 +212,8 @@ def submit_drill_attempt(
 
 def drill_action(db: DbSession, session_id: str, user_id: str, action: str) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
+    if session.source_invalid:
+        raise AppError("SOURCE_INVALID", "来源内容已失效，请重新选择练习", status_code=409)
     if session.drill_stage == "ended":
         raise AppError("SESSION_ENDED", "脱稿练习已结束", status_code=409)
     stage = session.drill_stage or "full_text"

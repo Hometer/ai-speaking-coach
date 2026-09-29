@@ -53,8 +53,8 @@ def get_qa_user_id(x_invite_code: str = Header(default="", alias="X-Invite-Code"
     db = SessionLocal()
     try:
         invite = db.query(Invite).filter(Invite.code == code).first()
-        if invite is None:
-            raise AppError("UNAUTHORIZED", "邀请凭证无效", status_code=401)
+        if invite is None or invite.revoked:
+            raise AppError("UNAUTHORIZED", "邀请凭证无效或已撤销", status_code=401)
         return invite.user_id
     finally:
         db.close()

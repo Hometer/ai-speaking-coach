@@ -77,6 +77,9 @@ class MockCoachProvider(CoachProvider):
                 reply_text="No problem. Try a short sentence, and ask for help if you are stuck.",
             )
         if result == "incomplete":
+            if context.get("scene_id") == "hotel_checkin" and subgoal == "confirm_booking":
+                question = "May I have the name on the reservation, please?"
+                return CoachDecision(action_type="follow_up", reply_text=question, follow_up_question=question)
             return CoachDecision(
                 action_type="suggest_practice",
                 reply_text="Let's practice a useful sentence. Repeat after me.",

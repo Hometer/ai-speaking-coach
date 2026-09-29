@@ -26,6 +26,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import settings
+from app.core.jsonutil import extract_json_object
+from app.schemas.evaluation import EvaluationOutput
 from app.services.prompts.coach import COACH_DECISION_FORMAT, EVAL_SYSTEM_PROMPT, coach_system_prompt
 from app.services.prompts.scenarios import get_scene
 
@@ -60,8 +62,9 @@ def build_contexts(scene_id: str, answer: str) -> tuple[dict, dict]:
         "current_answer": answer,
         "input_type": "text",
         "hint_used": False,
-        "eval_result": "independent",
+        "eval_result": "insufficient_evidence",
         "subgoal": sc["subgoals"][0],
+        "subgoal_standard": sc.get("subgoal_standard", {}).get(sc["subgoals"][0], ""),
         "history": [],
         "rechecked": False,
         "memories": [],
@@ -72,7 +75,9 @@ def build_contexts(scene_id: str, answer: str) -> tuple[dict, dict]:
         "hint_used": False,
         "input_type": "text",
         "goal": sc["goal_text"],
+        "scene_id": scene_id,
         "subgoal": sc["subgoals"][0],
+        "subgoal_standard": sc.get("subgoal_standard", {}).get(sc["subgoals"][0], ""),
         "acceptable_points": sc.get("acceptable_points", []),
     }
     return coach_ctx, eval_ctx
@@ -176,6 +181,11 @@ def main() -> None:
         eval_raw, eval_usage, e_dt, e_err = call_llm(
             EVAL_SYSTEM_PROMPT, json.dumps(eval_ctx, ensure_ascii=False)
         )
+        if not e_err:
+            try:
+                coach_ctx["eval_result"] = EvaluationOutput.model_validate(extract_json_object(eval_raw)).result
+            except Exception:
+                e_err = "评估结果结构不合法"
         # 2. 教练
         coach_raw, coach_usage, c_dt, c_err = call_llm(
             coach_system_prompt(coach_ctx["scene_context"], coach_ctx["coach_persona"]) + "\n" + COACH_DECISION_FORMAT,

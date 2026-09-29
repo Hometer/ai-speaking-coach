@@ -48,7 +48,9 @@ def sse_done(text: str) -> dict:
                 data = json.loads(line[5:].strip())
         if event == "done" and data is not None:
             return data
-    return {}
+        if event == "error" and data is not None:
+            raise RuntimeError(f"回合失败：{data.get('error', {}).get('code', 'UNKNOWN')}")
+    raise RuntimeError("回合未收到 done/error 终止事件")
 
 
 def main() -> None:
@@ -72,9 +74,15 @@ def main() -> None:
             rows.append((name, "创建失败", "", "", r.text[:80]))
             continue
         sid = r.json()["session_id"]
-        opening = r.json().get("opening", {}).get("text", "")
+        opening = r.json().get("reply_text", "")
         tr = post(base, f"/api/v1/sessions/{sid}/turns/text", json={"text": answer})
-        done = sse_done(tr.text)
+        try:
+            done = sse_done(tr.text)
+        except RuntimeError as exc:
+            print(f"[{name}] {exc}")
+            rows.append((name, "回合失败", "", "", ""))
+            post(base, f"/api/v1/sessions/{sid}/end", json={"reason": "user_ended"})
+            continue
         dt = time.perf_counter() - t0
         reply = done.get("reply_text", "")
         print(f"\n[{name}] 开场「{opening[:60]}」")

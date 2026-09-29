@@ -343,3 +343,79 @@ def test_revise_turn_invalidates_eval(client):
         if t["turn_id"] == turn_id:
             assert t["eval_result"] == "revised"
             break
+    db = SessionLocal()
+    try:
+        from app.models.entities import Session
+        subgoals = json.loads(db.get(Session, s["session_id"]).subgoals)
+        assert subgoals["intro"]["status"] == "revised"
+        assert subgoals["intro"]["evidence"] == []
+    finally:
+        db.close()
+
+
+def test_revise_scene_turn_revokes_derived_evidence(client):
+    from app.models.entities import Session
+
+    s = client.post(
+        "/api/v1/sessions",
+        json={"level": "basic", "difficulty": "standard", "scene_id": "hotel_checkin"},
+        headers=USER,
+    ).json()
+    sid = s["session_id"]
+    completed = _done(_send_text(client, sid, "I have a reservation under the name Li."))
+    completed_id = completed["turn_id"]
+    assert completed["eval_result"] == "independent"
+    incomplete = _done(_send_text(client, sid, "Maybe breakfast."))
+    source_id = incomplete["turn_id"]
+    client.post(f"/api/v1/sessions/{sid}/end", json={"reason": "user_ended"}, headers=USER)
+    source = {"source_session_id": sid, "source_turn_id": source_id}
+    assert client.post("/api/v1/review-queue", json=source, headers=USER).status_code == 200
+    assert client.post("/api/v1/phrase-cards", json=source, headers=USER).status_code == 200
+    practice = client.post(
+        "/api/v1/sessions/practice-sentence",
+        json={"source_session_id": sid, "turn_id": source_id}, headers=USER,
+    )
+    assert practice.status_code == 200
+
+    assert client.patch(
+        f"/api/v1/sessions/{sid}/turns/{completed_id}",
+        json={"revised_text": "I have a reservation."}, headers=USER,
+    ).status_code == 200
+    db = SessionLocal()
+    try:
+        subgoals = json.loads(db.get(Session, sid).subgoals)
+        assert subgoals["confirm_booking"] == {"status": "revised", "evidence": []}
+    finally:
+        db.close()
+
+    assert client.patch(
+        f"/api/v1/sessions/{sid}/turns/{source_id}",
+        json={"revised_text": "What time does breakfast start?"}, headers=USER,
+    ).status_code == 200
+    assert client.get("/api/v1/review-queue", headers=USER).json() == []
+    assert client.get("/api/v1/phrase-cards", headers=USER).json() == []
+    detail = client.get(f"/api/v1/sessions/{practice.json()['session_id']}", headers=USER).json()
+    assert detail["source_invalid"] is True
+    assert detail["drill"]["drill_target"] == ""
+    assert client.post(
+        f"/api/v1/sessions/{practice.json()['session_id']}/drill-attempt",
+        json={"text": "Any answer"}, headers=USER,
+    ).status_code == 409
+    source_detail = client.get(f"/api/v1/sessions/{sid}", headers=USER).json()
+    assert source_detail["review"]["goal_status"] == "revised"
+    assert source_detail["review"]["improvements"] == []
+    assert client.post("/api/v1/review-queue", json=source, headers=USER).status_code == 404
+    assert client.post("/api/v1/phrase-cards", json=source, headers=USER).status_code == 404
+
+
+def test_dispute_revokes_queue_source(client):
+    s = _create_session(client)
+    sid = s["session_id"]
+    tid = _done(_send_text(client, sid, "just working"))["turn_id"]
+    client.post(f"/api/v1/sessions/{sid}/end", json={"reason": "user_ended"}, headers=USER)
+    source = {"source_session_id": sid, "source_turn_id": tid}
+    assert client.post("/api/v1/review-queue", json=source, headers=USER).status_code == 200
+    assert client.post(
+        f"/api/v1/sessions/{sid}/review/dispute", params={"turn_id": tid}, headers=USER,
+    ).status_code == 200
+    assert client.get("/api/v1/review-queue", headers=USER).json() == []

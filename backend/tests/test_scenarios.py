@@ -118,6 +118,15 @@ def test_hotel_checkin_followup_and_completion_stay_on_scene(client):
     assert r2["status"] == "ENDED"
 
 
+def test_hotel_booking_without_name_asks_for_missing_detail(client):
+    s = _create_scene_session(client, "hotel_checkin")
+    r = _send_text_turn(client, s["session_id"], "I have a reservation under my name.")
+    assert r["eval_result"] == "incomplete"
+    assert r["action_type"] == "follow_up"
+    assert "name" in r["reply_text"].lower()
+    assert "alex" not in r["reply_text"].lower()
+
+
 def test_hotel_checkin_help_is_scene_specific(client):
     s = _create_scene_session(client, "hotel_checkin")
     r = client.post(

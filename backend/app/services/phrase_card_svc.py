@@ -51,7 +51,7 @@ def _build(db: DbSession, user_id: str, source_session_id: str, source_turn_id: 
         raise AppError("FORBIDDEN", "无权使用该来源", status_code=403)
     review = json.loads(source.review) if source.review else {}
     imp = next((i for i in review.get("improvements", []) if i.get("turn_id") == source_turn_id), None)
-    if imp is None:
+    if imp is None or imp.get("disputed") or review.get("stale"):
         raise AppError("NOT_FOUND", "改进建议不存在或已失效", status_code=404)
     scene = SCENARIOS.get(source.scene_id, {})
     kws = _keywords(source.scene_id)
@@ -78,6 +78,7 @@ def _build(db: DbSession, user_id: str, source_session_id: str, source_turn_id: 
 
 
 def generate_card(db: DbSession, user_id: str, source_session_id: str, source_turn_id: str) -> dict[str, Any]:
+    card = _build(db, user_id, source_session_id, source_turn_id)
     existing = (
         db.query(PhraseCard)
         .filter(PhraseCard.user_id == user_id, PhraseCard.source_turn_id == source_turn_id)
@@ -85,7 +86,6 @@ def generate_card(db: DbSession, user_id: str, source_session_id: str, source_tu
     )
     if existing is not None:
         return _to_dict(existing)
-    card = _build(db, user_id, source_session_id, source_turn_id)
     db.add(card)
     db.add(EventLog(session_id=source_session_id, turn_id=source_turn_id, action_type="phrase_card", basis="generated"))
     db.commit()

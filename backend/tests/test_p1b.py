@@ -47,3 +47,18 @@ def test_qa_accessible_for_reviewer(client):
     r3 = client.get("/api/v1/qa/stats", headers=QA)
     assert r3.status_code == 200
     assert r3.json()["total"] >= 1
+
+
+def test_revoked_qa_invite_cannot_access_workbench(client):
+    from app.models.database import SessionLocal
+    from app.models.entities import Invite
+
+    _enable_qa()
+    db = SessionLocal()
+    try:
+        invite = db.query(Invite).filter(Invite.code == "qa-a").one()
+        invite.revoked = True
+        db.commit()
+    finally:
+        db.close()
+    assert client.get("/api/v1/qa/sessions", headers=QA).status_code == 401
