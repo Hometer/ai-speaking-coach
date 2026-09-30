@@ -1,7 +1,7 @@
 export type Level = "beginner" | "basic" | "intermediate";
 export type Difficulty = "simple" | "standard";
 export type ActionType = "follow_up" | "hint" | "suggest_practice" | "recheck";
-export type EvalResult = "independent" | "hinted" | "incomplete" | "insufficient_evidence";
+export type EvalResult = "independent" | "hinted" | "incomplete" | "insufficient_evidence" | "text_completed";
 
 export interface SessionCreated {
   session_id: string;
@@ -199,12 +199,17 @@ export interface QueueItem {
 export interface Progress {
   completed_count: number;
   independent_rate: number;
+  text_completed_count: number;
   help_usage_rate: number;
   due_retest_done_rate: number;
   mastered_count: number;
   voice_evaluable_rate: number;
   drill_completed_count: number;
   transfer_completed_count: number;
+  samples: { evaluable_subgoals: number; voice_turns: number; due_items: number };
+  by_scene: Record<string, { independent_rate: number; evaluable: number }>;
+  trend: { date: string; independent_rate: number; evaluable: number }[];
+  mastered_list: { id: number; suggestion_sentence: string; target_ability: string; last_practiced_at: string | null }[];
   calc_version: string;
 }
 

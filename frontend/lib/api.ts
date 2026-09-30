@@ -286,6 +286,16 @@ export async function restartPlan(): Promise<TrainingPlan> {
   return handle<TrainingPlan>(res);
 }
 
+export async function pausePlan(): Promise<TrainingPlan> {
+  const res = await fetch("/api/v1/training-plan/pause", { method: "POST", headers: authHeaders() });
+  return handle<TrainingPlan>(res);
+}
+
+export async function resumePlan(): Promise<TrainingPlan> {
+  const res = await fetch("/api/v1/training-plan/resume", { method: "POST", headers: authHeaders() });
+  return handle<TrainingPlan>(res);
+}
+
 export async function qaSessions(): Promise<QaSession[]> {
   const res = await fetch("/api/v1/qa/sessions", { headers: authHeaders() });
   return handle<QaSession[]>(res);

@@ -27,6 +27,23 @@ def _send_text(client, session_id, text, user="test-a"):
     return _parse_sse(r.text)
 
 
+def _send_voice(client, session_id, transcript, monkeypatch, user="test-a"):
+    from app.services import session_svc
+
+    class _ASR:
+        def transcribe(self, audio_path):
+            return transcript
+
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: _ASR())
+    r = client.post(
+        f"/api/v1/sessions/{session_id}/turns/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers={"X-Invite-Code": user},
+    )
+    assert r.status_code == 200, r.text
+    return _parse_sse(r.text)
+
+
 def _parse_sse(body):
     events = []
     for block in body.split("\n\n"):
@@ -95,15 +112,22 @@ def test_create_session_returns_goal_and_opening(client):
     assert s["reply_audio_url"].startswith("/api/v1/audio/")
 
 
-def test_turn_independent_leads_to_followup(client):
+def test_turn_independent_leads_to_followup(client, monkeypatch):
     s = _create_session(client)
-    events = _send_text(client, s["session_id"], "I have three years of experience in software development.")
+    events = _send_voice(client, s["session_id"], "I have three years of experience in software development.", monkeypatch)
     types = [e for e, _ in events]
     assert "chunk" in types and "done" in types
     done = _done(events)
     assert done["eval_result"] == "independent"
     assert done["action_type"] == "follow_up"
     assert done["status"] == "WAITING_INPUT"
+
+
+def test_text_input_is_not_voice_independent(client):
+    s = _create_session(client)
+    done = _done(_send_text(client, s["session_id"], "I have three years of experience in software development."))
+    assert done["eval_result"] == "text_completed"
+    assert done["status"] != "ENDED"
 
 
 def test_insufficient_answer_gets_hint(client):
@@ -113,30 +137,27 @@ def test_insufficient_answer_gets_hint(client):
     assert done["action_type"] == "hint"
 
 
-def test_two_subgoals_complete_ends_session(client):
+def test_two_subgoals_complete_ends_session(client, monkeypatch):
     s = _create_session(client)
     # 子目标 1：介绍经历
-    e1 = _send_text(client, s["session_id"], "I have three years of experience in software development.")
-    done1 = _done(e1)
+    done1 = _done(_send_voice(client, s["session_id"], "I have three years of experience in software development.", monkeypatch))
     assert done1["eval_result"] == "independent"
     assert done1["status"] == "WAITING_INPUT"
     # 子目标 2：回答追问 → 均独立 → 结束
-    e2 = _send_text(client, s["session_id"], "I have five years of experience in marketing and I enjoy it.")
-    done2 = _done(e2)
+    done2 = _done(_send_voice(client, s["session_id"], "I have five years of experience in marketing and I enjoy it.", monkeypatch))
     assert done2["eval_result"] == "independent"
     assert done2["status"] == "ENDED"
 
 
-def test_hinted_requires_recheck_then_followup(client):
+def test_hinted_requires_recheck_then_followup(client, monkeypatch):
     s = _create_session(client)
     _send_text(client, s["session_id"], "hi")  # → hint
     e2 = _send_text(client, s["session_id"], "I have worked as a teacher for two years.")
     done2 = _done(e2)
     assert done2["eval_result"] == "hinted"
     assert done2["action_type"] == "recheck"
-    # 复测独立回答 → 子目标 1 完成，进入追问
-    e3 = _send_text(client, s["session_id"], "I have five years of experience in marketing and I enjoy it.")
-    done3 = _done(e3)
+    # 复测独立回答（语音）→ 子目标 1 完成，进入追问
+    done3 = _done(_send_voice(client, s["session_id"], "I have five years of experience in marketing and I enjoy it.", monkeypatch))
     assert done3["eval_result"] == "independent"
     assert done3["status"] == "WAITING_INPUT"
 
@@ -368,9 +389,9 @@ def test_delete_all_sessions(client):
     assert client.get("/api/v1/sessions", headers=USER).json() == []
 
 
-def test_revise_turn_invalidates_eval(client):
+def test_revise_turn_invalidates_eval(client, monkeypatch):
     s = _create_session(client)
-    turn_id = _done(_send_text(client, s["session_id"], "I have three years of experience in software development."))["turn_id"]
+    turn_id = _done(_send_voice(client, s["session_id"], "I have three years of experience in software development.", monkeypatch))["turn_id"]
     r = client.patch(
         f"/api/v1/sessions/{s['session_id']}/turns/{turn_id}",
         json={"revised_text": "I have two years of experience."},
@@ -393,7 +414,7 @@ def test_revise_turn_invalidates_eval(client):
         db.close()
 
 
-def test_revise_scene_turn_revokes_derived_evidence(client):
+def test_revise_scene_turn_revokes_derived_evidence(client, monkeypatch):
     from app.models.entities import Session
 
     s = client.post(
@@ -402,7 +423,7 @@ def test_revise_scene_turn_revokes_derived_evidence(client):
         headers=USER,
     ).json()
     sid = s["session_id"]
-    completed = _done(_send_text(client, sid, "I have a reservation under the name Li."))
+    completed = _done(_send_voice(client, sid, "I have a reservation under the name Li.", monkeypatch))
     completed_id = completed["turn_id"]
     assert completed["eval_result"] == "independent"
     incomplete = _done(_send_text(client, sid, "Maybe breakfast."))

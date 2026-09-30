@@ -608,6 +608,10 @@ def submit_turn(
             }
         )
 
+        # 文字输入不构成口语独立证据（AC10-01）：把 independent 降级为 text_completed
+        if input_type == "text" and eval_out.result == "independent":
+            eval_out.result = "text_completed"
+
         # 更新子目标（先算到局部变量，提交前统一应用）
         # 多意图：仅当场景配置显式声明 co_complete 时，一次回答可同时完成多个子目标
         # （如「认识新同事」的自我介绍 + 反问）；其余场景保持每回合只推进一个子目标，

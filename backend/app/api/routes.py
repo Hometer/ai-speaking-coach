@@ -651,6 +651,15 @@ def qa_add_label(req: AddLabelRequest, user_id: str = Depends(get_qa_user_id)):
         db.close()
 
 
+@router.get("/qa/labels/{label_id}/history")
+def qa_label_history(label_id: int, user_id: str = Depends(get_qa_user_id)):
+    db = SessionLocal()
+    try:
+        return qa_svc.label_history(db, label_id)
+    finally:
+        db.close()
+
+
 @router.get("/qa/stats")
 def qa_stats(user_id: str = Depends(get_qa_user_id)):
     db = SessionLocal()

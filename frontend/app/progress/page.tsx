@@ -14,6 +14,7 @@ const METRICS: { key: keyof Progress; label: string; icon: IconName; percent?: b
   { key: "voice_evaluable_rate", label: "语音可评估率", icon: "mic", percent: true },
   { key: "drill_completed_count", label: "脱稿完成数", icon: "book" },
   { key: "transfer_completed_count", label: "迁移成功数", icon: "spark" },
+  { key: "text_completed_count", label: "文字完成数", icon: "chat" },
 ];
 
 export default function ProgressPage() {
@@ -54,6 +55,17 @@ export default function ProgressPage() {
             ))}
           </div>
           <p className="text-xs muted mt-4">能力分（发音 / 语法 / 表达 / 任务完成）在校准前不展示；删除历史会同步重算。</p>
+          {p.samples && <p className="text-xs muted mt-2">样本：可评估子目标 {p.samples.evaluable_subgoals}、语音回合 {p.samples.voice_turns}、到期项目 {p.samples.due_items}。</p>}
+          {p.trend && p.trend.length > 0 && (
+            <section className="panel mt-4"><div className="section-head mt-0"><h3><Icon name="target" size={16} /> 最近 7 天独立完成率</h3></div>
+              <div className="flex flex-wrap gap-2">{p.trend.map((t) => <span key={t.date} className="badge badge-neutral">{t.date.slice(5)}：{Math.round(t.independent_rate * 100)}%（{t.evaluable}）</span>)}</div>
+            </section>
+          )}
+          {p.mastered_list && p.mastered_list.length > 0 && (
+            <section className="panel mt-4"><div className="section-head mt-0"><h3><Icon name="shield" size={16} /> 已掌握项目</h3></div>
+              <ul className="text-sm">{p.mastered_list.map((m) => <li key={m.id} className="py-1">{m.suggestion_sentence || m.target_ability}</li>)}</ul>
+            </section>
+          )}
         </>
       ) : null}
       <footer className="page-footer"><span><Icon name="shield" size={12} /> 仅记录事实型指标，不做排名</span><span>Small steps. Real conversations.</span></footer>

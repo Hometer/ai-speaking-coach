@@ -1,4 +1,5 @@
 """百炼文本调用的统一超时、有限重试和安全错误出口。"""
+import contextvars
 import time
 from typing import Any
 
@@ -7,8 +8,10 @@ from app.core.errors import AppError
 
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 
-# 最近一次成功调用的用量（请求内供事件埋点读取；mock 模式不经过此函数）
-_last_usage: dict[str, int] = {}
+# 按请求上下文隔离的最近一次成功调用用量（避免并发串号）
+_last_usage: "contextvars.ContextVar[dict[str, int]]" = contextvars.ContextVar(
+    "llm_last_usage", default={}
+)
 
 
 def _retryable_exception(exc: Exception) -> bool:
@@ -18,21 +21,21 @@ def _retryable_exception(exc: Exception) -> bool:
 
 
 def _record_usage(response: Any) -> None:
-    global _last_usage
     u = getattr(response, "usage", None)
     if u is None:
         return
-    _last_usage = {
+    _last_usage.set({
         "in": getattr(u, "input_tokens", 0) or 0,
         "out": getattr(u, "output_tokens", 0) or 0,
-    }
+    })
 
 
 def get_last_usage() -> str:
-    """返回最近一次成功 LLM 调用的用量摘要（空字符串表示无真实用量）。"""
-    if not _last_usage:
+    """返回当前请求上下文最近一次成功 LLM 调用的用量摘要（空字符串表示无真实用量）。"""
+    usage = _last_usage.get()
+    if not usage:
         return ""
-    return f"llm_in={_last_usage.get('in', 0)}/llm_out={_last_usage.get('out', 0)}"
+    return f"llm_in={usage.get('in', 0)}/llm_out={usage.get('out', 0)}"
 
 
 def call_generation(*, api_key: str, model: str, messages: list[dict[str, str]]) -> Any:

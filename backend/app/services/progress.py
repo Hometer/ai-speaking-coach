@@ -1,5 +1,5 @@
 """进步中心：事实型指标（后端计算，前端不自行拼接权威结论）。"""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session as DbSession
@@ -10,6 +10,7 @@ from app.models.entities import DrillAttempt, Evaluation, ReviewQueueItem, Sessi
 def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     sessions = db.query(Session).filter(Session.user_id == user_id).all()
     session_ids = [s.id for s in sessions]
+    session_scene = {s.id: s.scene_id for s in sessions}
 
     # 完成练习数：已结束且有回顾（AC10-15，任意结束不算完成）
     completed_count = sum(1 for s in sessions if s.status == "ENDED" and s.review)
@@ -21,6 +22,7 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
         else []
     )
     independent_count = sum(1 for e in evals if e.result == "independent")
+    text_completed_count = sum(1 for e in evals if e.result == "text_completed")
     evaluable = [e for e in evals if e.result in ("independent", "hinted", "incomplete")]
     independent_rate = round(independent_count / len(evaluable), 3) if evaluable else 0.0
 
@@ -59,14 +61,68 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     drill_completed_count = sum(1 for a in valid_drill_attempts if a.result == "independent")
     transfer_completed_count = sum(1 for a in valid_drill_attempts if a.result == "transfer")
 
+    # 样本数（供人工核对分母）
+    samples = {
+        "evaluable_subgoals": len(evaluable),
+        "voice_turns": len(voice_turns),
+        "due_items": len(due_items),
+    }
+
+    # 按场景独立率
+    by_scene: dict[str, dict[str, Any]] = {}
+    for e in evals:
+        scene = session_scene.get(e.session_id, "")
+        bucket = by_scene.setdefault(scene, {"independent": 0, "evaluable": 0})
+        bucket["evaluable"] += 1 if e.result in ("independent", "hinted", "incomplete") else 0
+        bucket["independent"] += 1 if e.result == "independent" else 0
+    by_scene = {
+        k: {
+            "independent_rate": round(v["independent"] / v["evaluable"], 3) if v["evaluable"] else 0.0,
+            "evaluable": v["evaluable"],
+        }
+        for k, v in by_scene.items()
+    }
+
+    # 最近 7 天独立率趋势
+    trend: list[dict[str, Any]] = []
+    for i in range(6, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        day_evals = [
+            e for e in evals
+            if e.created_at is not None and e.created_at.date() == day
+            and e.result in ("independent", "hinted", "incomplete")
+        ]
+        day_ind = sum(1 for e in day_evals if e.result == "independent")
+        trend.append({
+            "date": day.isoformat(),
+            "independent_rate": round(day_ind / len(day_evals), 3) if day_evals else 0.0,
+            "evaluable": len(day_evals),
+        })
+
+    # 已掌握列表
+    mastered_list = [
+        {
+            "id": q.id,
+            "suggestion_sentence": q.suggestion_sentence,
+            "target_ability": q.target_ability,
+            "last_practiced_at": q.last_practiced_at.isoformat() if q.last_practiced_at else None,
+        }
+        for q in queue if q.status == "mastered"
+    ]
+
     return {
         "completed_count": completed_count,
         "independent_rate": independent_rate,
+        "text_completed_count": text_completed_count,
         "help_usage_rate": help_usage_rate,
         "due_retest_done_rate": due_retest_done_rate,
         "mastered_count": mastered_count,
         "voice_evaluable_rate": voice_evaluable_rate,
         "drill_completed_count": drill_completed_count,
         "transfer_completed_count": transfer_completed_count,
-        "calc_version": "v3",
+        "samples": samples,
+        "by_scene": by_scene,
+        "trend": trend,
+        "mastered_list": mastered_list,
+        "calc_version": "v4",
     }

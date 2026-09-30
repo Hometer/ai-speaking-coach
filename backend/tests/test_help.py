@@ -38,6 +38,33 @@ def _turn(client, session_id, text):
                 data = json.loads(line[5:].strip())
         if event == "done" and data is not None:
             return data
+
+
+def _turn_voice(client, session_id, transcript, monkeypatch):
+    from app.services import session_svc
+
+    class _ASR:
+        def transcribe(self, audio_path):
+            return transcript
+
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: _ASR())
+    r = client.post(
+        f"/api/v1/sessions/{session_id}/turns/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    for block in r.text.split("\n\n"):
+        if not block.strip():
+            continue
+        event, data = None, None
+        for line in block.split("\n"):
+            if line.startswith("event:"):
+                event = line[6:].strip()
+            elif line.startswith("data:"):
+                data = json.loads(line[5:].strip())
+        if event == "done" and data is not None:
+            return data
     raise AssertionError("未收到 done 事件")
 
 
@@ -138,11 +165,11 @@ def test_translate_and_organize_affect_independence(client):
         assert done["eval_result"] == "hinted"
 
 
-def test_repeat_and_explain_keep_independence(client):
+def test_repeat_and_explain_keep_independence(client, monkeypatch):
     for help_type in ("repeat", "explain"):
         s = _create(client)
         _help(client, s["session_id"], help_type)
-        done = _turn(client, s["session_id"], "I have three years of experience in software development.")
+        done = _turn_voice(client, s["session_id"], "I have three years of experience in software development.", monkeypatch)
         assert done["eval_result"] == "independent"
 
 

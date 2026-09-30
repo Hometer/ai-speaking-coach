@@ -7,7 +7,7 @@ import { addToQueue, createSession, deleteAllSessions, deleteSession, getSession
 import type { SessionDetail, SessionListItem } from "@/lib/types";
 import Icon from "@/components/Icon";
 
-const EVAL_CN: Record<string, string> = { independent: "独立完成", hinted: "提示下完成", incomplete: "未完成", insufficient_evidence: "证据不足", not_started: "未开始", revised: "待重算" };
+const EVAL_CN: Record<string, string> = { independent: "独立完成", hinted: "提示下完成", incomplete: "未完成", insufficient_evidence: "证据不足", text_completed: "文字完成", not_started: "未开始", revised: "待重算" };
 function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleString("zh-CN", { month:"long", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "日期未知";
 }

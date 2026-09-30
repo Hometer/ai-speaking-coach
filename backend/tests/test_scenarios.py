@@ -107,13 +107,44 @@ def _send_text_turn(client, session_id, text):
     return done
 
 
-def test_hotel_checkin_followup_and_completion_stay_on_scene(client):
+def _send_voice_turn(client, session_id, transcript, monkeypatch):
+    """语音回答：monkeypatch ASR 返回指定转写，走真实 voice 提交路径。"""
+    from app.services import session_svc
+
+    class _ASR:
+        def transcribe(self, audio_path):
+            return transcript
+
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: _ASR())
+    r = client.post(
+        f"/api/v1/sessions/{session_id}/turns/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    done = None
+    for block in r.text.split("\n\n"):
+        if not block.strip():
+            continue
+        event, data = None, None
+        for line in block.split("\n"):
+            if line.startswith("event:"):
+                event = line[6:].strip()
+            elif line.startswith("data:"):
+                data = json.loads(line[5:].strip())
+        if event == "done" and data is not None:
+            done = data
+    assert done is not None, r.text
+    return done
+
+
+def test_hotel_checkin_followup_and_completion_stay_on_scene(client, monkeypatch):
     s = _create_scene_session(client, "hotel_checkin")
-    r1 = _send_text_turn(client, s["session_id"], "I have a reservation under the name Li.")
+    r1 = _send_voice_turn(client, s["session_id"], "I have a reservation under the name Li.", monkeypatch)
     assert r1["eval_result"] == "independent"
     assert "experience" not in r1["reply_text"].lower()
     assert "software" not in r1["reply_text"].lower()
-    r2 = _send_text_turn(client, s["session_id"], "What time does breakfast start?")
+    r2 = _send_voice_turn(client, s["session_id"], "What time does breakfast start?", monkeypatch)
     assert r2["eval_result"] == "independent"
     assert r2["status"] == "ENDED"
 
@@ -139,42 +170,42 @@ def test_hotel_checkin_help_is_scene_specific(client):
     assert ("reservation" in body["reply_text"]) or ("breakfast" in body["reply_text"])
 
 
-def test_meeting_opinion_uses_opinion_and_reason(client):
+def test_meeting_opinion_uses_opinion_and_reason(client, monkeypatch):
     s = _create_scene_session(client, "meeting_opinion")
-    r1 = _send_text_turn(client, s["session_id"], "I think we should launch the smaller version first.")
+    r1 = _send_voice_turn(client, s["session_id"], "I think we should launch the smaller version first.", monkeypatch)
     assert r1["eval_result"] == "independent"
-    r2 = _send_text_turn(client, s["session_id"], "Because it is faster to test and cheaper to fix.")
+    r2 = _send_voice_turn(client, s["session_id"], "Because it is faster to test and cheaper to fix.", monkeypatch)
     assert r2["status"] == "ENDED"
 
 
-def test_new_friend_requires_two_rounds(client):
+def test_new_friend_requires_two_rounds(client, monkeypatch):
     s = _create_scene_session(client, "new_friend")
-    r1 = _send_text_turn(client, s["session_id"], "I am Alex and I work in marketing and I like hiking.")
+    r1 = _send_voice_turn(client, s["session_id"], "I am Alex and I work in marketing and I like hiking.", monkeypatch)
     assert r1["eval_result"] == "independent"
     assert r1["status"] != "ENDED"
-    r2 = _send_text_turn(client, s["session_id"], "In my free time I like hiking.")
+    r2 = _send_voice_turn(client, s["session_id"], "In my free time I like hiking.", monkeypatch)
     assert r2["status"] == "ENDED"
 
 
-def test_new_colleague_intro_and_question_in_one_turn_completes(client):
+def test_new_colleague_intro_and_question_in_one_turn_completes(client, monkeypatch):
     # 认识新同事：自我介绍 + 反问同句完成，两个子目标都独立 → 一轮结束（co_complete）
     s = _create_scene_session(client, "new_colleague")
-    r1 = _send_text_turn(client, s["session_id"], "I just joined the sales team. What about you?")
+    r1 = _send_voice_turn(client, s["session_id"], "I just joined the sales team. What about you?", monkeypatch)
     assert r1["eval_result"] == "independent"
     assert r1["status"] == "ENDED"
 
 
-def test_new_colleague_self_intro_only_does_not_end(client):
+def test_new_colleague_self_intro_only_does_not_end(client, monkeypatch):
     # 只自我介绍、不反问时，仅 self_intro 完成，ask_question 仍待完成，不应结束
     s = _create_scene_session(client, "new_colleague")
-    r1 = _send_text_turn(client, s["session_id"], "I am a designer on the product team.")
+    r1 = _send_voice_turn(client, s["session_id"], "I am a designer on the product team.", monkeypatch)
     assert r1["eval_result"] == "independent"
     assert r1["status"] != "ENDED"
 
 
-def test_job_interview_still_works(client):
+def test_job_interview_still_works(client, monkeypatch):
     s = _create_scene_session(client, "job_interview")
-    r1 = _send_text_turn(client, s["session_id"], "I have three years of experience in software development.")
+    r1 = _send_voice_turn(client, s["session_id"], "I have three years of experience in software development.", monkeypatch)
     assert r1["eval_result"] == "independent"
     assert ("experience" in r1["reply_text"].lower()) or ("challenging" in r1["reply_text"].lower())
 

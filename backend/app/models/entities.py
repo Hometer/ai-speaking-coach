@@ -235,6 +235,20 @@ class QualityLabel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class QualityLabelChange(Base):
+    """质检标签变更审计（AC10-19）：每次改动留旧值/新值/审核人。"""
+    __tablename__ = "quality_label_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    label_id: Mapped[int] = mapped_column(Integer, index=True)
+    reviewer_id: Mapped[str] = mapped_column(String(64), default="")
+    old_conclusion: Mapped[str] = mapped_column(String(24), default="")
+    new_conclusion: Mapped[str] = mapped_column(String(24), default="")
+    old_review_version: Mapped[str] = mapped_column(String(16), default="")
+    new_review_version: Mapped[str] = mapped_column(String(16), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class DrillAttempt(Base):
     """脱稿阶梯一次尝试（P1-1）：绑定来源建议与阶梯阶段，帮助证据决定完成结论。"""
     __tablename__ = "drill_attempts"

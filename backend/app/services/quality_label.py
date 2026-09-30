@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
-from app.models.entities import EventLog, QualityLabel, Session, Turn
+from app.models.entities import EventLog, QualityLabel, QualityLabelChange, Session, Turn
 
 ISSUE_TYPES = [
     "mis_correction",
@@ -112,13 +112,25 @@ def add_label(
         .first()
     )
     if existing is not None:
-        # 覆盖式更新：递增 review_version，可追溯最近一次审核
+        # 覆盖式更新：写审计记录 + 递增 review_version，可追溯每次改动
+        old_version = existing.review_version or "v1"
+        try:
+            new_version = f"v{int(old_version.lstrip('v') or '1') + 1}"
+        except ValueError:
+            new_version = "v2"
+        db.add(
+            QualityLabelChange(
+                label_id=existing.id,
+                reviewer_id=reviewer_id,
+                old_conclusion=existing.conclusion,
+                new_conclusion=conclusion,
+                old_review_version=old_version,
+                new_review_version=new_version,
+            )
+        )
         existing.conclusion = conclusion
         existing.reviewer_id = reviewer_id
-        try:
-            existing.review_version = f"v{int(existing.review_version.lstrip('v') or '1') + 1}"
-        except ValueError:
-            existing.review_version = "v2"
+        existing.review_version = new_version
         label = existing
     else:
         label = QualityLabel(
@@ -140,6 +152,31 @@ def add_label(
         "conclusion": label.conclusion,
         "review_version": label.review_version,
     }
+
+
+def label_history(db: DbSession, label_id: int) -> list[dict[str, Any]]:
+    """返回某个标签的变更审计历史。"""
+    label = db.get(QualityLabel, label_id)
+    if label is None:
+        raise AppError("NOT_FOUND", "标签不存在", status_code=404)
+    changes = (
+        db.query(QualityLabelChange)
+        .filter(QualityLabelChange.label_id == label_id)
+        .order_by(QualityLabelChange.created_at.asc())
+        .all()
+    )
+    return [
+        {
+            "id": c.id,
+            "reviewer_id": c.reviewer_id,
+            "old_conclusion": c.old_conclusion,
+            "new_conclusion": c.new_conclusion,
+            "old_review_version": c.old_review_version,
+            "new_review_version": c.new_review_version,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        }
+        for c in changes
+    ]
 
 
 def stats(db: DbSession) -> dict[str, Any]:

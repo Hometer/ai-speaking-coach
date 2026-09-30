@@ -106,3 +106,8 @@ def test_qa_label_repeat_increments_version(client):
     assert r1["review_version"] == "v1"
     r2 = client.post("/api/v1/qa/labels", json={**body, "conclusion": "disputed"}, headers=QA).json()
     assert r2["review_version"] == "v2"
+    # 审计历史可查
+    hist = client.get(f"/api/v1/qa/labels/{r2['id']}/history", headers=QA).json()
+    assert len(hist) == 1
+    assert hist[0]["old_conclusion"] == "confirmed"
+    assert hist[0]["new_conclusion"] == "disputed"

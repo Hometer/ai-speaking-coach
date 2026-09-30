@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-EvalResult = Literal["independent", "hinted", "incomplete", "insufficient_evidence"]
+EvalResult = Literal["independent", "hinted", "incomplete", "insufficient_evidence", "text_completed"]
 
 
 class EvaluationOutput(BaseModel):

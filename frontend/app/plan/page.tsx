@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { createPlan, getPlan, restartPlan, skipPlanDay } from "@/lib/api";
+import { createPlan, getPlan, pausePlan, restartPlan, resumePlan, skipPlanDay } from "@/lib/api";
 import type { TrainingPlan } from "@/lib/types";
 import Icon from "@/components/Icon";
 
@@ -50,6 +50,14 @@ export default function PlanPage() {
     finally { setPending(""); }
   }
 
+  async function togglePause() {
+    if (!plan) return;
+    setPending("pause"); setErr("");
+    try { setPlan(plan.status === "paused" ? await resumePlan() : await pausePlan()); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setPending(""); }
+  }
+
   return (
     <main className="page">
       <div className="topline"><span className="topline-title"><Icon name="spark" size={15} /> 我的学习空间 / 七日计划</span><Link href="/" className="text-link">开始新的练习 <Icon name="arrow" size={14} /></Link></div>
@@ -67,6 +75,7 @@ export default function PlanPage() {
         </div>
         <div className="flex gap-3 mt-4">
           <button className="btn btn-primary" onClick={create} disabled={!!pending}>{pending === "create" ? "生成中…" : "生成 / 更新计划"}</button>
+          {plan && <button className="btn btn-ghost" onClick={togglePause} disabled={!!pending}>{plan.status === "paused" ? "恢复计划" : "暂停计划"}</button>}
           {plan && <button className="btn btn-ghost" onClick={restart} disabled={!!pending}>重新开始</button>}
         </div>
       </div>

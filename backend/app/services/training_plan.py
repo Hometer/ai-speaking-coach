@@ -87,6 +87,7 @@ def _to_dict(plan: TrainingPlan, db: DbSession | None = None) -> dict[str, Any]:
                     Session.user_id == plan.user_id,
                     Session.scene_id == d.get("scene_id"),
                     Session.status == "ENDED",
+                    Session.review != "",
                     Session.ended_at.isnot(None),
                 )
                 .first()
@@ -95,7 +96,7 @@ def _to_dict(plan: TrainingPlan, db: DbSession | None = None) -> dict[str, Any]:
                 ended = matched.ended_at
                 if ended.tzinfo is None:
                     ended = ended.replace(tzinfo=timezone.utc)
-                if ended.date() == today:
+                if ended.date() == today and plan.created_at is not None and ended >= plan.created_at.replace(tzinfo=timezone.utc):
                     d["status"] = "completed"
     return {
         "id": plan.id,

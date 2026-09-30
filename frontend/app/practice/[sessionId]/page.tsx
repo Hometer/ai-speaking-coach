@@ -28,6 +28,7 @@ const GOAL_STATUS_CN: Record<string, string> = {
   hinted: "提示下完成",
   incomplete: "未完成",
   insufficient_evidence: "证据不足",
+  text_completed: "文字完成",
   not_started: "未开始",
   revised: "待重算",
 };
