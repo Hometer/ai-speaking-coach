@@ -74,6 +74,12 @@ def test_voice_risk_hold_and_confirm(client, monkeypatch):
     assert risk["transcript"] == "I have three years of experience in"
     assert risk.get("recording_url")  # 有听回录音
 
+    # 听回：录音可访问（非 404）
+    rec = client.get(risk["recording_url"], headers=USER)
+    assert rec.status_code == 200, rec.text
+    # 他人不可访问
+    assert client.get(risk["recording_url"], headers={"X-Invite-Code": "test-b"}).status_code in (403, 404)
+
     # 刷新恢复：pending_risk 持久化
     detail = client.get(f"/api/v1/sessions/{sid}", headers=USER).json()
     assert detail.get("pending_risk") and detail["pending_risk"]["turn_id"] == risk["turn_id"]
@@ -88,3 +94,30 @@ def test_voice_risk_hold_and_confirm(client, monkeypatch):
     body = r2.json()
     assert body.get("turn_id")
     assert body.get("eval_result") in ("independent", "hinted", "incomplete", "insufficient_evidence")
+
+
+def test_text_fallback_is_not_voice_independent(client, monkeypatch):
+    from app.services import session_svc
+
+    s = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard"}, headers=USER)
+    sid = s.json()["session_id"]
+
+    class TruncatedASR:
+        def transcribe(self, audio_path):
+            return "I have three years of experience in"
+
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: TruncatedASR())
+    r = client.post(
+        f"/api/v1/sessions/{sid}/turns/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    risk = next(d for e, d in _sse_events(r.text) if e == "risk_hold")
+    # 改用文字 → 文字完成，不是语音独立
+    r2 = client.post(
+        f"/api/v1/sessions/{sid}/turns/{risk['turn_id']}/confirm",
+        json={"confirmed_text": "I have three years of experience in software development.", "action": "text_fallback"},
+        headers=USER,
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["eval_result"] == "text_completed"

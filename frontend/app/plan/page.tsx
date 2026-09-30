@@ -90,12 +90,12 @@ export default function PlanPage() {
               <div className="history-info">
                 <h3>第 {d.day} 天 · {d.scene_label}</h3>
                 <div className="history-meta">
-                  <span>{d.status === "skipped" ? "已跳过" : "待练"}</span>
+                  <span>{d.status === "skipped" ? "已跳过" : d.status === "completed" ? "已完成" : "待练"}</span>
                   {d.retest_item_id ? <span>含一项到期复练</span> : <span>可选复练：无到期项</span>}
                   {d.adjustment_reason && <span>{d.adjustment_reason}</span>}
                 </div>
               </div>
-              <span className={`badge ${d.status === "skipped" ? "badge-neutral" : ""}`}>{d.status === "skipped" ? "已跳过" : "待练"}</span>
+              <span className={`badge ${d.status !== "completed" ? "badge-neutral" : ""}`}>{d.status === "skipped" ? "已跳过" : d.status === "completed" ? "已完成" : "待练"}</span>
               <div className="row-actions">
                 <Link className="btn btn-secondary btn-small" href={`/?scene=${d.scene_id}`}>练这一场景 <Icon name="arrow" size={13} /></Link>
                 {d.status !== "skipped" && <button onClick={() => skip(d.day)} disabled={!!pending} className="btn btn-ghost btn-small">跳过</button>}

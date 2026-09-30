@@ -154,15 +154,10 @@ def submit_attempt(
     session = db.get(Session, session_id)
     if session is None or session.user_id != user_id:
         raise AppError("FORBIDDEN", "无权访问该会话", status_code=403)
-    if session.practice_type != "daily_review" or session.status == "ENDED":
-        raise AppError("INVALID_STATE", "今日复练已结束或不存在", status_code=409)
 
-    cur = current_item(db, session, user_id)
-    if cur.get("done"):
-        raise AppError("SESSION_ENDED", "今日复练已结束", status_code=409)
-    item = db.get(ReviewQueueItem, cur["item"]["id"])
+    answer = (answer or "").strip()
 
-    # 幂等：同键返回首次结果，不重复推进
+    # 幂等检查放最前（仅次归属校验）：同键返回首次结果；同键异内容 409
     if attempt_key:
         existing = (
             db.query(DailyReviewAttempt)
@@ -170,6 +165,8 @@ def submit_attempt(
             .first()
         )
         if existing is not None:
+            if existing.attempt_answer != answer:
+                raise AppError("IDEMPOTENCY_CONFLICT", "同一请求键内容不一致", status_code=409)
             nxt = current_item(db, session, user_id)
             return {
                 "success": existing.result == "independent",
@@ -177,6 +174,14 @@ def submit_attempt(
                 "help_shown": existing.help_shown,
                 "next": nxt,
             }
+
+    if session.practice_type != "daily_review" or session.status == "ENDED":
+        raise AppError("INVALID_STATE", "今日复练已结束或不存在", status_code=409)
+
+    cur = current_item(db, session, user_id)
+    if cur.get("done"):
+        raise AppError("SESSION_ENDED", "今日复练已结束", status_code=409)
+    item = db.get(ReviewQueueItem, cur["item"]["id"])
 
     result = judge_recall(answer, item.suggestion_sentence, input_type, item.help_shown)
 

@@ -21,7 +21,7 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
         if session_ids
         else []
     )
-    independent_count = sum(1 for e in evals if e.result == "independent")
+    independent_count = sum(1 for e in evals if e.result == "independent" and e.input_type == "voice")
     text_completed_count = sum(1 for e in evals if e.result == "text_completed")
     # 可评估分母只统计语音子目标（文字回答不参与口语独立率）
     evaluable = [
@@ -72,9 +72,11 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
         "due_items": len(due_items),
     }
 
-    # 按场景独立率
+    # 按场景独立率（仅语音）
     by_scene: dict[str, dict[str, Any]] = {}
     for e in evals:
+        if e.input_type != "voice":
+            continue
         scene = session_scene.get(e.session_id, "")
         bucket = by_scene.setdefault(scene, {"independent": 0, "evaluable": 0})
         bucket["evaluable"] += 1 if e.result in ("independent", "hinted", "incomplete") else 0
@@ -93,7 +95,7 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
         day = (now - timedelta(days=i)).date()
         day_evals = [
             e for e in evals
-            if e.created_at is not None and e.created_at.date() == day
+            if e.input_type == "voice" and e.created_at is not None and e.created_at.date() == day
             and e.result in ("independent", "hinted", "incomplete")
         ]
         day_ind = sum(1 for e in day_evals if e.result == "independent")

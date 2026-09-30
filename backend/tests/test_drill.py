@@ -67,6 +67,16 @@ def _attempt_voice(client, sid, text, monkeypatch):
     return r.json()
 
 
+def test_transfer_rejects_unrelated_answer():
+    from app.services.recall_judge import judge_transfer
+
+    refs = ["I have a reservation under the name Li.", "What time does breakfast start?"]
+    # 无关句：不含参考表达内容词 → pending
+    assert judge_transfer("The hotel has beautiful music today", "I have a reservation for two nights", "voice", False, refs) == "pending"
+    # 相关句：含 ≥2 参考表达内容词 → transfer
+    assert judge_transfer("What time does breakfast start", "I have a reservation for two nights", "voice", False, refs) == "transfer"
+
+
 def test_create_drill_session_sets_stage(client):
     source_sid, source_tid, imp = _source_improvement(client)
     d = _create_drill(client, source_sid, source_tid)

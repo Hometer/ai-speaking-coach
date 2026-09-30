@@ -89,6 +89,20 @@ def test_revoked_qa_invite_cannot_access_workbench(client):
     assert client.get("/api/v1/qa/sessions", headers=QA).status_code == 401
 
 
+def test_plan_completion_binds_to_single_day(client):
+    # 旅行计划：酒店/餐厅交替，酒店在 1/3/5/7 天
+    client.post("/api/v1/training-plan", json={"goal_type": "travel"}, headers=USER)
+    # 结束一次酒店练习
+    s = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard", "scene_id": "hotel_checkin"}, headers=USER).json()
+    client.post(f"/api/v1/sessions/{s['session_id']}/turns/text", json={"text": "I have a reservation under the name Li."}, headers=USER)
+    client.post(f"/api/v1/sessions/{s['session_id']}/end", json={"reason": "user_ended"}, headers=USER)
+    p = client.get("/api/v1/training-plan", headers=USER).json()
+    hotel_days = [d for d in p["days"] if d["scene_id"] == "hotel_checkin"]
+    completed = [d for d in hotel_days if d["status"] == "completed"]
+    assert len(completed) == 1  # 一练只点亮最早的同场景待练日
+    assert completed[0]["day"] == min(d["day"] for d in hotel_days)
+
+
 def test_plan_pause_resume(client):
     client.post("/api/v1/training-plan", json={"goal_type": "daily"}, headers=USER)
     p = client.post("/api/v1/training-plan/pause", headers=USER).json()

@@ -135,6 +135,16 @@ def submit_retest(
     item = db.get(ReviewQueueItem, item_id)
     if item is None or item.user_id != user_id:
         raise AppError("NOT_FOUND", "队列项不存在", status_code=404)
+
+    answer = (answer or "").strip()
+
+    # 幂等检查放最前（仅次归属校验）：同键同内容返回首次结果，同键异内容 409
+    if attempt_key:
+        if item.last_attempt_key == attempt_key:
+            if item.last_attempt_answer == answer:
+                return _to_dict(item)
+            raise AppError("IDEMPOTENCY_CONFLICT", "同一请求键内容不一致", status_code=409)
+
     if item.status not in (STATUS_PENDING, STATUS_AWAITING_RETEST):
         raise AppError("INVALID_STATE", "该队列项当前不能复测", status_code=409)
 
@@ -146,15 +156,6 @@ def submit_retest(
         due = due.replace(tzinfo=timezone.utc)
     if _now() < due:
         raise AppError("NOT_DUE", "复测尚未到期，请稍后再试", status_code=409)
-
-    answer = (answer or "").strip()
-
-    # 幂等：同键同内容返回当前状态；同键不同内容 409
-    if attempt_key:
-        if item.last_attempt_key == attempt_key:
-            if item.last_attempt_answer == answer:
-                return _to_dict(item)
-            raise AppError("IDEMPOTENCY_CONFLICT", "同一请求键内容不一致", status_code=409)
 
     result = judge_recall(answer, item.suggestion_sentence, input_type, item.help_shown)
 

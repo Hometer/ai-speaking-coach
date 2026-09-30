@@ -163,6 +163,7 @@ def voice_turn_stream(session_id: str, audio: UploadFile = File(...), user_id: s
             partial = session_svc.submit_turn(db, session_id, user_id, "voice", audio_bytes=data)
             if partial.get("risk_hold"):
                 yield _sse("risk_hold", partial)
+                yield _sse("done", partial)  # 以 done 收尾
                 return
             yield _sse("chunk", {"text": partial["reply_text"]})
             done = session_svc.synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])

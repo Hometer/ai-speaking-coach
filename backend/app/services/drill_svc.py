@@ -180,10 +180,10 @@ def submit_drill_attempt(
         raise AppError("INVALID_STATE", "该会话不是脱稿练习", status_code=409)
     if session.source_invalid:
         raise AppError("SOURCE_INVALID", "来源内容已失效，请重新选择练习", status_code=409)
-    if session.status == "ENDED" or session.drill_stage == "ended":
-        raise AppError("SESSION_ENDED", "脱稿练习已结束", status_code=409)
 
-    # 幂等：同键返回首次结果，不重复推进
+    text = (text or "").strip()
+
+    # 幂等检查放最前（仅次来源校验）：同键返回首次结果；同键异内容 409
     if attempt_key:
         existing = (
             db.query(DrillAttempt)
@@ -191,6 +191,8 @@ def submit_drill_attempt(
             .first()
         )
         if existing is not None:
+            if existing.answer_text != text:
+                raise AppError("IDEMPOTENCY_CONFLICT", "同一请求键内容不一致", status_code=409)
             view = drill_view(session, db)
             return {
                 "success": existing.result in ("independent", "transfer", "reference", "hinted"),
@@ -200,18 +202,19 @@ def submit_drill_attempt(
                 **view,
             }
 
+    if session.status == "ENDED" or session.drill_stage == "ended":
+        raise AppError("SESSION_ENDED", "脱稿练习已结束", status_code=409)
+
     stage = session.drill_stage or "full_text"
-    text = (text or "").strip()
 
     if stage == "free_speak":
         # 脱稿说：只看中文意图，语音 + 相关 + 非照抄才独立
         result = judge_recall(text, session.drill_target, input_type, help_shown=False)
         success = result == "independent"
     elif stage == "transfer":
-        # 换题：按新条件，不复述原句，且与场景关键词相关
+        # 换题：按新条件，不复述原句，且与参考表达有 ≥2 内容词重叠
         scene = SCENARIOS.get(session.scene_id or "", {})
-        scene_kw = (scene.get("acceptable_points") or []) + (scene.get("reference_expressions") or [])
-        result = judge_transfer(text, session.drill_target, input_type, help_shown=False, scene_keywords=scene_kw)
+        result = judge_transfer(text, session.drill_target, input_type, help_shown=False, reference_expressions=(scene.get("reference_expressions") or []))
         success = result == "transfer"
     else:
         # 有参考阶段（看全文/补词/看结构）：照着说，词重叠判定完成

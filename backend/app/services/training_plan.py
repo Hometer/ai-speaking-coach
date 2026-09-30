@@ -76,28 +76,31 @@ def _generate_days(db: DbSession, user_id: str, goal_type: str, level: str) -> l
 def _to_dict(plan: TrainingPlan, db: DbSession | None = None) -> dict[str, Any]:
     days = json.loads(plan.days_json) if plan.days_json else []
     if db is not None:
-        # 当天完成状态与真实有效练习关联
-        today = _now().date()
-        for d in days:
+        # 完成关联：统计计划创建后各场景「结束且有回顾」的会话数，
+        # 按 day 升序给对应场景的待练日逐一点亮（一练只点亮最早的同场景待练日）。
+        scene_done: dict[str, int] = {}
+        plan_created = plan.created_at
+        if plan_created is not None and plan_created.tzinfo is None:
+            plan_created = plan_created.replace(tzinfo=timezone.utc)
+        for s in db.query(Session).filter(
+            Session.user_id == plan.user_id,
+            Session.status == "ENDED",
+            Session.review != "",
+            Session.ended_at.isnot(None),
+        ).all():
+            ended = s.ended_at
+            if ended.tzinfo is None:
+                ended = ended.replace(tzinfo=timezone.utc)
+            if plan_created is None or ended >= plan_created:
+                scene_done[s.scene_id] = scene_done.get(s.scene_id, 0) + 1
+        for d in sorted(days, key=lambda x: x.get("day", 0)):
+            if d.get("status") not in ("pending", "completed"):
+                continue
             if d.get("status") == "completed":
                 continue
-            matched = (
-                db.query(Session)
-                .filter(
-                    Session.user_id == plan.user_id,
-                    Session.scene_id == d.get("scene_id"),
-                    Session.status == "ENDED",
-                    Session.review != "",
-                    Session.ended_at.isnot(None),
-                )
-                .first()
-            )
-            if matched and matched.ended_at:
-                ended = matched.ended_at
-                if ended.tzinfo is None:
-                    ended = ended.replace(tzinfo=timezone.utc)
-                if ended.date() == today and plan.created_at is not None and ended >= plan.created_at.replace(tzinfo=timezone.utc):
-                    d["status"] = "completed"
+            if scene_done.get(d.get("scene_id"), 0) > 0:
+                d["status"] = "completed"
+                scene_done[d["scene_id"]] -= 1
     return {
         "id": plan.id,
         "goal_type": plan.goal_type,

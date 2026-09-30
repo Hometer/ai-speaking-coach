@@ -168,6 +168,16 @@ def migrate_db() -> None:
             "ON turns(request_key) WHERE request_key IS NOT NULL AND request_key != ''"
         ))
 
+        # 尝试键唯一约束（并发兑底，仅非空键）
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_drill_attempt_key "
+            "ON drill_attempts(drill_session_id, attempt_key) WHERE attempt_key != ''"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_daily_review_attempt_key "
+            "ON daily_review_attempts(session_id, attempt_key) WHERE attempt_key != ''"
+        ))
+
         # 语块卡：并发同来源唯一
         conn.execute(text(
             "DELETE FROM phrase_cards WHERE id NOT IN ("

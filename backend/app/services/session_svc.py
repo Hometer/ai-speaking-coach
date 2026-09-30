@@ -795,11 +795,18 @@ def confirm_turn(
     if risk is None:
         raise AppError("NOT_FOUND", "待确认的转写不存在", status_code=404)
 
-    partial = submit_turn(
-        db, session_id, user_id, "voice",
-        pre_transcribed=confirmed_text,
-        request_key=f"confirm:{turn_id}",
-    )
+    if action == "text_fallback":
+        partial = submit_turn(
+            db, session_id, user_id, "text",
+            user_text=confirmed_text,
+            request_key=f"confirm:{turn_id}",
+        )
+    else:
+        partial = submit_turn(
+            db, session_id, user_id, "voice",
+            pre_transcribed=confirmed_text,
+            request_key=f"confirm:{turn_id}",
+        )
     # 提交成功后写确认版本并清空待确认状态
     risk = (
         db.query(AsrRiskRecord)
@@ -1129,6 +1136,13 @@ def list_sessions(db: DbSession, user_id: str, filters: dict[str, Any] | None = 
         q = q.filter(Session.practice_type == filters["practice_type"])
     if filters.get("status") == "completed":
         q = q.filter(Session.status == S_ENDED)
+        # 普通练习完成须有回顾；单句/今日复练无 review，结束即完成
+        q = q.filter(
+            or_(
+                Session.review != "",
+                Session.practice_type.in_(["sentence_practice", "daily_review"]),
+            )
+        )
     elif filters.get("status") == "incomplete":
         q = q.filter(Session.status != S_ENDED)
     sessions = q.order_by(Session.started_at.desc()).all()
@@ -1405,10 +1419,23 @@ def resolve_audio_for_user(db: DbSession, filename: str, user_id: str) -> Path:
     # 教练合成音频（reply_audio_url）与本人跟读录音（recording_url）都指向同一音频目录，均需归属校验。
     turn = db.query(Turn).filter(or_(Turn.reply_audio_url == url, Turn.recording_url == url)).first()
     if turn is None:
-        raise AppError("NOT_FOUND", "音频不存在", status_code=404)
-    session = db.get(Session, turn.session_id)
-    if session is None or session.user_id != user_id:
-        raise AppError("FORBIDDEN", "无权访问该音频", status_code=403)
+        # 待确认可疑转写保存的本人录音（REQ-32），无 Turn 记录，从 pending_risk 校验
+        for s in db.query(Session).filter(Session.pending_risk != "").all():
+            try:
+                pr = json.loads(s.pending_risk)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(pr, dict) and pr.get("recording_url") == url:
+                if s.user_id != user_id:
+                    raise AppError("FORBIDDEN", "无权访问该音频", status_code=403)
+                session = s
+                break
+        else:
+            raise AppError("NOT_FOUND", "音频不存在", status_code=404)
+    else:
+        session = db.get(Session, turn.session_id)
+        if session is None or session.user_id != user_id:
+            raise AppError("FORBIDDEN", "无权访问该音频", status_code=403)
     audio_dir = settings.data_dir / "audio"
     path = (audio_dir / safe_name).resolve()
     if not path.is_file():
