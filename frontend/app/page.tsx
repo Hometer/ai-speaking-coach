@@ -82,7 +82,12 @@ export default function Home() {
   const [difficulty, setDifficulty] = useState("standard");
   const [duration, setDuration] = useState(5);
   const [scenes, setScenes] = useState<Scenario[]>([]);
-  const [sceneId, setSceneId] = useState("job_interview");
+  const [sceneId, setSceneId] = useState(() => {
+    if (typeof window !== "undefined") {
+      return new URLSearchParams(window.location.search).get("scene") || "job_interview";
+    }
+    return "job_interview";
+  });
   const [scene, setScene] = useState<Scenario | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");

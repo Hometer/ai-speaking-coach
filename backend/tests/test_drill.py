@@ -50,8 +50,19 @@ def _attempt(client, sid, text):
     return r.json()
 
 
-def _attempt_voice(client, sid, text):
-    r = client.post(f"/api/v1/sessions/{sid}/drill-attempt", json={"text": text, "input_type": "voice"}, headers=USER)
+def _attempt_voice(client, sid, text, monkeypatch):
+    from app.services import session_svc
+
+    class _ASR:
+        def transcribe(self, audio_path):
+            return text
+
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: _ASR())
+    r = client.post(
+        f"/api/v1/sessions/{sid}/drill-attempt/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -66,7 +77,7 @@ def test_create_drill_session_sets_stage(client):
     assert drill["visible_help"] == imp["practice_sentence"]
 
 
-def test_drill_stage_progression_and_evidence(client):
+def test_drill_stage_progression_and_evidence(client, monkeypatch):
     source_sid, source_tid, imp = _source_improvement(client)
     d = _create_drill(client, source_sid, source_tid)
     sid = d["session_id"]
@@ -79,9 +90,9 @@ def test_drill_stage_progression_and_evidence(client):
     r = _attempt(client, sid, target)
     assert r["result"] == "hinted" and r["next_stage"] == "free_speak"
     # 脱稿说/换题：必须语音
-    r = _attempt_voice(client, sid, target)
+    r = _attempt_voice(client, sid, target, monkeypatch)
     assert r["result"] == "independent" and r["next_stage"] == "transfer"
-    r = _attempt_voice(client, sid, "I led a project that improved delivery speed.")
+    r = _attempt_voice(client, sid, "I led a project that improved delivery speed.", monkeypatch)
     assert r["result"] == "transfer" and r["next_stage"] == "ended"
     assert r["completed"] is True
 
@@ -151,7 +162,7 @@ def test_drill_jump_to_transfer(client):
     assert r.json()["drill_stage"] == "transfer"
 
 
-def test_drill_write_back_to_queue(client):
+def test_drill_write_back_to_queue(client, monkeypatch):
     source_sid, source_tid, imp = _source_improvement(client)
     # 先加入待复练
     r = client.post("/api/v1/review-queue", json={"source_session_id": source_sid, "source_turn_id": source_tid}, headers=USER)
@@ -161,7 +172,7 @@ def test_drill_write_back_to_queue(client):
     target = imp["practice_sentence"]
     for _ in range(3):  # full_text→fill_blanks→structure→free_speak
         _attempt(client, sid, target)
-    _attempt_voice(client, sid, target)  # free_speak 语音成功 → 写回独立
+    _attempt_voice(client, sid, target, monkeypatch)  # free_speak 语音成功 → 写回独立
     items = client.get("/api/v1/review-queue", headers=USER).json()
     item = next(x for x in items if x["source_turn_id"] == source_tid)
     assert item["success_count"] == 1

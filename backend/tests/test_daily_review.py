@@ -70,15 +70,28 @@ def test_start_daily_review_idempotent(client):
     assert len(r1["items"]) == 1
 
 
-def test_submit_attempt_complete_advances(client):
+def _voice_attempt(client, session_id, transcript, monkeypatch):
+    from app.services import session_svc
+
+    class _ASR:
+        def transcribe(self, audio_path):
+            return transcript
+
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: _ASR())
+    r = client.post(
+        f"/api/v1/review-queue/daily-review/{session_id}/attempt/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_submit_attempt_complete_advances(client, monkeypatch):
     item, sentence = _make_queue_item(client)
     _make_due(item["source_turn_id"])
     s = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
-    r = client.post(
-        f"/api/v1/review-queue/daily-review/{s['session_id']}/attempt",
-        json={"answer": sentence, "input_type": "voice"},
-        headers=USER,
-    ).json()
+    r = _voice_attempt(client, s["session_id"], sentence, monkeypatch)
     assert r["success"] is True and r["result"] == "independent"
     assert r["next"]["done"] is True
     db = SessionLocal()
@@ -90,17 +103,13 @@ def test_submit_attempt_complete_advances(client):
         db.close()
 
 
-def test_submit_attempt_with_help_resets_interval(client):
+def test_submit_attempt_with_help_resets_interval(client, monkeypatch):
     item, sentence = _make_queue_item(client)
     _make_due(item["source_turn_id"])
     s = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
     # 看答案：服务端留痕
     client.post(f"/api/v1/review-queue/{item['id']}/reveal", headers=USER)
-    client.post(
-        f"/api/v1/review-queue/daily-review/{s['session_id']}/attempt",
-        json={"answer": sentence, "input_type": "voice"},
-        headers=USER,
-    )
+    _voice_attempt(client, s["session_id"], sentence, monkeypatch)
     db = SessionLocal()
     try:
         q = db.query(ReviewQueueItem).filter_by(source_turn_id=item["source_turn_id"]).first()

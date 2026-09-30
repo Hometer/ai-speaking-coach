@@ -200,7 +200,7 @@ def retry_turn_audio(session_id: str, turn_id: str, user_id: str = Depends(get_u
 def drill_attempt(session_id: str, req: DrillAttemptRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return drill_svc.submit_drill_attempt(db, session_id, user_id, req.text, req.input_type, req.attempt_key)
+        return drill_svc.submit_drill_attempt(db, session_id, user_id, req.text, "text", req.attempt_key)
     finally:
         db.close()
 
@@ -469,7 +469,7 @@ def daily_review_view(session_id: str, user_id: str = Depends(get_user_id)):
 def daily_review_attempt(session_id: str, req: DailyReviewAttemptRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return daily_review_svc.submit_attempt(db, session_id, user_id, req.answer, req.input_type, req.attempt_key)
+        return daily_review_svc.submit_attempt(db, session_id, user_id, req.answer, "text", req.attempt_key)
     finally:
         db.close()
 
@@ -516,7 +516,7 @@ def list_phrase_cards(user_id: str = Depends(get_user_id)):
 def retest(item_id: int, req: RetestRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return queue_svc.submit_retest(db, user_id, item_id, req.answer, req.input_type, req.attempt_key)
+        return queue_svc.submit_retest(db, user_id, item_id, req.answer, "text", req.attempt_key)
     finally:
         db.close()
 

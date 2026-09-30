@@ -62,7 +62,6 @@ def _save_audio(audio_bytes: bytes, ext: str) -> str:
 
 def transcribe_voice_bytes(audio_bytes: bytes) -> str:
     """把上传音频转写为文本（校验格式 + 落临时文件 + ASR），供语音端点复用。"""
-    from app.services.asr import get_asr_provider
     from app.services.turn import _validate_audio
 
     fmt = _validate_audio(audio_bytes)
@@ -736,6 +735,19 @@ def submit_turn(
     _mark_conversation_quality(db, session, turn_id, text_for_eval, decision.action_type, subgoal)
     db.commit()
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
+    # 真实用量追溯（real 模式才有真实 token/字符；mock 不伪造）
+    if settings.provider_mode == "real":
+        usage = get_last_usage()
+        if usage:
+            in_tok = out_tok = 0
+            for part in usage.split("/"):
+                if part.startswith("llm_in="):
+                    in_tok = int(part.split("=", 1)[1])
+                elif part.startswith("llm_out="):
+                    out_tok = int(part.split("=", 1)[1])
+            actual_cost = in_tok / 1000 * 0.0008 + out_tok / 1000 * 0.002 + len(decision.reply_text or "") / 1000 * 2.0
+            if actual_cost > 0:
+                guard.settle_actual(actual_cost, session_id, user_id)
 
     # 统一收尾（自动达标时）
     if new_status == S_ENDED:

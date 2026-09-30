@@ -110,7 +110,6 @@ class HelpRequest(BaseModel):
 
 class DrillAttemptRequest(BaseModel):
     text: str = Field(default="", max_length=2000)
-    input_type: str = Field(default="text", description="voice/text")
     attempt_key: str = Field(default="", description="幂等键")
 
 

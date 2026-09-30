@@ -50,8 +50,14 @@ def judge_recall(answer: str, target: str, input_type: str, help_shown: bool) ->
     return "pending"
 
 
-def judge_transfer(answer: str, original: str, input_type: str, help_shown: bool) -> str:
-    """换题判定：不拿原句当标准，只要求语音、非照抄原句、非过短；无法判断记 pending。"""
+def judge_transfer(
+    answer: str,
+    original: str,
+    input_type: str,
+    help_shown: bool,
+    scene_keywords: list[str] | None = None,
+) -> str:
+    """换题判定：不拿原句当标准，要求语音、非照抄原句、非过短，且与场景关键词重叠；无法判断记 pending。"""
     a = (answer or "").strip()
     if len(norm(a).split()) < 3:
         return "failed"
@@ -61,4 +67,14 @@ def judge_transfer(answer: str, original: str, input_type: str, help_shown: bool
         return "text_completed"
     if norm(original or "") and norm(a) == norm(original):
         return "failed"  # 复述原句≠回答新条件
+    # 场景相关性：回答须与场景关键词/要点有内容词重叠，否则无法判断为迁移
+    if scene_keywords:
+        kw_set: set[str] = set()
+        for kw in scene_keywords:
+            for w in norm(kw).split():
+                if w and w not in _STOP:
+                    kw_set.add(w)
+        a_words = content_words(a)
+        if kw_set and not (a_words & kw_set):
+            return "pending"
     return "transfer"

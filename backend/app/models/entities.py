@@ -193,6 +193,8 @@ class ReviewQueueItem(Base):
     status: Mapped[str] = mapped_column(String(24), default="pending")
     success_count: Mapped[int] = mapped_column(Integer, default=0)
     interval_days: Mapped[int] = mapped_column(Integer, default=1)  # 复练间隔档位 1/3/7/14
+    last_attempt_key: Mapped[str] = mapped_column(String(64), default="")  # 幂等键
+    last_attempt_answer: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     due_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     last_practiced_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)

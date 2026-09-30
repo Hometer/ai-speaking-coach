@@ -121,6 +121,8 @@ def migrate_db() -> None:
         rqadditions = {
             "meaning_zh": "TEXT DEFAULT ''",
             "help_shown": "BOOLEAN DEFAULT 0",
+            "last_attempt_key": "VARCHAR(64) DEFAULT ''",
+            "last_attempt_answer": "TEXT DEFAULT ''",
         }
         for col, ddl in rqadditions.items():
             if col not in rqcols:

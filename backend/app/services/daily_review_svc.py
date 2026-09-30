@@ -162,6 +162,22 @@ def submit_attempt(
         raise AppError("SESSION_ENDED", "今日复练已结束", status_code=409)
     item = db.get(ReviewQueueItem, cur["item"]["id"])
 
+    # 幂等：同键返回首次结果，不重复推进
+    if attempt_key:
+        existing = (
+            db.query(DailyReviewAttempt)
+            .filter(DailyReviewAttempt.session_id == session_id, DailyReviewAttempt.attempt_key == attempt_key)
+            .first()
+        )
+        if existing is not None:
+            nxt = current_item(db, session, user_id)
+            return {
+                "success": existing.result == "independent",
+                "result": existing.result,
+                "help_shown": existing.help_shown,
+                "next": nxt,
+            }
+
     result = judge_recall(answer, item.suggestion_sentence, input_type, item.help_shown)
 
     db.add(

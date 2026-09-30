@@ -148,10 +148,21 @@ def submit_retest(
         raise AppError("NOT_DUE", "复测尚未到期，请稍后再试", status_code=409)
 
     answer = (answer or "").strip()
+
+    # 幂等：同键同内容返回当前状态；同键不同内容 409
+    if attempt_key:
+        if item.last_attempt_key == attempt_key:
+            if item.last_attempt_answer == answer:
+                return _to_dict(item)
+            raise AppError("IDEMPOTENCY_CONFLICT", "同一请求键内容不一致", status_code=409)
+
     result = judge_recall(answer, item.suggestion_sentence, input_type, item.help_shown)
 
     item.last_practiced_at = _now()
     item.retest_result = result
+    if attempt_key:
+        item.last_attempt_key = attempt_key
+        item.last_attempt_answer = answer
 
     if result == "independent":
         item.success_count = (item.success_count or 0) + 1

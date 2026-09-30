@@ -183,6 +183,23 @@ def submit_drill_attempt(
     if session.status == "ENDED" or session.drill_stage == "ended":
         raise AppError("SESSION_ENDED", "脱稿练习已结束", status_code=409)
 
+    # 幂等：同键返回首次结果，不重复推进
+    if attempt_key:
+        existing = (
+            db.query(DrillAttempt)
+            .filter(DrillAttempt.drill_session_id == session_id, DrillAttempt.attempt_key == attempt_key)
+            .first()
+        )
+        if existing is not None:
+            view = drill_view(session, db)
+            return {
+                "success": existing.result in ("independent", "transfer", "reference", "hinted"),
+                "result": existing.result,
+                "stage": existing.stage,
+                "next_stage": session.drill_stage,
+                **view,
+            }
+
     stage = session.drill_stage or "full_text"
     text = (text or "").strip()
 
@@ -191,8 +208,10 @@ def submit_drill_attempt(
         result = judge_recall(text, session.drill_target, input_type, help_shown=False)
         success = result == "independent"
     elif stage == "transfer":
-        # 换题：按新条件，不复述原句
-        result = judge_transfer(text, session.drill_target, input_type, help_shown=False)
+        # 换题：按新条件，不复述原句，且与场景关键词相关
+        scene = SCENARIOS.get(session.scene_id or "", {})
+        scene_kw = (scene.get("acceptable_points") or []) + (scene.get("reference_expressions") or [])
+        result = judge_transfer(text, session.drill_target, input_type, help_shown=False, scene_keywords=scene_kw)
         success = result == "transfer"
     else:
         # 有参考阶段（看全文/补词/看结构）：照着说，词重叠判定完成

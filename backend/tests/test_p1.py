@@ -4,6 +4,21 @@ import json
 USER = {"X-Invite-Code": "test-a"}
 
 
+def _voice_retest(client, item_id, transcript, monkeypatch):
+    from app.services import session_svc
+
+    class _ASR:
+        def transcribe(self, audio_path):
+            return transcript
+
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: _ASR())
+    return client.post(
+        f"/api/v1/review-queue/{item_id}/retest/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        headers=USER,
+    )
+
+
 def _create_scene_session(client, scene_id="job_interview", level="basic"):
     r = client.post(
         "/api/v1/sessions",
@@ -50,7 +65,7 @@ def _make_queue_source(client, scene_id="job_interview"):
     return s, turn_id
 
 
-def test_add_to_queue_and_retest_mastery(client):
+def test_add_to_queue_and_retest_mastery(client, monkeypatch):
     s, turn_id = _make_queue_source(client)
     r = client.post(
         "/api/v1/review-queue",
@@ -71,7 +86,7 @@ def test_add_to_queue_and_retest_mastery(client):
     # 首次复测也必须到期，不能刚加入就增加成功次数。
     early = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
+        json={"answer": "I have three years of experience in software development."},
         headers=USER,
     )
     assert early.status_code == 409
@@ -89,11 +104,7 @@ def test_add_to_queue_and_retest_mastery(client):
     db.close()
 
     # 第一次复测独立成功 -> awaiting_retest
-    r1 = client.post(
-        f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
-        headers=USER,
-    )
+    r1 = _voice_retest(client, item["id"], "I have three years of experience in software development.", monkeypatch)
     assert r1.status_code == 200, r1.text
     assert r1.json()["success_count"] == 1
     assert r1.json()["status"] == "awaiting_retest"
@@ -101,7 +112,7 @@ def test_add_to_queue_and_retest_mastery(client):
     # AC07-08：未到期立即第二次复测 -> 409 拒绝，成功次数保持 1
     r2 = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
+        json={"answer": "I have three years of experience in software development."},
         headers=USER,
     )
     assert r2.status_code == 409
@@ -114,16 +125,12 @@ def test_add_to_queue_and_retest_mastery(client):
     db.commit()
     db.close()
 
-    r3 = client.post(
-        f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
-        headers=USER,
-    )
+    r3 = _voice_retest(client, item["id"], "I have three years of experience in software development.", monkeypatch)
     assert r3.status_code == 200, r3.text
     assert r3.json()["status"] == "mastered"
 
 
-def test_retest_rejects_text_unrelated_and_copied(client):
+def test_retest_rejects_text_unrelated_and_copied(client, monkeypatch):
     s, turn_id = _make_queue_source(client)
     item = client.post(
         "/api/v1/review-queue",
@@ -146,7 +153,7 @@ def test_retest_rejects_text_unrelated_and_copied(client):
     _make_due()
     copied = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
+        json={"answer": "I have three years of experience in software development."},
         headers=USER,
     )
     assert copied.json()["retest_result"] == "hinted"
@@ -161,21 +168,80 @@ def test_retest_rejects_text_unrelated_and_copied(client):
     _make_due()
     text = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have three years of experience in software development.", "input_type": "text"},
+        json={"answer": "I have three years of experience in software development."},
         headers=USER,
     )
     assert text.json()["retest_result"] == "text_completed"
     assert text.json()["success_count"] == 0
 
-    # 无关句 → pending，不升级
+    # 无关句（语音）→ pending，不升级
     _make_due()
-    unrelated = client.post(
-        f"/api/v1/review-queue/{item['id']}/retest",
-        json={"answer": "I have a reservation under the name Li.", "input_type": "voice"},
-        headers=USER,
-    )
+    unrelated = _voice_retest(client, item["id"], "I have a reservation under the name Li.", monkeypatch)
+    assert unrelated.status_code == 200, unrelated.text
     assert unrelated.json()["retest_result"] == "pending"
     assert unrelated.json()["success_count"] == 0
+
+
+def test_retest_cannot_forge_voice_via_json(client):
+    s, turn_id = _make_queue_source(client)
+    item = client.post(
+        "/api/v1/review-queue",
+        json={"source_session_id": s["session_id"], "source_turn_id": turn_id},
+        headers=USER,
+    ).json()
+    from datetime import datetime, timedelta, timezone
+    from app.models.database import SessionLocal
+    from app.models.entities import ReviewQueueItem
+
+    db = SessionLocal()
+    qi = db.get(ReviewQueueItem, item["id"])
+    qi.due_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+    db.close()
+    # JSON 里伪造 input_type=voice（不传录音）→ 被当文字，不升级
+    r = client.post(
+        f"/api/v1/review-queue/{item['id']}/retest",
+        json={"answer": "I have three years of experience in software development.", "input_type": "voice"},
+        headers=USER,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["retest_result"] == "text_completed"
+    assert r.json()["success_count"] == 0
+
+
+def test_retest_attempt_key_idempotent(client, monkeypatch):
+    s, turn_id = _make_queue_source(client)
+    item = client.post(
+        "/api/v1/review-queue",
+        json={"source_session_id": s["session_id"], "source_turn_id": turn_id},
+        headers=USER,
+    ).json()
+    from datetime import datetime, timedelta, timezone
+    from app.models.database import SessionLocal
+    from app.models.entities import ReviewQueueItem
+
+    db = SessionLocal()
+    qi = db.get(ReviewQueueItem, item["id"])
+    qi.due_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+    db.close()
+    # 首次：语音独立成功
+    r1 = client.post(
+        f"/api/v1/review-queue/{item['id']}/retest/voice",
+        files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+        data={"attempt_key": "k1"},
+        headers=USER,
+    )
+    # mock ASR 返回固定转写，命中 job_interview 目标 → independent
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["success_count"] == 1
+    # 同键不同内容 → 409
+    r2 = client.post(
+        f"/api/v1/review-queue/{item['id']}/retest",
+        json={"answer": "different content", "attempt_key": "k1"},
+        headers=USER,
+    )
+    assert r2.status_code == 409, r2.text
 
 
 def test_queue_duplicate_is_idempotent(client):
