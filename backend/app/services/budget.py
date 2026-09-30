@@ -97,14 +97,3 @@ class BudgetGuard:
             row.reserved = max(0.0, (row.reserved or 0.0) - amount)
             row.spent = (row.spent or 0.0) + amount
         self.db.commit()
-
-    def settle_actual(self, amount: float, session_id: str, user_id: str) -> None:
-        """按供应商实际用量记录（追溯用，不参与预算上限估算记账）。"""
-        for scope, key in [
-            ("session", session_id),
-            ("user", _day_key(user_id)),
-            ("project", _day_key("all")),
-        ]:
-            row = self._row(scope, key)
-            row.actual_spent = (row.actual_spent or 0.0) + amount
-        self.db.commit()

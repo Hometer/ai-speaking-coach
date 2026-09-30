@@ -59,6 +59,8 @@ class Session(Base):
     request_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 创建会话幂等键
     in_flight: Mapped[bool] = mapped_column(default=False)  # 处理中标记（刷新恢复）
     pending_risk: Mapped[str] = mapped_column(Text, default="")  # 待确认可疑转写（REQ-32，刷新恢复）
+    plan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    plan_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
@@ -93,6 +95,8 @@ class Turn(Base):
     audio_status: Mapped[str] = mapped_column(String(16), default="ok")  # pending / ok / failed
     recording_url: Mapped[str] = mapped_column(String(255), default="")  # 本人录音回放（会话内）
     request_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 提交回合幂等键
+    request_hash: Mapped[str] = mapped_column(String(64), default="")
+    result_status: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     session: Mapped["Session"] = relationship(back_populates="turns")
@@ -122,8 +126,43 @@ class BudgetLedger(Base):
     scope_key: Mapped[str] = mapped_column(String(128), index=True)
     reserved: Mapped[float] = mapped_column(Float, default=0.0)
     spent: Mapped[float] = mapped_column(Float, default=0.0)  # 估算记账（用于预算上限）
-    actual_spent: Mapped[float] = mapped_column(Float, default=0.0)  # 供应商实际用量（追溯）
+    actual_spent: Mapped[float] = mapped_column(Float, default=0.0)  # 旧版推算值；不可当供应商实账使用
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+class ProviderUsageEvent(Base):
+    """供应商原始用量与调用尝试；金额需账单核对后另行确认。"""
+    __tablename__ = "provider_usage_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), default="")
+    component: Mapped[str] = mapped_column(String(16))
+    model: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(32), default="")
+    source: Mapped[str] = mapped_column(String(32), default="unreported")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    input_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    text_chars: Mapped[int] = mapped_column(Integer, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class IntentResult(Base):
+    """用户意图的首次响应快照，供后续状态改变后准确重放。"""
+    __tablename__ = "intent_results"
+    __table_args__ = (UniqueConstraint("scope", "object_id", "request_key", name="ux_intent_result"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[str] = mapped_column(String(32))
+    object_id: Mapped[str] = mapped_column(String(64))
+    request_key: Mapped[str] = mapped_column(String(64))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    response_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
 class Memory(Base):
@@ -202,6 +241,19 @@ class ReviewQueueItem(Base):
     retest_result: Mapped[str] = mapped_column(String(16), default="")
 
 
+class ReviewDueEvent(Base):
+    """不可变到期窗口快照；复练后只填写结果，供进步指标追溯。"""
+    __tablename__ = "review_due_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    queue_item_id: Mapped[int] = mapped_column(Integer, index=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    result: Mapped[str] = mapped_column(String(24), default="")
+    valid: Mapped[bool] = mapped_column(default=True)
+
+
 class ProgressSnapshot(Base):
     __tablename__ = "progress_snapshots"
 
@@ -219,8 +271,10 @@ class TrainingPlan(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     goal_type: Mapped[str] = mapped_column(String(24), default="job_prep")
+    available_minutes: Mapped[int] = mapped_column(Integer, default=5)
     days_json: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[str] = mapped_column(String(16), default="active")
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
@@ -249,6 +303,45 @@ class QualityLabelChange(Base):
     new_conclusion: Mapped[str] = mapped_column(String(24), default="")
     old_review_version: Mapped[str] = mapped_column(String(16), default="")
     new_review_version: Mapped[str] = mapped_column(String(16), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class QaRecordingConsent(Base):
+    """用户对单次会话的质检录音特别授权。"""
+    __tablename__ = "qa_recording_consents"
+    __table_args__ = (UniqueConstraint("session_id", name="ux_qa_consent_session"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    granted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class QaRecording(Base):
+    """特别授权后的独立录音副本；普通录音清理不依赖此表。"""
+    __tablename__ = "qa_recordings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), index=True)
+    filename: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class QaRecordingAccess(Base):
+    """审核员录音访问、拒绝和审核完成记录，不存正文或音频。"""
+    __tablename__ = "qa_recording_access"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recording_id: Mapped[int] = mapped_column(Integer, index=True)
+    reviewer_id: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(16), default="view")
+    outcome: Mapped[str] = mapped_column(String(16), default="allowed")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -300,6 +393,9 @@ class AsrRiskRecord(Base):
     risk_level: Mapped[str] = mapped_column(String(8), default="low")  # low/mid/high
     reason_codes: Mapped[str] = mapped_column(String(64), default="")
     original_text: Mapped[str] = mapped_column(Text, default="")
+    recording_url: Mapped[str] = mapped_column(String(255), default="")
+    request_key: Mapped[str] = mapped_column(String(64), default="")
+    request_hash: Mapped[str] = mapped_column(String(64), default="")
     confirmed_text: Mapped[str] = mapped_column(Text, default="")
     action: Mapped[str] = mapped_column(String(16), default="")  # none/confirm/rerecord/revise/text_fallback
     asr_rule_version: Mapped[str] = mapped_column(String(16), default="v1")

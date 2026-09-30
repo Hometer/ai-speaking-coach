@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { addToQueue, createPhraseCard, createPracticeSentence, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, skipPractice, submitTurn } from "@/lib/api";
+import { addToQueue, clearIntentKey, createPhraseCard, createPracticeSentence, discardRisk, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, intentKey, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, setQaRecordingConsent, skipPractice, submitTurn } from "@/lib/api";
 import type { DrillView, RiskHold, TurnItem } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 import Icon from "@/components/Icon";
@@ -57,6 +57,7 @@ export default function PracticePage() {
   const [drill, setDrill] = useState<DrillView | null>(null);
   const [drillText, setDrillText] = useState("");
   const [riskHold, setRiskHold] = useState<RiskHold | null>(null);
+  const [qaConsent, setQaConsent] = useState(false);
   const [recordMode, setRecordMode] = useState<"answer" | "practice" | "drill" | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [review, setReview] = useState<Record<string, unknown> | null>(null);
@@ -84,6 +85,7 @@ export default function PracticePage() {
         setDrill(d.drill);
         setTurns(d.turns);
         if (d.pending_risk) setRiskHold(d.pending_risk);
+        setQaConsent(!!d.qa_recording_consent);
         const msgs: Msg[] = [];
         for (const t of d.turns) {
           if (t.input_type === "coach") {
@@ -213,6 +215,19 @@ export default function PracticePage() {
     }
   }
 
+  async function rerecordRisk() {
+    if (!riskHold || busy) return;
+    setBusy(true); setErr("");
+    try {
+      await discardRisk(sessionId, riskHold.turn_id);
+      setRiskHold(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleAudioRetry() {
     if (!audioRetryTurnId || busy) return;
     setBusy(true);
@@ -252,6 +267,8 @@ export default function PracticePage() {
     try {
       const fd = new FormData();
       fd.append("audio", blob, "drill");
+      const scope = `drill:${sessionId}`;
+      fd.append("attempt_key", await intentKey(scope, blob));
       const res = await fetch(`/api/v1/sessions/${sessionId}/drill-attempt/voice`, {
         method: "POST",
         headers: { "X-Invite-Code": getInviteCode() },
@@ -259,6 +276,7 @@ export default function PracticePage() {
       });
       const data = await res.json();
       if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
+      clearIntentKey(scope);
       setDrillText("");
       setDrill(data);
       if (data.completed) setStatus("ENDED");
@@ -373,6 +391,7 @@ export default function PracticePage() {
       const fd = new FormData();
       fd.append("audio", blob, "practice");
       fd.append("sentence", practiceSentence);
+      fd.append("request_key", await intentKey(`practice:${sessionId}:${practiceSentence}`, blob));
       const res = await fetch(`/api/v1/sessions/${sessionId}/practice`, {
         method: "POST",
         headers: { "X-Invite-Code": getInviteCode() },
@@ -383,6 +402,7 @@ export default function PracticePage() {
         setErr(data?.error?.message ?? `HTTP ${res.status}`);
         return;
       }
+      clearIntentKey(`practice:${sessionId}:${practiceSentence}`);
       const score = typeof data.eval?.score === "number" ? data.eval.score : null;
       const isMock = !!data.eval?.mock;
       setPracticeResult(score === null ? "本次无法评估" : `评测得分 ${score}${isMock ? "（示例）" : "（实测）"}`);
@@ -556,6 +576,15 @@ export default function PracticePage() {
     }
   }
 
+  async function toggleQaConsent() {
+    if (busy || sessionLoading) return;
+    if (!qaConsent && !window.confirm("仅从现在开始，允许授权审核员使用本次练习的录音做内部质检？可随时撤回，最迟 7 天删除。此前录音不会补存。")) return;
+    setBusy(true); setErr("");
+    try { const result = await setQaRecordingConsent(sessionId, !qaConsent); setQaConsent(result.granted); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
   const improvements = Array.isArray(review?.improvements) ? (review.improvements as Record<string, unknown>[]) : [];
 
   const ended = status === "ENDED";
@@ -572,6 +601,7 @@ export default function PracticePage() {
     <main className="page">
       <div className="topline"><button onClick={() => router.push("/")} className="text-link"><Icon name="back" size={16} /> 返回练习首页</button><span className="subtle-tag">{sceneLabel || "口语练习"}</span></div>
       <div className={styles.titleRow}><div><div className="eyebrow">ONE CONVERSATION AT A TIME</div><h1 className="page-title">{ended ? "给这次练习，留一点回味。" : "慢慢说，教练在听。"}</h1><p className="page-description">{ended ? "重看你的表达，找到下一次想尝试的小改变。" : "不必急着说得完美，先把你的想法说出来。"}</p></div><span className="badge" role="status"><span className={styles.statusDot} />{busy ? "正在处理…" : STATUS_CN[status] || (sessionLoading ? "加载中" : "暂不可用")}</span></div>
+      <div className="notice mb-4"><Icon name="shield" size={16} /><span>内部质检录音需单独同意。{qaConsent ? "已授权，可随时撤回并删除质检副本。" : "当前未授权，普通录音不会作为质检材料保留。"}</span><button className="btn btn-ghost btn-small" onClick={toggleQaConsent} disabled={busy || sessionLoading || (ended && !qaConsent)}>{qaConsent ? "撤回质检录音授权" : "同意本次录音用于质检"}</button></div>
       <div className={styles.practiceLayout}>
         <div className={styles.conversation}>
           <div className={styles.conversationHeading}><span className="icon-tile"><Icon name="spark" size={20} /></span><div><h2>AI 口语教练</h2><p>专注你的表达，一起把话说清楚</p></div><span className={styles.turnCount}>{answerCount} 轮回答</span>{!ended && <div className={styles.headerActions}><button onClick={togglePause} disabled={busy || sessionLoading || !status} className="btn btn-ghost btn-small"><Icon name={paused ? "play" : "pause"} size={14} />{paused ? "继续" : "暂停"}</button><button onClick={end} disabled={busy || sessionLoading || !status} className="btn btn-ghost btn-small"><Icon name="stop" size={14} />结束练习</button></div>}</div>
@@ -592,12 +622,13 @@ export default function PracticePage() {
           {riskHold && <section className={styles.readingCard}>
             <div className="section-head mt-0 mb-3"><h2><Icon name="mic" size={19} /> 核对一下你说的话</h2><span className="badge">识别可能不准</span></div>
             <p className={styles.practiceSentence}>{riskHold.transcript}</p>
-            <p className="text-sm muted mt-2">系统觉得这段转写可能不完整或含杂音。请确认、修改，或直接重说一遍。</p>
+            <p className="text-sm muted mt-2">系统觉得这段转写可能不完整或含杂音。你可以听回、确认、修改、改用文字，或重说一遍。</p>
             {riskHold.recording_url && <div className="mt-2"><p className="text-xs muted">听回你的录音：</p><AudioPlayer key={riskHold.recording_url} src={riskHold.recording_url} /></div>}
             <div className="flex items-center gap-2 flex-wrap mt-3">
               <button onClick={() => confirmRisk(riskHold.transcript, "confirm")} disabled={busy} className="btn btn-primary">确认无误</button>
               <button onClick={() => { const t = window.prompt("请修改转写：", riskHold.transcript); if (t && t.trim()) confirmRisk(t.trim(), "revise"); }} disabled={busy} className="btn btn-secondary">修改文字</button>
-              <button onClick={() => setRiskHold(null)} disabled={busy} className="btn btn-ghost">重说一遍</button>
+              <button onClick={() => { const t = window.prompt("改用文字回答：", riskHold.transcript); if (t && t.trim()) confirmRisk(t.trim(), "text_fallback"); }} disabled={busy} className="btn btn-secondary">改用文字</button>
+              <button onClick={rerecordRisk} disabled={busy} className="btn btn-ghost">重说一遍</button>
             </div>
           </section>}
 

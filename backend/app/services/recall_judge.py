@@ -55,9 +55,9 @@ def judge_transfer(
     original: str,
     input_type: str,
     help_shown: bool,
-    reference_expressions: list[str] | None = None,
+    new_condition_verified: bool | None = None,
 ) -> str:
-    """换题判定：不拿原句当标准，要求语音、非照抄原句、非过短，且与参考表达有 ≥2 个内容词重叠；否则无法判断记 pending。"""
+    """换题判定：基础证据 + 独立语义核对；没有明确核对结果只能 pending。"""
     a = (answer or "").strip()
     if len(norm(a).split()) < 3:
         return "failed"
@@ -67,14 +67,4 @@ def judge_transfer(
         return "text_completed"
     if norm(original or "") and norm(a) == norm(original):
         return "failed"  # 复述原句≠回答新条件
-    # 场景相关性：与参考表达的内容词重叠 ≥2 才可判为迁移，否则无法判断
-    if reference_expressions:
-        kw_set: set[str] = set()
-        for kw in reference_expressions:
-            for w in norm(kw).split():
-                if w and w not in _STOP:
-                    kw_set.add(w)
-        a_words = content_words(a)
-        if kw_set and len(a_words & kw_set) < 2:
-            return "pending"
-    return "transfer"
+    return "transfer" if new_condition_verified is True else "pending"

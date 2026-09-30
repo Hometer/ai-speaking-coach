@@ -84,7 +84,8 @@ def test_parse_result_no_word_items_when_absent():
 def test_parse_result_error():
     with pytest.raises(AppError) as e:
         parse_result([{"code": 10105, "message": "illegal access"}])
-    assert "illegal access" in str(e.value)
+    assert e.value.code == "PRACTICE_EVAL_ERROR"
+    assert "illegal access" not in str(e.value)
 
 
 def test_parse_result_no_score():

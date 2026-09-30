@@ -6,8 +6,9 @@ from typing import Any
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
-from app.models.entities import ReviewQueueItem, Session
+from app.models.entities import IntentResult, ReviewDueEvent, ReviewQueueItem, Session
 from app.services.recall_judge import judge_recall
+from app.services import intent_result
 
 STATUS_PENDING = "pending"            # 待练
 STATUS_AWAITING_RETEST = "awaiting_retest"  # 待复测（跟读已完成）
@@ -20,6 +21,24 @@ DUE_HOURS = 24  # 复测最早间隔（第二次独立成功至少 24h 后）
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _resolve_due(db: DbSession, item: ReviewQueueItem, result: str, now: datetime | None = None) -> None:
+    now = now or _now()
+    event = db.query(ReviewDueEvent).filter_by(queue_item_id=item.id, valid=True, resolved_at=None).order_by(ReviewDueEvent.id.desc()).first()
+    if event is None:
+        return  # 旧记录无快照，不倒填虚假到期证据
+    due = event.due_at.replace(tzinfo=timezone.utc) if event.due_at.tzinfo is None else event.due_at
+    if due > now:
+        event.valid = False
+    else:
+        event.resolved_at = now
+        event.result = result
+
+
+def _schedule_due(db: DbSession, item: ReviewQueueItem, due_at: datetime) -> None:
+    item.due_at = due_at
+    db.add(ReviewDueEvent(user_id=item.user_id, queue_item_id=item.id, due_at=due_at))
 
 
 def _to_dict(item: ReviewQueueItem, reveal: bool = False) -> dict[str, Any]:
@@ -82,6 +101,8 @@ def add_to_queue(db: DbSession, user_id: str, source_session_id: str, source_tur
         due_at=_now() + timedelta(hours=DUE_HOURS),
     )
     db.add(item)
+    db.flush()
+    _schedule_due(db, item, item.due_at)
     db.commit()
     db.refresh(item)
     return _to_dict(item)
@@ -137,6 +158,9 @@ def submit_retest(
         raise AppError("NOT_FOUND", "队列项不存在", status_code=404)
 
     answer = (answer or "").strip()
+    replayed = intent_result.replay(db, user_id, "queue_retest", str(item_id), attempt_key, input_type, answer)
+    if replayed is not None:
+        return replayed
 
     # 幂等检查放最前（仅次归属校验）：同键同内容返回首次结果，同键异内容 409
     if attempt_key:
@@ -159,6 +183,8 @@ def submit_retest(
 
     result = judge_recall(answer, item.suggestion_sentence, input_type, item.help_shown)
 
+    _resolve_due(db, item, result)
+
     item.last_practiced_at = _now()
     item.retest_result = result
     if attempt_key:
@@ -171,14 +197,16 @@ def submit_retest(
             item.status = STATUS_MASTERED
         else:
             item.status = STATUS_AWAITING_RETEST
-            item.due_at = _now() + timedelta(hours=DUE_HOURS)
+            _schedule_due(db, item, _now() + timedelta(hours=DUE_HOURS))
     else:
         # 文字完成/有帮助/失败/待判断：不升级成功次数，回到待复测并顺延
         item.status = STATUS_AWAITING_RETEST
-        item.due_at = _now() + timedelta(hours=DUE_HOURS)
+        _schedule_due(db, item, _now() + timedelta(hours=DUE_HOURS))
 
     db.commit()
-    return _to_dict(item)
+    response = _to_dict(item)
+    intent_result.remember(db, user_id, "queue_retest", str(item_id), attempt_key, input_type, answer, response)
+    return response
 
 
 def mark_disputed(db: DbSession, user_id: str, item_id: int) -> dict[str, Any]:
@@ -186,6 +214,8 @@ def mark_disputed(db: DbSession, user_id: str, item_id: int) -> dict[str, Any]:
     if item is None or item.user_id != user_id:
         raise AppError("NOT_FOUND", "队列项不存在", status_code=404)
     item.status = STATUS_DISPUTED
+    for event in db.query(ReviewDueEvent).filter_by(queue_item_id=item.id).all():
+        event.valid = False
     db.commit()
     return _to_dict(item)
 
@@ -195,7 +225,8 @@ def skip_item(db: DbSession, user_id: str, item_id: int) -> dict[str, Any]:
     item = db.get(ReviewQueueItem, item_id)
     if item is None or item.user_id != user_id:
         raise AppError("NOT_FOUND", "队列项不存在", status_code=404)
-    item.due_at = _now() + timedelta(hours=DUE_HOURS)
+    _resolve_due(db, item, "skipped")
+    _schedule_due(db, item, _now() + timedelta(hours=DUE_HOURS))
     db.commit()
     return _to_dict(item)
 
@@ -204,6 +235,8 @@ def delete_item(db: DbSession, user_id: str, item_id: int) -> None:
     item = db.get(ReviewQueueItem, item_id)
     if item is None or item.user_id != user_id:
         raise AppError("NOT_FOUND", "队列项不存在", status_code=404)
+    db.query(ReviewDueEvent).filter_by(queue_item_id=item.id).delete()
+    db.query(IntentResult).filter(IntentResult.object_id == str(item.id), IntentResult.scope.in_(["queue_retest", "queue_voice_asr", "queue_voice_result"])).delete()
     db.delete(item)
     db.commit()
 
@@ -212,3 +245,5 @@ def invalidate_by_turn(db: DbSession, turn_id: str) -> None:
     """源建议失效时，关联队列项标失效。"""
     for item in db.query(ReviewQueueItem).filter(ReviewQueueItem.source_turn_id == turn_id).all():
         item.status = STATUS_INVALID
+        for event in db.query(ReviewDueEvent).filter_by(queue_item_id=item.id).all():
+            event.valid = False

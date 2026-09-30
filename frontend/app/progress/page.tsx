@@ -58,9 +58,13 @@ export default function ProgressPage() {
           {p.samples && <p className="text-xs muted mt-2">样本：可评估子目标 {p.samples.evaluable_subgoals}、语音回合 {p.samples.voice_turns}、到期项目 {p.samples.due_items}。</p>}
           {p.trend && p.trend.length > 0 && (
             <section className="panel mt-4"><div className="section-head mt-0"><h3><Icon name="target" size={16} /> 最近 7 天独立完成率</h3></div>
-              <div className="flex flex-wrap gap-2">{p.trend.map((t) => <span key={t.date} className="badge badge-neutral">{t.date.slice(5)}：{Math.round(t.independent_rate * 100)}%（{t.evaluable}）</span>)}</div>
+              <div className="flex flex-wrap gap-2">{p.trend.map((t) => <span key={t.date} className="badge badge-neutral">{t.date.slice(5)}：{t.evaluable ? `${Math.round(t.independent_rate * 100)}%` : "样本不足"}（{t.evaluable}）</span>)}</div>
             </section>
           )}
+          <section className="panel panel-padding mt-4"><h3>前后七次对比</h3>
+            {p.before_after_seven?.sample_count === 14 ? <p className="mt-2">前七次 {Math.round((p.before_after_seven.before_rate || 0) * 100)}%，后七次 {Math.round((p.before_after_seven.after_rate || 0) * 100)}%（各 7 次语音可评估子目标）</p> : <p className="mt-2 muted">目前有 {p.before_after_seven?.sample_count || 0} 次可评估语音，满 14 次后显示对比。</p>}
+          </section>
+          {p.by_scene && Object.keys(p.by_scene).length > 0 && <section className="panel panel-padding mt-4"><h3>按场景查看</h3><div className="flex flex-wrap gap-2 mt-2">{Object.entries(p.by_scene).map(([scene, value]) => <span className="badge badge-neutral" key={scene}>{scene}：{value.evaluable ? `${Math.round(value.independent_rate * 100)}%` : "样本不足"}（{value.evaluable}）</span>)}</div></section>}
           {p.mastered_list && p.mastered_list.length > 0 && (
             <section className="panel mt-4"><div className="section-head mt-0"><h3><Icon name="shield" size={16} /> 已掌握项目</h3></div>
               <ul className="text-sm">{p.mastered_list.map((m) => <li key={m.id} className="py-1">{m.suggestion_sentence || m.target_ability}</li>)}</ul>

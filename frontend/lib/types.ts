@@ -133,6 +133,7 @@ export interface SessionDetail {
   level: string;
   current_help_level: number;
   pending_risk: RiskHold | null;
+  qa_recording_consent: boolean;
   end_reason: string | null;
   practice_type: string;
   scene_id: string;
@@ -156,6 +157,7 @@ export interface SessionListItem {
   end_reason: string | null;
   scene_id: string;
   scene_label: string;
+  review_status: string;
 }
 
 export interface MemoryItem {
@@ -211,6 +213,7 @@ export interface Progress {
   transfer_completed_count: number;
   samples: { evaluable_subgoals: number; voice_turns: number; due_items: number };
   by_scene: Record<string, { independent_rate: number; evaluable: number }>;
+  before_after_seven: { sample_count: number; before_rate: number | null; after_rate: number | null };
   trend: { date: string; independent_rate: number; evaluable: number }[];
   mastered_list: { id: number; suggestion_sentence: string; target_ability: string; last_practiced_at: string | null }[];
   calc_version: string;
@@ -223,11 +226,13 @@ export interface PlanDay {
   status: string;
   retest_item_id: number | null;
   adjustment_reason: string;
+  scheduled_date: string;
 }
 
 export interface TrainingPlan {
   id: number;
   goal_type: string;
+  available_minutes: number;
   days: PlanDay[];
   status: string;
 }
@@ -239,12 +244,32 @@ export interface QaTurn {
   reply_text: string;
   eval_result: string;
   help_type: string;
+  qa_recording_id: number | null;
+  duration_ms: number;
+  usage: string;
+  evidence_version: string;
 }
 
 export interface QaSession {
   session_id: string;
   scene_id: string;
   status: string;
+  scene_version: string;
+  error_codes: string[];
+  disputed: boolean;
+  estimated_cost: number;
+  supplier_estimate: number | null;
+  billed_cost: number | null;
+  provider_usage: {
+    llm_attempts: number;
+    llm_input_tokens: number;
+    llm_output_tokens: number;
+    asr_input_bytes: number;
+    tts_text_chars: number;
+    tts_attempts: number;
+    ise_input_bytes: number;
+    ise_attempts: number;
+  };
   started_at: string | null;
   turns: QaTurn[];
 }

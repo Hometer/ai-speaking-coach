@@ -33,7 +33,7 @@ def cleanup_stale_uploads() -> int:
 def cleanup_old_recordings() -> int:
     """清除已落库的本人录音及回放引用；教练合成音频仍随会话保留。"""
     from app.models.database import SessionLocal
-    from app.models.entities import Turn
+    from app.models.entities import AsrRiskRecord, Session, Turn
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=min(settings.upload_retention_minutes, settings.upload_max_age_minutes))
     removed = 0
@@ -57,6 +57,28 @@ def cleanup_old_recordings() -> int:
                     turn.practice_eval = json.dumps(result, ensure_ascii=False)
                 except (TypeError, ValueError):
                     pass
+            removed += 1
+        # risk_hold 尚未形成 Turn；其音频有独立引用，不能漏过留存上限。
+        for risk in db.query(AsrRiskRecord).filter(AsrRiskRecord.recording_url != "").all():
+            created = risk.created_at
+            if created is None or (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created) >= cutoff:
+                continue
+            filename = os.path.basename(risk.recording_url)
+            path = settings.data_dir / "audio" / filename
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                continue
+            session = db.get(Session, risk.session_id)
+            if session is not None and session.pending_risk:
+                try:
+                    pending = json.loads(session.pending_risk)
+                    if pending.get("recording_url") == risk.recording_url:
+                        pending["recording_url"] = ""
+                        session.pending_risk = json.dumps(pending, ensure_ascii=False)
+                except (ValueError, TypeError, AttributeError):
+                    pass
+            risk.recording_url = ""
             removed += 1
         db.commit()
     return removed
@@ -112,5 +134,7 @@ def cleanup_expired_audio() -> None:
 
 def cleanup_expired_data() -> None:
     cleanup_expired_audio()
+    from app.services.qa_recording import cleanup_expired as cleanup_qa_recordings
+    cleanup_qa_recordings()
     cleanup_idle_sessions()
     cleanup_expired_sessions()

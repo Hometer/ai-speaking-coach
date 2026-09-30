@@ -13,6 +13,8 @@ class SessionCreateRequest(BaseModel):
     duration_minutes: float = Field(default=5.0, ge=3.0, le=15.0)
     scene_id: str = "job_interview"
     request_key: str = Field(default="", description="幂等键")
+    plan_id: int | None = None
+    plan_day: int | None = Field(default=None, ge=1, le=7)
 
 
 class SessionCreatedResponse(BaseModel):
@@ -48,6 +50,7 @@ class SessionDetailResponse(BaseModel):
     level: str = "basic"
     current_help_level: int = 0
     pending_risk: dict | None = None
+    qa_recording_consent: bool = False
     end_reason: str | None = None
     practice_type: str = "interview"
     scene_id: str = "job_interview"
@@ -71,6 +74,7 @@ class SessionListItem(BaseModel):
     end_reason: str | None = None
     scene_id: str = "job_interview"
     scene_label: str = ""
+    review_status: str = "none"
 
 
 class EndRequest(BaseModel):

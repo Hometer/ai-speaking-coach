@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session as DbSession
 
-from app.models.entities import DrillAttempt, Evaluation, ReviewQueueItem, Session, Turn
+from app.models.entities import DrillAttempt, Evaluation, ReviewDueEvent, ReviewQueueItem, Session, Turn
 
 
 def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
@@ -41,16 +41,17 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     helped = sum(1 for t in user_turns if t.hint_used or t.help_type in ("organize", "translate"))
     help_usage_rate = round(helped / len(user_turns), 3) if user_turns else 0.0
 
-    # 到期复练完成率：分母为有效到期项目（due 已过且非失效/争议），分子为其中独立完成
+    # 到期复练完成率：只认过去 7 日真实到期快照；已完成后 due_at 推进不抹去旧分母。
     queue = db.query(ReviewQueueItem).filter(ReviewQueueItem.user_id == user_id).all()
     mastered_count = sum(1 for q in queue if q.status == "mastered")
     now = datetime.now(timezone.utc)
+    valid_item_ids = {q.id for q in queue if q.status not in ("invalid", "disputed")}
+    due_events = db.query(ReviewDueEvent).filter(ReviewDueEvent.user_id == user_id, ReviewDueEvent.valid == True).all()  # noqa: E712
     due_items = [
-        q for q in queue
-        if q.status in ("pending", "awaiting_retest", "mastered")
-        and ((q.due_at is not None and q.due_at <= now) or q.last_practiced_at is not None)
+        e for e in due_events if e.queue_item_id in valid_item_ids
+        and now - timedelta(days=7) <= (e.due_at.replace(tzinfo=timezone.utc) if e.due_at.tzinfo is None else e.due_at) <= now
     ]
-    due_done = sum(1 for q in due_items if q.retest_result == "independent")
+    due_done = sum(1 for e in due_items if e.result == "independent" and e.resolved_at is not None)
     due_retest_done_rate = round(due_done / len(due_items), 3) if due_items else 0.0
 
     # 语音可评估率：有效语音评测数 / 提交语音数
@@ -87,6 +88,13 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
             "evaluable": v["evaluable"],
         }
         for k, v in by_scene.items()
+    }
+
+    recent14 = sorted(evaluable, key=lambda e: e.created_at.replace(tzinfo=timezone.utc).timestamp() if e.created_at else 0)[-14:]
+    before_after_seven = {
+        "sample_count": len(recent14),
+        "before_rate": round(sum(e.result == "independent" for e in recent14[:7]) / 7, 3) if len(recent14) == 14 else None,
+        "after_rate": round(sum(e.result == "independent" for e in recent14[7:]) / 7, 3) if len(recent14) == 14 else None,
     }
 
     # 最近 7 天独立率趋势
@@ -128,7 +136,8 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
         "transfer_completed_count": transfer_completed_count,
         "samples": samples,
         "by_scene": by_scene,
+        "before_after_seven": before_after_seven,
         "trend": trend,
         "mastered_list": mastered_list,
-        "calc_version": "v4",
+        "calc_version": "v5",
     }

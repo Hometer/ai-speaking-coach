@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { deleteQueueItem, disputeQueueItem, getInviteCode, listQueue, retestQueueItem, revealQueueItem, skipQueueItem } from "@/lib/api";
+import { clearIntentKey, deleteQueueItem, disputeQueueItem, getInviteCode, intentKey, listQueue, retestQueueItem, revealQueueItem, skipQueueItem } from "@/lib/api";
 import type { QueueItem } from "@/lib/types";
 import Icon from "@/components/Icon";
 
@@ -95,9 +95,12 @@ export default function QueuePage() {
     try {
       const fd = new FormData();
       fd.append("audio", blob, "retest");
+      const scope = `retest:${id}`;
+      fd.append("attempt_key", await intentKey(scope, blob));
       const res = await fetch(`/api/v1/review-queue/${id}/retest/voice`, { method: "POST", headers: { "X-Invite-Code": getInviteCode() }, body: fd });
       const data = await res.json();
       if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
+      clearIntentKey(scope);
       await reload();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { addToQueue, createSession, deleteAllSessions, deleteSession, getSession, listSessions } from "@/lib/api";
-import type { SessionDetail, SessionListItem } from "@/lib/types";
+import { addToQueue, createSession, deleteAllSessions, deleteSession, getSession, listScenarios, listSessions } from "@/lib/api";
+import type { Scenario, SessionDetail, SessionListItem } from "@/lib/types";
 import Icon from "@/components/Icon";
 
 const EVAL_CN: Record<string, string> = { independent: "独立完成", hinted: "提示下完成", incomplete: "未完成", insufficient_evidence: "证据不足", text_completed: "文字完成", not_started: "未开始", revised: "待重算" };
@@ -20,7 +20,8 @@ export default function HistoryPage() {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [pending, setPending] = useState("");
   const [added, setAdded] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState<{ status?: string; practice_type?: string }>({});
+  const [filter, setFilter] = useState<{ status?: string; practice_type?: string; series?: string; scene_id?: string; review_status?: string }>({});
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const detailRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,6 +29,10 @@ export default function HistoryPage() {
     listSessions(filter).then(data => { if (active) setItems(data); }).catch(e => { if (active) setErr(e instanceof Error ? e.message : String(e)); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [filter]);
+
+  useEffect(() => {
+    listScenarios().then(setScenarios).catch(() => setScenarios([]));
+  }, []);
 
   useEffect(() => { if (detail) detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }, [detail]);
 
@@ -87,6 +92,11 @@ export default function HistoryPage() {
         <div className="panel stat-card"><span className="icon-tile"><Icon name="check" /></span><div><strong>{endedCount}</strong><p>已结束的练习</p></div></div>
       </div>}
       <div className="section-head"><h2>我的练习记录</h2><div className="flex gap-2 flex-wrap"><button onClick={() => setFilter({})} className={`btn ${!filter.status && !filter.practice_type ? "btn-secondary" : "btn-ghost"} btn-small`}>全部</button><button onClick={() => setFilter(f => ({ ...f, status: "completed" }))} className={`btn ${filter.status === "completed" ? "btn-secondary" : "btn-ghost"} btn-small`}>已完成</button><button onClick={() => setFilter(f => ({ ...f, status: "incomplete" }))} className={`btn ${filter.status === "incomplete" ? "btn-secondary" : "btn-ghost"} btn-small`}>进行中</button><button onClick={() => setFilter(f => ({ ...f, practice_type: "interview" }))} className={`btn ${filter.practice_type === "interview" ? "btn-secondary" : "btn-ghost"} btn-small`}>普通练习</button><button onClick={() => setFilter(f => ({ ...f, practice_type: "sentence_practice" }))} className={`btn ${filter.practice_type === "sentence_practice" ? "btn-secondary" : "btn-ghost"} btn-small`}>单句练习</button><button onClick={() => setFilter(f => ({ ...f, practice_type: "daily_review" }))} className={`btn ${filter.practice_type === "daily_review" ? "btn-secondary" : "btn-ghost"} btn-small`}>今日复练</button>{items.length > 0 && <button onClick={delAll} disabled={!!pending || loading} className="btn btn-ghost btn-small"><Icon name="trash" size={14} />删除全部</button>}</div></div>
+      <div className="flex gap-2 flex-wrap mb-4" aria-label="筛选练习历史">
+        <label>系列 <select className="field field-small" value={filter.series || ""} onChange={e => setFilter(f => ({ ...f, series: e.target.value || undefined, scene_id: undefined }))}><option value="">全部系列</option><option value="career">职场与求职</option><option value="travel">旅行与生活</option><option value="daily">日常交流</option></select></label>
+        <label>场景 <select className="field field-small" value={filter.scene_id || ""} onChange={e => setFilter(f => ({ ...f, scene_id: e.target.value || undefined }))}><option value="">全部场景</option>{scenarios.filter(s => !filter.series || s.series === filter.series).map(s => <option key={s.scene_id} value={s.scene_id}>{s.label}</option>)}</select></label>
+        <label>复练状态 <select className="field field-small" value={filter.review_status || ""} onChange={e => setFilter(f => ({ ...f, review_status: e.target.value || undefined }))}><option value="">全部状态</option><option value="none">未加入复练</option><option value="pending">待练</option><option value="awaiting_retest">待复测</option><option value="mastered">已掌握</option><option value="disputed">有争议</option><option value="invalid">已失效</option></select></label>
+      </div>
       {err && <div className="error-banner" role="alert">{err}<div className="flex gap-3 mt-2"><button className="text-link" onClick={reload}>重新加载</button><Link className="text-link" href="/">返回首页验证凭证</Link></div></div>}
       {loading ? <div role="status" aria-label="加载练习记录"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div> : items.length === 0 && !err ? (
         <div className="panel empty-state"><span className="icon-tile"><Icon name="history" size={30} /></span><h2>你的故事，从第一次练习开始</h2><p>完成一段对话后，练习记录和回顾会出现在这里。给自己 5 分钟，试着说说你的经历吧。</p><Link href="/" className="btn btn-primary">去开始练习 <Icon name="arrow" size={16} /></Link></div>

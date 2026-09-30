@@ -73,6 +73,7 @@ def test_voice_risk_hold_and_confirm(client, monkeypatch):
     assert risk["risk_level"] == "mid"
     assert risk["transcript"] == "I have three years of experience in"
     assert risk.get("recording_url")  # 有听回录音
+    assert any(e == "done" for e, _ in events)
 
     # 听回：录音可访问（非 404）
     rec = client.get(risk["recording_url"], headers=USER)
@@ -94,6 +95,7 @@ def test_voice_risk_hold_and_confirm(client, monkeypatch):
     body = r2.json()
     assert body.get("turn_id")
     assert body.get("eval_result") in ("independent", "hinted", "incomplete", "insufficient_evidence")
+    assert client.get(risk["recording_url"], headers=USER).status_code == 404
 
 
 def test_text_fallback_is_not_voice_independent(client, monkeypatch):
@@ -121,3 +123,119 @@ def test_text_fallback_is_not_voice_independent(client, monkeypatch):
     )
     assert r2.status_code == 200, r2.text
     assert r2.json()["eval_result"] == "text_completed"
+
+
+def test_pending_risk_recording_is_removed_on_rerecord_and_expiry(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.config import settings
+    from app.models.database import SessionLocal
+    from app.models.entities import AsrRiskRecord, Session
+    from app.services.cleanup import cleanup_old_recordings
+    from app.services import session_svc
+
+    class TruncatedASR:
+        def transcribe(self, audio_path):
+            return "I have three years of experience in"
+
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: TruncatedASR())
+    sid = client.post("/api/v1/sessions", json={"level": "basic"}, headers=USER).json()["session_id"]
+
+    def hold():
+        r = client.post(
+            f"/api/v1/sessions/{sid}/turns/voice",
+            files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+            headers=USER,
+        )
+        return next(d for e, d in _sse_events(r.text) if e == "risk_hold")
+
+    first = hold()
+    filename = first["recording_url"].split("/")[-1]
+    path = settings.data_dir / "audio" / filename
+    assert path.is_file()
+    assert client.post(f"/api/v1/sessions/{sid}/turns/{first['turn_id']}/discard-risk", headers=USER).status_code == 200
+    assert not path.exists()
+    assert client.get(f"/api/v1/sessions/{sid}", headers=USER).json()["pending_risk"] is None
+
+    second = hold()
+    path2 = settings.data_dir / "audio" / second["recording_url"].split("/")[-1]
+    with SessionLocal() as db:
+        risk = db.query(AsrRiskRecord).filter_by(turn_id=second["turn_id"]).first()
+        risk.created_at = datetime.now(timezone.utc) - timedelta(days=2)
+        db.commit()
+    assert cleanup_old_recordings() >= 1
+    assert not path2.exists()
+    with SessionLocal() as db:
+        assert db.get(Session, sid).pending_risk
+    assert not client.get(f"/api/v1/sessions/{sid}", headers=USER).json()["pending_risk"].get("recording_url")
+
+
+def test_turn_intent_key_replays_after_end_and_rejects_changed_content(client):
+    sid = client.post("/api/v1/sessions", json={"level": "basic"}, headers=USER).json()["session_id"]
+    payload = {"text": "I have three years of software experience.", "request_key": "turn-intent-1"}
+    first = client.post(f"/api/v1/sessions/{sid}/turns/text", json=payload, headers=USER)
+    assert first.status_code == 200
+    client.post(f"/api/v1/sessions/{sid}/end", json={"reason": "user_ended"}, headers=USER)
+    replay = client.post(f"/api/v1/sessions/{sid}/turns/text", json=payload, headers=USER)
+    assert replay.status_code == 200
+    assert replay.text.count("event: done") == 1
+    conflict = client.post(f"/api/v1/sessions/{sid}/turns/text", json={"text": "Different", "request_key": "turn-intent-1"}, headers=USER)
+    assert conflict.status_code == 200  # SSE 错误使用 error 事件
+    assert "IDEMPOTENCY_CONFLICT" in conflict.text
+
+
+def test_create_session_intent_key_checks_payload(client):
+    req = {"level": "basic", "difficulty": "standard", "scene_id": "job_interview", "request_key": "create-intent-1"}
+    first = client.post("/api/v1/sessions", json=req, headers=USER)
+    assert first.status_code == 200
+    assert client.post("/api/v1/sessions", json=req, headers=USER).json()["session_id"] == first.json()["session_id"]
+    conflict = client.post("/api/v1/sessions", json={**req, "scene_id": "hotel_checkin"}, headers=USER)
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+
+def test_qa_recording_requires_separate_consent_and_revocation(client, monkeypatch):
+    from app.core import config
+    from app.core.config import settings
+    from app.models.database import SessionLocal
+    from app.models.entities import QaRecording
+    from app.services import session_svc
+
+    config.settings.qa_invite_codes = ["qa-a"]
+    sid = client.post("/api/v1/sessions", json={"level": "basic"}, headers=USER).json()["session_id"]
+
+    class TruncatedASR:
+        def transcribe(self, audio_path):
+            return "I have three years of experience in"
+
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: TruncatedASR())
+
+    def send_voice():
+        return client.post(
+            f"/api/v1/sessions/{sid}/turns/voice",
+            files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
+            headers=USER,
+        )
+
+    first = send_voice()
+    first_risk = next(d for e, d in _sse_events(first.text) if e == "risk_hold")
+    with SessionLocal() as db:
+        assert db.query(QaRecording).filter_by(session_id=sid).count() == 0
+    client.post(f"/api/v1/sessions/{sid}/turns/{first_risk['turn_id']}/discard-risk", headers=USER)
+
+    granted = client.post(f"/api/v1/sessions/{sid}/qa-recording-consent", json={"granted": True}, headers=USER)
+    assert granted.status_code == 200 and granted.json()["granted"] is True
+    second = send_voice()
+    assert any(e == "risk_hold" for e, _ in _sse_events(second.text))
+    with SessionLocal() as db:
+        recording = db.query(QaRecording).filter_by(session_id=sid).one()
+        recording_id, path = recording.id, settings.data_dir / "qa_audio" / recording.filename
+    assert path.is_file()
+    assert client.get(f"/api/v1/qa/recordings/{recording_id}", headers=USER).status_code == 403
+    assert client.get(f"/api/v1/qa/recordings/{recording_id}", headers={"X-Invite-Code": "qa-a"}).status_code == 200
+    log = client.get(f"/api/v1/qa/recordings/{recording_id}/access-log", headers={"X-Invite-Code": "qa-a"}).json()
+    assert any(row["action"] == "view" and row["outcome"] == "allowed" for row in log)
+    revoked = client.post(f"/api/v1/sessions/{sid}/qa-recording-consent", json={"granted": False}, headers=USER)
+    assert revoked.json()["granted"] is False
+    assert not path.exists()
+    assert client.get(f"/api/v1/qa/recordings/{recording_id}", headers={"X-Invite-Code": "qa-a"}).status_code == 403

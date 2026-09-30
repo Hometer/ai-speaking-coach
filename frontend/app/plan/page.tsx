@@ -16,6 +16,7 @@ const GOALS = [
 export default function PlanPage() {
   const [plan, setPlan] = useState<TrainingPlan | null>(null);
   const [goal, setGoal] = useState("job_prep");
+  const [availableMinutes, setAvailableMinutes] = useState(5);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [pending, setPending] = useState("");
@@ -23,7 +24,7 @@ export default function PlanPage() {
   useEffect(() => {
     let active = true;
     getPlan()
-      .then((p) => { if (active) setPlan(p); })
+      .then((p) => { if (active) { setPlan(p); if (p) setAvailableMinutes(p.available_minutes || 5); } })
       .catch((e) => { if (active) setErr(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -31,7 +32,7 @@ export default function PlanPage() {
 
   async function create() {
     setPending("create"); setErr("");
-    try { setPlan(await createPlan(goal)); }
+    try { setPlan(await createPlan(goal, availableMinutes)); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setPending(""); }
   }
@@ -73,6 +74,7 @@ export default function PlanPage() {
             <button key={g.value} className={`btn ${goal === g.value ? "btn-primary" : "btn-ghost"} btn-small`} onClick={() => setGoal(g.value)} disabled={!!pending}>{g.label}</button>
           ))}
         </div>
+        <label className="field-label mt-4">每天可用时间 <select className="field field-small" value={availableMinutes} onChange={e => setAvailableMinutes(Number(e.target.value))} disabled={!!pending}><option value={5}>5 分钟</option><option value={10}>10 分钟</option><option value={15}>15 分钟</option></select></label>
         <div className="flex gap-3 mt-4">
           <button className="btn btn-primary" onClick={create} disabled={!!pending}>{pending === "create" ? "生成中…" : "生成 / 更新计划"}</button>
           {plan && <button className="btn btn-ghost" onClick={togglePause} disabled={!!pending}>{plan.status === "paused" ? "恢复计划" : "暂停计划"}</button>}
@@ -90,6 +92,7 @@ export default function PlanPage() {
               <div className="history-info">
                 <h3>第 {d.day} 天 · {d.scene_label}</h3>
                 <div className="history-meta">
+                  <span>{d.scheduled_date}</span>
                   <span>{d.status === "skipped" ? "已跳过" : d.status === "completed" ? "已完成" : "待练"}</span>
                   {d.retest_item_id ? <span>含一项到期复练</span> : <span>可选复练：无到期项</span>}
                   {d.adjustment_reason && <span>{d.adjustment_reason}</span>}
@@ -97,7 +100,7 @@ export default function PlanPage() {
               </div>
               <span className={`badge ${d.status !== "completed" ? "badge-neutral" : ""}`}>{d.status === "skipped" ? "已跳过" : d.status === "completed" ? "已完成" : "待练"}</span>
               <div className="row-actions">
-                <Link className="btn btn-secondary btn-small" href={`/?scene=${d.scene_id}`}>练这一场景 <Icon name="arrow" size={13} /></Link>
+                {d.status === "pending" && d.scheduled_date === new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" }) ? <Link className="btn btn-secondary btn-small" href={`/?scene=${d.scene_id}&plan_id=${plan.id}&plan_day=${d.day}`}>练这一场景 <Icon name="arrow" size={13} /></Link> : <span className="text-xs muted">{d.status === "pending" ? "到计划日期可练" : "本日已处理"}</span>}
                 {d.status !== "skipped" && <button onClick={() => skip(d.day)} disabled={!!pending} className="btn btn-ghost btn-small">跳过</button>}
               </div>
             </article>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import Icon from "@/components/Icon";
-import { dailyReviewAction, dailyReviewAttempt, dailyReviewView, dueToday, getInviteCode, revealQueueItem, startDailyReview } from "@/lib/api";
+import { clearIntentKey, dailyReviewAction, dailyReviewAttempt, dailyReviewView, dueToday, getInviteCode, intentKey, revealQueueItem, startDailyReview } from "@/lib/api";
 import type { DailyReviewCurrent, DueToday } from "@/lib/types";
 import styles from "./page.module.css";
 
@@ -112,6 +112,8 @@ export default function DailyReviewPage() {
     try {
       const fd = new FormData();
       fd.append("audio", blob, "daily-review");
+      const scope = `daily:${sessionId}`;
+      fd.append("attempt_key", await intentKey(scope, blob));
       const res = await fetch(`/api/v1/review-queue/daily-review/${sessionId}/attempt/voice`, {
         method: "POST",
         headers: { "X-Invite-Code": getInviteCode() },
@@ -119,6 +121,7 @@ export default function DailyReviewPage() {
       });
       const data = await res.json();
       if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
+      clearIntentKey(scope);
       setShowHint(false);
       setMsg(data.success ? "这一条已独立完成（语音）。" : "还没有对上，可以再试一次或使用提示。");
       setCurrent(data.next);
@@ -136,6 +139,7 @@ export default function DailyReviewPage() {
     setMsg("");
     try {
       const result = await dailyReviewAction(sessionId, action);
+      if (action === "end") clearIntentKey("daily-start");
       setCurrent(result.next);
       setAnswer("");
       setShowHint(false);

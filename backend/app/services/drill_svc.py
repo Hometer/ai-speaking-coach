@@ -11,9 +11,15 @@ from typing import Any
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
+from app.core.config import settings
 from app.models.entities import DrillAttempt, EventLog, ReviewQueueItem, Session
 from app.services.prompts.scenarios import SCENARIOS
 from app.services.recall_judge import judge_recall, judge_transfer
+from app.services.transfer_eval import verify_new_condition
+from app.services.budget import BudgetGuard
+from app.services.generation_call import reset_usage_attempts
+from app.services import provider_usage as provider_usage_svc
+from app.services import intent_result
 from app.services.session_svc import _require_session
 
 STAGE_ORDER = ["full_text", "fill_blanks", "structure", "free_speak", "transfer"]
@@ -149,18 +155,20 @@ def _write_back_queue(db: DbSession, user_id: str, source_turn_id: str, result: 
     )
     if item is None:
         return
-    from app.services.review_queue import STATUS_AWAITING_RETEST, STATUS_MASTERED
+    from app.services.review_queue import STATUS_AWAITING_RETEST, STATUS_MASTERED, _resolve_due, _schedule_due
 
     if item.status not in ("pending", STATUS_AWAITING_RETEST):
         return
 
-    # 到期约束（AC07-08）：待复测且未到期不推进
-    if item.status == STATUS_AWAITING_RETEST and item.due_at is not None:
-        due = item.due_at
-        if due.tzinfo is None:
-            due = due.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) < due:
-            return
+    # 首次与后续写回都须到期；脱稿练习本身可以继续，但不能提前增加跨日掌握次数。
+    if item.due_at is None:
+        return
+    due = item.due_at
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) < due:
+        return
+    _resolve_due(db, item, "independent")
     item.last_practiced_at = datetime.now(timezone.utc)
     item.retest_result = "independent"
     item.success_count = (item.success_count or 0) + 1
@@ -168,7 +176,7 @@ def _write_back_queue(db: DbSession, user_id: str, source_turn_id: str, result: 
         item.status = STATUS_MASTERED
     else:
         item.status = STATUS_AWAITING_RETEST
-        item.due_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        _schedule_due(db, item, datetime.now(timezone.utc) + timedelta(hours=24))
     db.commit()
 
 
@@ -178,10 +186,12 @@ def submit_drill_attempt(
     session = _require_session(db, session_id, user_id)
     if session.practice_type not in ("sentence_practice", "drill"):
         raise AppError("INVALID_STATE", "该会话不是脱稿练习", status_code=409)
+    text = (text or "").strip()
+    replayed = intent_result.replay(db, user_id, "drill_attempt", session_id, attempt_key, input_type, text)
+    if replayed is not None:
+        return replayed
     if session.source_invalid:
         raise AppError("SOURCE_INVALID", "来源内容已失效，请重新选择练习", status_code=409)
-
-    text = (text or "").strip()
 
     # 幂等检查放最前（仅次来源校验）：同键返回首次结果；同键异内容 409
     if attempt_key:
@@ -206,15 +216,20 @@ def submit_drill_attempt(
         raise AppError("SESSION_ENDED", "脱稿练习已结束", status_code=409)
 
     stage = session.drill_stage or "full_text"
+    transfer_guard = None
+    if stage == "transfer" and input_type == "voice" and settings.provider_mode == "real":
+        transfer_guard = BudgetGuard(db)
+        transfer_guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
+        reset_usage_attempts()
 
     if stage == "free_speak":
         # 脱稿说：只看中文意图，语音 + 相关 + 非照抄才独立
         result = judge_recall(text, session.drill_target, input_type, help_shown=False)
         success = result == "independent"
     elif stage == "transfer":
-        # 换题：按新条件，不复述原句，且与参考表达有 ≥2 内容词重叠
-        scene = SCENARIOS.get(session.scene_id or "", {})
-        result = judge_transfer(text, session.drill_target, input_type, help_shown=False, reference_expressions=(scene.get("reference_expressions") or []))
+        # 词重合只能作为线索，不能代替新条件核对；Mock/不确定均保持 pending。
+        verified = verify_new_condition(_transfer_question(session.scene_id), session.drill_target, text) if input_type == "voice" else None
+        result = judge_transfer(text, session.drill_target, input_type, help_shown=False, new_condition_verified=verified)
         success = result == "transfer"
     else:
         # 有参考阶段（看全文/补词/看结构）：照着说，词重叠判定完成
@@ -235,16 +250,30 @@ def submit_drill_attempt(
             session.drill_stage = STAGE_ORDER[STAGE_ORDER.index(stage) + 1]
             if stage == "free_speak":
                 _write_back_queue(db, user_id, session.source_turn_id, "independent")
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        if transfer_guard is not None:
+            transfer_guard.release(settings.nominal_cost_per_turn, session_id, user_id)
+        raise
+    if transfer_guard is not None:
+        transfer_guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
+        try:
+            provider_usage_svc.record_llm_attempts(db, user_id, session_id)
+        except Exception:
+            db.rollback()
 
     view = drill_view(session, db)
-    return {
+    response = {
         "success": success,
         "result": result,
         "stage": stage,
         "next_stage": session.drill_stage,
         **view,
     }
+    intent_result.remember(db, user_id, "drill_attempt", session_id, attempt_key, input_type, text, response)
+    return response
 
 
 def drill_action(db: DbSession, session_id: str, user_id: str, action: str) -> dict[str, Any]:

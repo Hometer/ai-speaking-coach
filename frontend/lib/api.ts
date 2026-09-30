@@ -24,6 +24,23 @@ function authHeaders(): Record<string, string> {
   return { "X-Invite-Code": getInviteCode() };
 }
 
+export async function intentKey(scope: string, payload: string | Blob): Promise<string> {
+  const bytes = typeof payload === "string" ? new TextEncoder().encode(payload) : await payload.arrayBuffer();
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const slot = `ai_intent:${scope}`;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(slot) || "null") as { digest?: string; key?: string } | null;
+    if (saved?.digest === digest && saved.key) return saved.key;
+  } catch { /* 私密模式下仍可提交，服务端保持幂等校验 */ }
+  const key = crypto.randomUUID();
+  try { sessionStorage.setItem(slot, JSON.stringify({ digest, key })); } catch { /* 同上 */ }
+  return key;
+}
+
+export function clearIntentKey(scope: string): void {
+  try { sessionStorage.removeItem(`ai_intent:${scope}`); } catch { /* 同上 */ }
+}
+
 async function handle<T>(res: Response): Promise<T> {
   const text = await res.text();
   let data: unknown = null;
@@ -66,13 +83,18 @@ export async function createSession(
   difficulty: string,
   durationMinutes = 5,
   sceneId = "job_interview",
+  planEntry?: { planId: number; planDay: number },
 ): Promise<SessionCreated> {
+  const scope = "create-session";
+  const requestKey = await intentKey(scope, JSON.stringify({ level, difficulty, durationMinutes, sceneId, planEntry }));
   const res = await fetch("/api/v1/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ level, difficulty, duration_minutes: durationMinutes, scene_id: sceneId }),
+    body: JSON.stringify({ level, difficulty, duration_minutes: durationMinutes, scene_id: sceneId, request_key: requestKey, plan_id: planEntry?.planId, plan_day: planEntry?.planDay }),
   });
-  return handle<SessionCreated>(res);
+  const result = await handle<SessionCreated>(res);
+  clearIntentKey(scope);
+  return result;
 }
 
 export async function createPracticeSentence(sourceSessionId: string, turnId: string): Promise<SessionCreated> {
@@ -229,12 +251,16 @@ export async function dueQueueItem(): Promise<QueueItem | null> {
 }
 
 export async function retestQueueItem(id: number, answer: string, inputType = "text", attemptKey = ""): Promise<QueueItem> {
+  const scope = `retest:${id}`;
+  const key = attemptKey || await intentKey(scope, `${inputType}:${answer.trim()}`);
   const res = await fetch(`/api/v1/review-queue/${id}/retest`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ answer, input_type: inputType, attempt_key: attemptKey }),
+    body: JSON.stringify({ answer, input_type: inputType, attempt_key: key }),
   });
-  return handle<QueueItem>(res);
+  const result = await handle<QueueItem>(res);
+  clearIntentKey(scope);
+  return result;
 }
 
 export async function revealQueueItem(id: number): Promise<QueueItem> {
@@ -262,11 +288,11 @@ export async function getProgress(): Promise<Progress> {
   return handle<Progress>(res);
 }
 
-export async function createPlan(goalType: string): Promise<TrainingPlan> {
+export async function createPlan(goalType: string, availableMinutes: number): Promise<TrainingPlan> {
   const res = await fetch("/api/v1/training-plan", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ goal_type: goalType }),
+    body: JSON.stringify({ goal_type: goalType, available_minutes: availableMinutes }),
   });
   return handle<TrainingPlan>(res);
 }
@@ -296,9 +322,25 @@ export async function resumePlan(): Promise<TrainingPlan> {
   return handle<TrainingPlan>(res);
 }
 
-export async function qaSessions(): Promise<QaSession[]> {
-  const res = await fetch("/api/v1/qa/sessions", { headers: authHeaders() });
+export async function qaSessions(filters: Record<string, string> = {}): Promise<QaSession[]> {
+  const query = new URLSearchParams(filters).toString();
+  const res = await fetch(`/api/v1/qa/sessions${query ? `?${query}` : ""}`, { headers: authHeaders() });
   return handle<QaSession[]>(res);
+}
+
+export async function setQaRecordingConsent(sessionId: string, granted: boolean): Promise<{ granted: boolean; expires_at: string | null }> {
+  const res = await fetch(`/api/v1/sessions/${sessionId}/qa-recording-consent`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ granted }),
+  });
+  return handle<{ granted: boolean; expires_at: string | null }>(res);
+}
+
+export async function completeQaRecording(id: number): Promise<void> {
+  await handle(await fetch(`/api/v1/qa/recordings/${id}/complete`, { method: "POST", headers: authHeaders() }));
+}
+
+export async function qaRecordingAccessLog(id: number): Promise<{ reviewer_id: string; action: string; outcome: string; created_at: string }[]> {
+  return handle(await fetch(`/api/v1/qa/recordings/${id}/access-log`, { headers: authHeaders() }));
 }
 
 export async function qaAddLabel(sessionId: string, turnId: string, issueType: string): Promise<unknown> {
@@ -356,23 +398,28 @@ export async function submitTurn(
   opts: { text?: string; audio?: Blob },
   onChunk?: (text: string) => void,
 ): Promise<TurnDone | RiskHold> {
+  const scope = `turn:${sessionId}`;
+  const requestKey = await intentKey(scope, opts.audio || `text:${opts.text ?? ""}`);
   let url: string;
   let init: RequestInit;
   if (opts.audio) {
     url = `/api/v1/sessions/${sessionId}/turns/voice`;
     const fd = new FormData();
     fd.append("audio", opts.audio, "recording");
+    fd.append("request_key", requestKey);
     init = { method: "POST", headers: authHeaders(), body: fd };
   } else {
     url = `/api/v1/sessions/${sessionId}/turns/text`;
     init = {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ text: opts.text ?? "" }),
+      body: JSON.stringify({ text: opts.text ?? "", request_key: requestKey }),
     };
   }
   const res = await fetch(url, init);
-  return parseSSE<TurnDone>(res, onChunk);
+  const result = await parseSSE<TurnDone | RiskHold>(res, onChunk);
+  clearIntentKey(scope);
+  return result;
 }
 
 export async function retryTurnAudio(sessionId: string, turnId: string): Promise<TurnDone> {
@@ -383,13 +430,22 @@ export async function retryTurnAudio(sessionId: string, turnId: string): Promise
   return handle<TurnDone>(res);
 }
 
+export async function discardRisk(sessionId: string, turnId: string): Promise<void> {
+  const res = await fetch(`/api/v1/sessions/${sessionId}/turns/${turnId}/discard-risk`, { method: "POST", headers: authHeaders() });
+  await handle<{ discarded: boolean }>(res);
+}
+
 export async function drillAttempt(sessionId: string, text: string, inputType = "text", attemptKey = ""): Promise<DrillAttemptResult> {
+  const scope = `drill:${sessionId}`;
+  const key = attemptKey || await intentKey(scope, `${inputType}:${text.trim()}`);
   const res = await fetch(`/api/v1/sessions/${sessionId}/drill-attempt`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ text, input_type: inputType, attempt_key: attemptKey }),
+    body: JSON.stringify({ text, input_type: inputType, attempt_key: key }),
   });
-  return handle<DrillAttemptResult>(res);
+  const result = await handle<DrillAttemptResult>(res);
+  clearIntentKey(scope);
+  return result;
 }
 
 export async function drillAction(sessionId: string, action: "skip" | "downgrade" | "jump" | "end"): Promise<DrillView> {
@@ -407,7 +463,8 @@ export async function dueToday(): Promise<DueToday> {
 }
 
 export async function startDailyReview(): Promise<{ session_id: string | null; items: DueToday["items"] }> {
-  const res = await fetch("/api/v1/review-queue/daily-review/start", { method: "POST", headers: authHeaders() });
+  const key = await intentKey("daily-start", new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" }));
+  const res = await fetch("/api/v1/review-queue/daily-review/start", { method: "POST", headers: { ...authHeaders(), "X-Request-Key": key } });
   return handle<{ session_id: string | null; items: DueToday["items"] }>(res);
 }
 
@@ -417,12 +474,16 @@ export async function dailyReviewView(sessionId: string): Promise<DailyReviewCur
 }
 
 export async function dailyReviewAttempt(sessionId: string, answer: string, helpUsed: boolean, inputType = "text", attemptKey = ""): Promise<DailyReviewAttemptResult> {
+  const scope = `daily:${sessionId}`;
+  const key = attemptKey || await intentKey(scope, `${inputType}:${answer.trim()}`);
   const res = await fetch(`/api/v1/review-queue/daily-review/${sessionId}/attempt`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ answer, help_used: helpUsed, input_type: inputType, attempt_key: attemptKey }),
+    body: JSON.stringify({ answer, help_used: helpUsed, input_type: inputType, attempt_key: key }),
   });
-  return handle<DailyReviewAttemptResult>(res);
+  const result = await handle<DailyReviewAttemptResult>(res);
+  clearIntentKey(scope);
+  return result;
 }
 
 export async function dailyReviewAction(sessionId: string, action: "skip" | "defer" | "dispute" | "end"): Promise<{ next: DailyReviewCurrent }> {

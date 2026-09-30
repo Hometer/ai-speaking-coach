@@ -91,9 +91,16 @@ def test_revoked_qa_invite_cannot_access_workbench(client):
 
 def test_plan_completion_binds_to_single_day(client):
     # 旅行计划：酒店/餐厅交替，酒店在 1/3/5/7 天
-    client.post("/api/v1/training-plan", json={"goal_type": "travel"}, headers=USER)
-    # 结束一次酒店练习
+    plan = client.post("/api/v1/training-plan", json={"goal_type": "travel"}, headers=USER).json()
+    # 普通练习不自动认领计划日。
     s = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard", "scene_id": "hotel_checkin"}, headers=USER).json()
+    client.post(f"/api/v1/sessions/{s['session_id']}/turns/text", json={"text": "I have a reservation under the name Li."}, headers=USER)
+    client.post(f"/api/v1/sessions/{s['session_id']}/end", json={"reason": "user_ended"}, headers=USER)
+    p = client.get("/api/v1/training-plan", headers=USER).json()
+    hotel_days = [d for d in p["days"] if d["scene_id"] == "hotel_checkin"]
+    assert all(d["status"] != "completed" for d in hotel_days)
+    # 从明确的计划日入口完成，才点亮当天这一项。
+    s = client.post("/api/v1/sessions", json={"level": "basic", "difficulty": "standard", "scene_id": "hotel_checkin", "plan_id": plan["id"], "plan_day": 1}, headers=USER).json()
     client.post(f"/api/v1/sessions/{s['session_id']}/turns/text", json={"text": "I have a reservation under the name Li."}, headers=USER)
     client.post(f"/api/v1/sessions/{s['session_id']}/end", json={"reason": "user_ended"}, headers=USER)
     p = client.get("/api/v1/training-plan", headers=USER).json()

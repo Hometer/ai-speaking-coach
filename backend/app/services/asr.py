@@ -45,7 +45,7 @@ class DashScopeASRProvider(ASRProvider):
         except AppError:
             raise
         except Exception as exc:  # noqa: BLE001
-            raise AppError("ASR_ERROR", f"语音识别失败：{str(exc)[:120]}", status_code=502)
+            raise AppError("ASR_ERROR", "语音识别暂不可用，请重试或改用文字", status_code=502) from exc
 
         text = _extract_text(result)
         if not text:

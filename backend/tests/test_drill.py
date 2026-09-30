@@ -70,11 +70,10 @@ def _attempt_voice(client, sid, text, monkeypatch):
 def test_transfer_rejects_unrelated_answer():
     from app.services.recall_judge import judge_transfer
 
-    refs = ["I have a reservation under the name Li.", "What time does breakfast start?"]
-    # 无关句：不含参考表达内容词 → pending
-    assert judge_transfer("The hotel has beautiful music today", "I have a reservation for two nights", "voice", False, refs) == "pending"
-    # 相关句：含 ≥2 参考表达内容词 → transfer
-    assert judge_transfer("What time does breakfast start", "I have a reservation for two nights", "voice", False, refs) == "transfer"
+    # 词重合本身不能生成迁移；只有独立语义核对明确通过才升级。
+    assert judge_transfer("The hotel has beautiful music today", "I have a reservation for two nights", "voice", False) == "pending"
+    assert judge_transfer("What time does breakfast start", "I have a reservation for two nights", "voice", False) == "pending"
+    assert judge_transfer("What time does breakfast start", "I have a reservation for two nights", "voice", False, True) == "transfer"
 
 
 def test_create_drill_session_sets_stage(client):
@@ -88,6 +87,8 @@ def test_create_drill_session_sets_stage(client):
 
 
 def test_drill_stage_progression_and_evidence(client, monkeypatch):
+    from app.services import drill_svc
+
     source_sid, source_tid, imp = _source_improvement(client)
     d = _create_drill(client, source_sid, source_tid)
     sid = d["session_id"]
@@ -102,7 +103,8 @@ def test_drill_stage_progression_and_evidence(client, monkeypatch):
     # 脱稿说/换题：必须语音
     r = _attempt_voice(client, sid, target, monkeypatch)
     assert r["result"] == "independent" and r["next_stage"] == "transfer"
-    r = _attempt_voice(client, sid, "I led a project that improved delivery speed.", monkeypatch)
+    monkeypatch.setattr(drill_svc, "verify_new_condition", lambda question, original, answer: "university" in answer.lower())
+    r = _attempt_voice(client, sid, "At university I led a project that improved delivery speed.", monkeypatch)
     assert r["result"] == "transfer" and r["next_stage"] == "ended"
     assert r["completed"] is True
 
@@ -182,8 +184,23 @@ def test_drill_write_back_to_queue(client, monkeypatch):
     target = imp["practice_sentence"]
     for _ in range(3):  # full_text→fill_blanks→structure→free_speak
         _attempt(client, sid, target)
-    _attempt_voice(client, sid, target, monkeypatch)  # free_speak 语音成功 → 写回独立
+    _attempt_voice(client, sid, target, monkeypatch)  # 当天脱稿可成功，但队列未到期不能提前记独立
     items = client.get("/api/v1/review-queue", headers=USER).json()
     item = next(x for x in items if x["source_turn_id"] == source_tid)
-    assert item["success_count"] == 1
-    assert item["status"] == "awaiting_retest"
+    assert item["success_count"] == 0
+    from datetime import datetime, timedelta, timezone
+    from app.models.database import SessionLocal
+    from app.models.entities import ReviewDueEvent, ReviewQueueItem
+    from app.services.drill_svc import _write_back_queue
+
+    with SessionLocal() as db:
+        row = db.get(ReviewQueueItem, item["id"])
+        row.due_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        due = db.query(ReviewDueEvent).filter_by(queue_item_id=row.id).first()
+        due.due_at = row.due_at
+        db.commit()
+        _write_back_queue(db, "user-a", source_tid, "independent")
+        db.refresh(row)
+        assert row.success_count == 1
+        assert row.status == "awaiting_retest"
+        assert due.result == "independent"

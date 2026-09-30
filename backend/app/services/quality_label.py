@@ -4,7 +4,8 @@ from typing import Any
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
-from app.models.entities import EventLog, QualityLabel, QualityLabelChange, Session, Turn
+from app.models.entities import BudgetLedger, Evaluation, EventLog, ProviderUsageEvent, QaRecording, QaRecordingConsent, QualityLabel, QualityLabelChange, Session, Turn
+from app.services.qa_recording import _active
 
 ISSUE_TYPES = [
     "mis_correction",
@@ -42,7 +43,9 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
         q = q.join(QualityLabel, QualityLabel.session_id == Session.id).filter(
             QualityLabel.issue_type == filters["issue_type"]
         )
-    sessions = q.order_by(Session.started_at.desc()).limit(50).all()
+    if filters.get("error_code"):
+        q = q.join(EventLog, EventLog.session_id == Session.id).filter(EventLog.error == filters["error_code"])
+    sessions = q.distinct().order_by(Session.started_at.desc()).all()
 
     result: list[dict[str, Any]] = []
     for s in sessions:
@@ -60,6 +63,16 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
         errors = [
             e.error for e in db.query(EventLog).filter(EventLog.session_id == s.id, EventLog.error != "").all()
         ]
+        events = {e.turn_id: e for e in db.query(EventLog).filter(EventLog.session_id == s.id).order_by(EventLog.id).all() if e.turn_id}
+        eval_versions = {e.turn_id: e.standard_version for e in db.query(Evaluation).filter(Evaluation.session_id == s.id).all()}
+        consent = db.query(QaRecordingConsent).filter_by(session_id=s.id).first()
+        recordings = {
+            r.turn_id: r.id for r in db.query(QaRecording).filter_by(session_id=s.id).all()
+            if _active(consent) and not r.deleted_at
+        }
+        ledger = db.query(BudgetLedger).filter_by(scope="session", scope_key=s.id).first()
+        usage_rows = db.query(ProviderUsageEvent).filter_by(session_id=s.id).all()
+        disputed = db.query(QualityLabel).filter_by(session_id=s.id, conclusion="disputed").first() is not None
         result.append(
             {
                 "session_id": s.id,
@@ -68,6 +81,21 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
                 "status": s.status,
                 "started_at": s.started_at.isoformat() if s.started_at else None,
                 "error_codes": sorted(set(errors))[:5],
+                "disputed": disputed,
+                "estimated_cost": ledger.spent if ledger else 0.0,
+                # 旧 actual_spent 是不完整的硬编码推算；无供应商账单时不能展示为实付或可核对估算。
+                "supplier_estimate": None,
+                "billed_cost": None,
+                "provider_usage": {
+                    "llm_attempts": sum(1 for r in usage_rows if r.component == "llm"),
+                    "llm_input_tokens": sum(r.input_tokens for r in usage_rows if r.component == "llm"),
+                    "llm_output_tokens": sum(r.output_tokens for r in usage_rows if r.component == "llm"),
+                    "asr_input_bytes": sum(r.input_bytes for r in usage_rows if r.component == "asr"),
+                    "tts_text_chars": sum(r.text_chars for r in usage_rows if r.component == "tts"),
+                    "tts_attempts": sum(r.attempts for r in usage_rows if r.component == "tts"),
+                    "ise_input_bytes": sum(r.input_bytes for r in usage_rows if r.component == "ise"),
+                    "ise_attempts": sum(r.attempts for r in usage_rows if r.component == "ise"),
+                },
                 "turns": [
                     {
                         "turn_id": t.id,
@@ -76,11 +104,17 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
                         "reply_text": _mask(t.reply_text),
                         "eval_result": t.eval_result,
                         "help_type": t.help_type,
+                        "qa_recording_id": recordings.get(t.id),
+                        "duration_ms": events[t.id].duration_ms if t.id in events else 0,
+                        "usage": events[t.id].usage if t.id in events else "",
+                        "evidence_version": eval_versions.get(t.id, ""),
                     }
                     for t in turns
                 ],
             }
         )
+        if len(result) >= 50:
+            break
     return result
 
 

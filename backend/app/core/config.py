@@ -11,6 +11,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 class Settings:
     def __init__(self):
+        self.app_env = os.getenv("APP_ENV", "development").strip().lower()
         self.provider_mode = os.getenv("PROVIDER_MODE", "mock").strip().lower()
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
         self.model_asr = os.getenv("MODEL_ASR", "paraformer-realtime-v2")
@@ -37,6 +38,8 @@ class Settings:
         self.session_retention_days = int(os.getenv("SESSION_RETENTION_DAYS", "30"))
         # 演示邀请码种子：默认关闭（生产安全），本地开发用 SEED_DEMO_INVITES=1 开启
         self.seed_demo_invites = os.getenv("SEED_DEMO_INVITES", "0").strip().lower() in ("1", "true", "yes")
+        if self.app_env in ("production", "prod") and self.seed_demo_invites:
+            raise RuntimeError("生产环境禁止启用固定演示邀请码")
         self.ffmpeg_bin = os.getenv("FFMPEG_BIN", "ffmpeg")
         self.xf_appid = os.getenv("XF_APPID", "")
         self.xf_api_key = os.getenv("XF_API_KEY", "")

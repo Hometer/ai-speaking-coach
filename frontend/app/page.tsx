@@ -37,39 +37,59 @@ type DeviceItem = { key: string; label: string; ok: boolean; hint: string };
 
 async function checkDevice(): Promise<{ ok: boolean; summary: string; items: DeviceItem[] }> {
   const items: DeviceItem[] = [];
-  // 1. 麦克风权限 + 2. 录音输入
+  // 1. 麦克风权限 + 2. 一秒短录听回，用户确认实际输入
   let micOk = false;
   let inputOk = false;
   if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micOk = true;
-      inputOk = stream.getAudioTracks().length > 0;
-      stream.getTracks().forEach((t) => t.stop());
+      if (stream.getAudioTracks().length > 0 && typeof MediaRecorder !== "undefined") {
+        const chunks: Blob[] = [];
+        const recorder = new MediaRecorder(stream);
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+          recorder.onerror = () => reject(new Error("录音失败"));
+          recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+          recorder.start();
+          window.setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 1200);
+        });
+        if (blob.size > 100) {
+          const url = URL.createObjectURL(blob);
+          try {
+            const audio = new Audio(url);
+            await audio.play();
+            await new Promise<void>(resolve => { audio.onended = () => resolve(); audio.onerror = () => resolve(); window.setTimeout(resolve, 5000); });
+            inputOk = window.confirm("刚才播放的是一段短录音。你能听到自己刚说的话吗？");
+          } finally { URL.revokeObjectURL(url); }
+        }
+      }
     } catch {
-      micOk = false;
+      inputOk = false;
+    } finally {
+      stream?.getTracks().forEach((t) => t.stop());
     }
   }
   items.push({ key: "mic", label: "麦克风权限", ok: micOk, hint: "在浏览器地址栏左侧授权本站使用麦克风" });
   items.push({ key: "input", label: "录音输入", ok: inputOk, hint: "检查系统麦克风是否可用、未被占用" });
-  // 3. 音频播放（WebAudio 短音实际播放验证，非仅格式探测）
+  // 3. 音频播放：AudioContext 成功运行后仍请用户确认听到声音。
   let playOk = false;
   try {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (Ctx) {
       const ctx = new Ctx();
+      await ctx.resume();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      gain.gain.value = 0.01;
+      gain.gain.value = 0.06;
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
-      osc.stop(ctx.currentTime + 0.08);
+      osc.stop(ctx.currentTime + 0.35);
       osc.onended = () => { void ctx.close(); };
-      playOk = true;
-    } else {
-      const a = new Audio();
-      playOk = !!a.canPlayType && (!!a.canPlayType("audio/mp3") || !!a.canPlayType("audio/webm"));
+      await new Promise(resolve => window.setTimeout(resolve, 450));
+      playOk = ctx.state !== "suspended" && window.confirm("刚才是否听到了短提示音？");
     }
   } catch {
     playOk = false;
@@ -101,6 +121,14 @@ export default function Home() {
       return new URLSearchParams(window.location.search).get("scene") || "job_interview";
     }
     return "job_interview";
+  });
+  const [planEntry, setPlanEntry] = useState<{ planId: number; planDay: number; sceneId: string } | null>(() => {
+    if (typeof window === "undefined") return null;
+    const p = new URLSearchParams(window.location.search);
+    const planId = Number(p.get("plan_id"));
+    const planDay = Number(p.get("plan_day"));
+    const sceneId = p.get("scene") || "";
+    return planId > 0 && planDay >= 1 && planDay <= 7 && sceneId ? { planId, planDay, sceneId } : null;
   });
   const [scene, setScene] = useState<Scenario | null>(null);
   const [loading, setLoading] = useState(false);
@@ -190,7 +218,7 @@ export default function Home() {
       if (!device.ok) {
         setErr(`设备提示：${device.summary}。你仍可开始练习，语音回答可能受限，可用文字替代。`);
       }
-      const s = await createSession(level, difficulty, duration, sceneId);
+      const s = await createSession(level, difficulty, duration, sceneId, planEntry && planEntry.sceneId === sceneId ? planEntry : undefined);
       router.push(`/practice/${s.session_id}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -243,7 +271,7 @@ export default function Home() {
             </form>
           ) : (
             <div className={styles.settings}>
-              <fieldset><legend className="field-label">这次想练的场景</legend><div className={styles.sceneGroups}>{seriesOrder.map(series => { const items = scenes.filter(s => s.series === series.key); if (items.length === 0) return null; return <div key={series.key} className={styles.sceneGroup}><span className={styles.sceneSeries}>{series.label}</span><div className={styles.sceneChips}>{items.map(s => <button key={s.scene_id} className={sceneId === s.scene_id ? styles.selected : ""} aria-pressed={sceneId === s.scene_id} onClick={() => setSceneId(s.scene_id)} disabled={loading}>{s.label}</button>)}</div></div>; })}</div></fieldset>
+              <fieldset><legend className="field-label">这次想练的场景</legend><div className={styles.sceneGroups}>{seriesOrder.map(series => { const items = scenes.filter(s => s.series === series.key); if (items.length === 0) return null; return <div key={series.key} className={styles.sceneGroup}><span className={styles.sceneSeries}>{series.label}</span><div className={styles.sceneChips}>{items.map(s => <button key={s.scene_id} className={sceneId === s.scene_id ? styles.selected : ""} aria-pressed={sceneId === s.scene_id} onClick={() => { setSceneId(s.scene_id); if (planEntry?.sceneId !== s.scene_id) setPlanEntry(null); }} disabled={loading}>{s.label}</button>)}</div></div>; })}</div></fieldset>
               <fieldset><legend className="field-label">我的英语水平</legend><div className={styles.levels}>{levels.map(option => <button key={option.value} className={level === option.value ? styles.selected : ""} aria-pressed={level === option.value} onClick={() => setLevel(option.value)} disabled={loading}><span>{option.label}</span><small>{option.note}</small></button>)}</div></fieldset>
               <fieldset><legend className="field-label">这次想练的难度</legend><div className={styles.segments}>{[{value:"simple",label:"简单",note:"轻松开口"},{value:"standard",label:"标准",note:"多一点挑战"}].map(option => <button key={option.value} className={difficulty === option.value ? styles.selected : ""} aria-pressed={difficulty === option.value} onClick={() => setDifficulty(option.value)} disabled={loading}>{option.label}<small>{option.note}</small></button>)}</div></fieldset>
               <fieldset><legend className="field-label">给自己几分钟？</legend><div className={styles.durations}>{[5,10,15].map(value => <button key={value} className={duration === value ? styles.selected : ""} aria-pressed={duration === value} onClick={() => setDuration(value)} disabled={loading}>{value}<small> 分钟</small>{value === 5 && <span>推荐</span>}</button>)}</div></fieldset>

@@ -17,10 +17,20 @@ def seed_invites() -> None:
     from app.core.config import settings
     from app.models.database import SessionLocal as S
 
-    if not settings.seed_demo_invites:
-        return
     db = S()
     try:
+        if settings.app_env in ("production", "prod"):
+            if settings.seed_demo_invites:
+                raise RuntimeError("生产环境禁止启用固定演示邀请码")
+            # 旧开发库若迁入生产，固定演示凭证也必须失效；保留记录供审计。
+            for item in DEFAULT_INVITES:
+                invite = db.query(Invite).filter(Invite.code == item["code"]).first()
+                if invite is not None:
+                    invite.revoked = True
+            db.commit()
+            return
+        if not settings.seed_demo_invites:
+            return
         for item in DEFAULT_INVITES:
             if db.query(Invite).filter(Invite.code == item["code"]).first() is None:
                 db.add(Invite(code=item["code"], user_id=item["user_id"]))

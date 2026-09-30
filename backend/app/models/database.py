@@ -31,6 +31,7 @@ def migrate_db() -> None:
     """开发阶段轻量迁移：为已有 SQLite 表补列（幂等）。schema 稳定后换 Alembic。"""
     if not settings.database_url.startswith("sqlite"):
         return
+    import json
     from sqlalchemy import text
 
     with engine.begin() as conn:
@@ -156,16 +157,55 @@ def migrate_db() -> None:
             conn.execute(text("ALTER TABLE sessions ADD COLUMN level VARCHAR(16) DEFAULT 'basic'"))
         if "pending_risk" not in scol2:
             conn.execute(text("ALTER TABLE sessions ADD COLUMN pending_risk TEXT DEFAULT ''"))
+        if "plan_id" not in scol2:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN plan_id INTEGER"))
+        if "plan_day" not in scol2:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN plan_day INTEGER"))
+        pcols = {r[1] for r in conn.execute(text("PRAGMA table_info(training_plans)"))}
+        if "available_minutes" not in pcols:
+            conn.execute(text("ALTER TABLE training_plans ADD COLUMN available_minutes INTEGER DEFAULT 5"))
+        if "paused_at" not in pcols:
+            conn.execute(text("ALTER TABLE training_plans ADD COLUMN paused_at DATETIME"))
+        risk_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(asr_risk_records)"))}
+        if risk_cols and "recording_url" not in risk_cols:
+            conn.execute(text("ALTER TABLE asr_risk_records ADD COLUMN recording_url VARCHAR(255) DEFAULT ''"))
+        if risk_cols and "request_key" not in risk_cols:
+            conn.execute(text("ALTER TABLE asr_risk_records ADD COLUMN request_key VARCHAR(64) DEFAULT ''"))
+        if risk_cols and "request_hash" not in risk_cols:
+            conn.execute(text("ALTER TABLE asr_risk_records ADD COLUMN request_hash VARCHAR(64) DEFAULT ''"))
+        # 旧版本只在 sessions.pending_risk JSON 中保存了录音地址，补齐风险记录引用。
+        for row in conn.execute(text(
+            "SELECT r.id, s.pending_risk FROM asr_risk_records r "
+            "JOIN sessions s ON s.id = r.session_id "
+            "WHERE COALESCE(r.recording_url, '') = '' AND COALESCE(s.pending_risk, '') != ''"
+        )).mappings():
+            try:
+                pending = json.loads(row["pending_risk"])
+            except (TypeError, ValueError):
+                continue
+            url = pending.get("recording_url", "") if isinstance(pending, dict) else ""
+            if isinstance(url, str) and url.startswith("/api/v1/audio/") and "/" not in url.rsplit("/", 1)[-1]:
+                conn.execute(text("UPDATE asr_risk_records SET recording_url = :url WHERE id = :id"), {"url": url, "id": row["id"]})
         tcol2 = {r[1] for r in conn.execute(text("PRAGMA table_info(turns)"))}
         if "request_key" not in tcol2:
             conn.execute(text("ALTER TABLE turns ADD COLUMN request_key VARCHAR(64)"))
+        if "request_hash" not in tcol2:
+            conn.execute(text("ALTER TABLE turns ADD COLUMN request_hash VARCHAR(64) DEFAULT ''"))
+        if "result_status" not in tcol2:
+            conn.execute(text("ALTER TABLE turns ADD COLUMN result_status VARCHAR(32) DEFAULT ''"))
+        conn.execute(text("DROP INDEX IF EXISTS ux_sessions_request_key"))
+        conn.execute(text("DROP INDEX IF EXISTS ux_turns_request_key"))
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_sessions_request_key "
-            "ON sessions(request_key) WHERE request_key IS NOT NULL AND request_key != ''"
+            "ON sessions(user_id, request_key) WHERE request_key IS NOT NULL AND request_key != ''"
         ))
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_turns_request_key "
-            "ON turns(request_key) WHERE request_key IS NOT NULL AND request_key != ''"
+            "ON turns(session_id, request_key) WHERE request_key IS NOT NULL AND request_key != ''"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_asr_risk_request_key "
+            "ON asr_risk_records(session_id, request_key) WHERE request_key != ''"
         ))
 
         # 尝试键唯一约束（并发兑底，仅非空键）

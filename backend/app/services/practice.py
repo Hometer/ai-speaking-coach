@@ -198,7 +198,7 @@ def parse_result(frames: list[dict[str, Any]]) -> dict[str, Any]:
                 if items:
                     word_items = items
     if error:
-        raise AppError("PRACTICE_EVAL_ERROR", f"评测失败：{error[:120]}", status_code=502)
+        raise AppError("PRACTICE_EVAL_ERROR", "发音评测暂不可用，请稍后重试", status_code=502)
     if score is None:
         raise AppError("PRACTICE_EVAL_EMPTY", "评测未返回分数", status_code=502)
     # 讯飞英文评测为 5 分制，换算为百分制展示
@@ -241,7 +241,7 @@ class XfyunPracticeEvalProvider(PracticeEvalProvider):
         try:
             ws = websocket.create_connection(url, timeout=15)
         except Exception as exc:  # noqa: BLE001
-            raise AppError("PRACTICE_EVAL_ERROR", f"评测连接失败：{str(exc)[:120]}", status_code=502)
+            raise AppError("PRACTICE_EVAL_ERROR", "发音评测连接失败，请稍后重试", status_code=502) from exc
 
         try:
             ws.send(json.dumps(build_first_frame(self.appid, reference_text)))

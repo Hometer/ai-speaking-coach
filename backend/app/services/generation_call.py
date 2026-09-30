@@ -12,6 +12,28 @@ RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 _last_usage: "contextvars.ContextVar[dict[str, int]]" = contextvars.ContextVar(
     "llm_last_usage", default={}
 )
+_usage_attempts: "contextvars.ContextVar[tuple[dict[str, Any], ...]]" = contextvars.ContextVar(
+    "llm_usage_attempts", default=()
+)
+
+
+def reset_usage_attempts() -> None:
+    _last_usage.set({})
+    _usage_attempts.set(())
+
+
+def get_usage_attempts() -> list[dict[str, Any]]:
+    return [dict(item) for item in _usage_attempts.get()]
+
+
+def _append_attempt(model: str, status: str, response: Any = None) -> None:
+    usage = getattr(response, "usage", None)
+    _usage_attempts.set(_usage_attempts.get() + ({
+        "component": "llm", "model": model, "status": status,
+        "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+        "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+        "source": "provider_response" if usage is not None else "unreported",
+    },))
 
 
 def _retryable_exception(exc: Exception) -> bool:
@@ -57,11 +79,13 @@ def call_generation(*, api_key: str, model: str, messages: list[dict[str, str]])
                 request_timeout=settings.llm_timeout_seconds,
             )
         except Exception as exc:
+            _append_attempt(model, "exception")
             if attempt + 1 < attempts and _retryable_exception(exc):
                 time.sleep(0.2 * (attempt + 1))
                 continue
             raise AppError("LLM_UNAVAILABLE", "模型服务暂不可用", status_code=503) from exc
         status = getattr(response, "status_code", None)
+        _append_attempt(model, "ok" if status == 200 else f"http_{status or 'unknown'}", response)
         if status == 200:
             _record_usage(response)
             return response

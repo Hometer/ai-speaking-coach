@@ -14,6 +14,8 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.models.entities import Session, Turn
 from app.services.budget import BudgetGuard
+from app.services.generation_call import reset_usage_attempts
+from app.services import provider_usage as provider_usage_svc
 from app.services.prompts.scenarios import SCENARIOS
 from app.services.session_svc import _log_event, _next_seq, _require_session
 
@@ -226,6 +228,7 @@ def request_help(
         # 真实翻译调用才计费；其余三类求助不 reserve/settle
         guard = BudgetGuard(db)
         guard.reserve(settings.nominal_cost_per_turn, session.id, user_id)
+        reset_usage_attempts()
         try:
             translated = _translate(text)
             turn = _record_help(db, session, "translate", 0, translated, "")
@@ -234,8 +237,16 @@ def request_help(
         except Exception:
             db.rollback()
             guard.release(settings.nominal_cost_per_turn, session.id, user_id)
+            try:
+                provider_usage_svc.record_llm_attempts(db, user_id, session.id)
+            except Exception:
+                db.rollback()
             raise
         guard.settle(settings.nominal_cost_per_turn, session.id, user_id)
+        try:
+            provider_usage_svc.record_llm_attempts(db, user_id, session.id, turn.id)
+        except Exception:
+            db.rollback()
         return {
             "session_id": session.id,
             "help_type": "translate",

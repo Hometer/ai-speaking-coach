@@ -2,14 +2,14 @@
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.auth import get_qa_user_id, get_user_id
 from app.core.config import settings
 from app.core.errors import AppError, error_body
 from app.models.database import SessionLocal
-from app.models.entities import DeviceCheck
+from app.models.entities import DeviceCheck, ReviewQueueItem
 from app.schemas.device import DeviceCheckRequest
 from app.schemas.memory import MemoryItem, MemorySettingsResponse, MemoryToggleRequest, MemoryUpdateRequest
 from app.schemas.session import (
@@ -32,6 +32,7 @@ from app.schemas.turn import ConfirmTurnRequest, TextTurnRequest
 from app.schemas.review_queue import AddToQueueRequest, DailyReviewActionRequest, DailyReviewAttemptRequest, PhraseCardRequest, QueueItemResponse, RetestRequest
 from app.schemas.training_plan import CreatePlanRequest, PlanResponse
 from app.schemas.quality_label import AddLabelRequest
+from app.schemas.qa_recording import QaConsentRequest
 from app.services import memory as memory_svc
 from app.services import daily_review_svc
 from app.services import drill_svc
@@ -42,6 +43,7 @@ from app.services import review_queue as queue_svc
 from app.services import progress as progress_svc
 from app.services import training_plan as plan_svc
 from app.services import quality_label as qa_svc
+from app.services import qa_recording as qa_recording_svc
 from app.services.prompts import scenarios as scenarios_mod
 
 router = APIRouter(prefix="/api/v1")
@@ -70,11 +72,48 @@ def get_audio(filename: str, user_id: str = Depends(get_user_id)):
     return FileResponse(path, media_type=media_type)
 
 
+@router.post("/sessions/{session_id}/qa-recording-consent")
+def qa_recording_consent(session_id: str, req: QaConsentRequest, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return qa_recording_svc.set_consent(db, user_id, session_id, req.granted)
+    finally:
+        db.close()
+
+
+@router.get("/qa/recordings/{recording_id}")
+def qa_recording_audio(recording_id: int, reviewer_id: str = Depends(get_qa_user_id)):
+    db = SessionLocal()
+    try:
+        path = qa_recording_svc.playback_path(db, reviewer_id, recording_id)
+    finally:
+        db.close()
+    return FileResponse(path, media_type=_AUDIO_MEDIA.get(path.suffix.lstrip("."), "application/octet-stream"))
+
+
+@router.post("/qa/recordings/{recording_id}/complete")
+def qa_recording_complete(recording_id: int, reviewer_id: str = Depends(get_qa_user_id)):
+    db = SessionLocal()
+    try:
+        return qa_recording_svc.complete_review(db, reviewer_id, recording_id)
+    finally:
+        db.close()
+
+
+@router.get("/qa/recordings/{recording_id}/access-log")
+def qa_recording_access_log(recording_id: int, reviewer_id: str = Depends(get_qa_user_id)):
+    db = SessionLocal()
+    try:
+        return qa_recording_svc.access_log(db, recording_id)
+    finally:
+        db.close()
+
+
 @router.post("/sessions", response_model=SessionCreatedResponse)
 def create_session(req: SessionCreateRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes, req.scene_id, req.request_key)
+        return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes, req.scene_id, req.request_key, req.plan_id, req.plan_day)
     finally:
         db.close()
 
@@ -154,13 +193,13 @@ def text_turn_stream(session_id: str, req: TextTurnRequest, user_id: str = Depen
 
 
 @router.post("/sessions/{session_id}/turns/voice")
-def voice_turn_stream(session_id: str, audio: UploadFile = File(...), user_id: str = Depends(get_user_id)):
+def voice_turn_stream(session_id: str, audio: UploadFile = File(...), request_key: str = Form(""), user_id: str = Depends(get_user_id)):
     data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
 
     def gen():
         db = SessionLocal()
         try:
-            partial = session_svc.submit_turn(db, session_id, user_id, "voice", audio_bytes=data)
+            partial = session_svc.submit_turn(db, session_id, user_id, "voice", audio_bytes=data, request_key=request_key)
             if partial.get("risk_hold"):
                 yield _sse("risk_hold", partial)
                 yield _sse("done", partial)  # 以 done 收尾
@@ -178,6 +217,15 @@ def voice_turn_stream(session_id: str, audio: UploadFile = File(...), user_id: s
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+@router.post("/sessions/{session_id}/turns/{turn_id}/discard-risk")
+def discard_risk(session_id: str, turn_id: str, user_id: str = Depends(get_user_id)):
+    db = SessionLocal()
+    try:
+        return session_svc.discard_pending_risk(db, session_id, user_id, turn_id)
+    finally:
+        db.close()
+
+
 @router.post("/sessions/{session_id}/turns/{turn_id}/confirm")
 def confirm_turn(session_id: str, turn_id: str, req: ConfirmTurnRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
@@ -192,7 +240,7 @@ def retry_turn_audio(session_id: str, turn_id: str, user_id: str = Depends(get_u
     """重新生成本回合语音（受鉴权保护、幂等）。会话结束后也可重试已有文字的音频。"""
     db = SessionLocal()
     try:
-        return session_svc.synthesize_turn_audio(db, session_id, user_id, turn_id)
+        return session_svc.synthesize_turn_audio(db, session_id, user_id, turn_id, retry_failed=True)
     finally:
         db.close()
 
@@ -211,8 +259,11 @@ def drill_attempt_voice(session_id: str, audio: UploadFile = File(...), attempt_
     data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
     db = SessionLocal()
     try:
-        text = session_svc.transcribe_voice_bytes(data)
-        return drill_svc.submit_drill_attempt(db, session_id, user_id, text, "voice", attempt_key)
+        session_svc._require_session(db, session_id, user_id)
+        return session_svc.submit_voice_intent(
+            db, user_id, session_id, "drill_voice", session_id, attempt_key, data,
+            lambda text: drill_svc.submit_drill_attempt(db, session_id, user_id, text, "voice", attempt_key),
+        )
     finally:
         db.close()
 
@@ -227,11 +278,11 @@ def drill_action(session_id: str, req: DrillActionRequest, user_id: str = Depend
 
 
 @router.post("/sessions/{session_id}/practice", response_model=PracticeResponse)
-def practice(session_id: str, sentence: str = Form(...), audio: UploadFile = File(...), user_id: str = Depends(get_user_id)):
+def practice(session_id: str, sentence: str = Form(...), audio: UploadFile = File(...), request_key: str = Form(""), user_id: str = Depends(get_user_id)):
     data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
     db = SessionLocal()
     try:
-        return session_svc.submit_practice(db, session_id, user_id, data, sentence)
+        return session_svc.submit_practice(db, session_id, user_id, data, sentence, request_key)
     finally:
         db.close()
 
@@ -255,10 +306,10 @@ def session_detail(session_id: str, user_id: str = Depends(get_user_id)):
 
 
 @router.get("/sessions", response_model=list[SessionListItem])
-def list_sessions(user_id: str = Depends(get_user_id), scene_id: str | None = None, series: str | None = None, status: str | None = None, practice_type: str | None = None):
+def list_sessions(user_id: str = Depends(get_user_id), scene_id: str | None = None, series: str | None = None, status: str | None = None, practice_type: str | None = None, review_status: str | None = None):
     db = SessionLocal()
     try:
-        filters = {k: v for k, v in {"scene_id": scene_id, "series": series, "status": status, "practice_type": practice_type}.items() if v}
+        filters = {k: v for k, v in {"scene_id": scene_id, "series": series, "status": status, "practice_type": practice_type, "review_status": review_status}.items() if v}
         return session_svc.list_sessions(db, user_id, filters)
     finally:
         db.close()
@@ -447,10 +498,10 @@ def due_today(user_id: str = Depends(get_user_id)):
 
 
 @router.post("/review-queue/daily-review/start")
-def start_daily_review(user_id: str = Depends(get_user_id)):
+def start_daily_review(request_key: str = Header("", alias="X-Request-Key"), user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return daily_review_svc.start_daily_review(db, user_id)
+        return daily_review_svc.start_daily_review(db, user_id, request_key)
     finally:
         db.close()
 
@@ -480,8 +531,11 @@ def daily_review_attempt_voice(session_id: str, audio: UploadFile = File(...), a
     data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
     db = SessionLocal()
     try:
-        text = session_svc.transcribe_voice_bytes(data)
-        return daily_review_svc.submit_attempt(db, session_id, user_id, text, "voice", attempt_key)
+        session_svc._require_session(db, session_id, user_id)
+        return session_svc.submit_voice_intent(
+            db, user_id, session_id, "daily_voice", session_id, attempt_key, data,
+            lambda text: daily_review_svc.submit_attempt(db, session_id, user_id, text, "voice", attempt_key),
+        )
     finally:
         db.close()
 
@@ -527,8 +581,13 @@ def retest_voice(item_id: int, audio: UploadFile = File(...), attempt_key: str =
     data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
     db = SessionLocal()
     try:
-        text = session_svc.transcribe_voice_bytes(data)
-        return queue_svc.submit_retest(db, user_id, item_id, text, "voice", attempt_key)
+        item = db.get(ReviewQueueItem, item_id)
+        if item is None or item.user_id != user_id:
+            raise AppError("NOT_FOUND", "队列项不存在", status_code=404)
+        return session_svc.submit_voice_intent(
+            db, user_id, item.source_session_id, "queue_voice", str(item_id), attempt_key, data,
+            lambda text: queue_svc.submit_retest(db, user_id, item_id, text, "voice", attempt_key),
+        )
     finally:
         db.close()
 
@@ -583,7 +642,7 @@ def progress(user_id: str = Depends(get_user_id)):
 def create_plan(req: CreatePlanRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return plan_svc.create_or_renew_plan(db, user_id, req.goal_type)
+        return plan_svc.create_or_renew_plan(db, user_id, req.goal_type, req.available_minutes)
     finally:
         db.close()
 
@@ -634,10 +693,10 @@ def resume_plan(user_id: str = Depends(get_user_id)):
 
 
 @router.get("/qa/sessions")
-def qa_sessions(user_id: str = Depends(get_qa_user_id), scene_id: str | None = None, status: str | None = None, version: str | None = None, input_type: str | None = None, help_type: str | None = None, eval_result: str | None = None, issue_type: str | None = None):
+def qa_sessions(user_id: str = Depends(get_qa_user_id), scene_id: str | None = None, status: str | None = None, version: str | None = None, input_type: str | None = None, help_type: str | None = None, eval_result: str | None = None, issue_type: str | None = None, error_code: str | None = None):
     db = SessionLocal()
     try:
-        filters = {k: v for k, v in {"scene_id": scene_id, "status": status, "version": version, "input_type": input_type, "help_type": help_type, "eval_result": eval_result, "issue_type": issue_type}.items() if v}
+        filters = {k: v for k, v in {"scene_id": scene_id, "status": status, "version": version, "input_type": input_type, "help_type": help_type, "eval_result": eval_result, "issue_type": issue_type, "error_code": error_code}.items() if v}
         return qa_svc.list_sessions(db, filters)
     finally:
         db.close()

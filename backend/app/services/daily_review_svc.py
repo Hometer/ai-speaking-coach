@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
 from app.models.entities import DailyReviewAttempt, EventLog, ReviewQueueItem, Session, Turn
-from app.services.review_queue import STATUS_AWAITING_RETEST, STATUS_DISPUTED, STATUS_MASTERED, STATUS_PENDING
+from app.services.review_queue import STATUS_AWAITING_RETEST, STATUS_DISPUTED, STATUS_MASTERED, STATUS_PENDING, _resolve_due, _schedule_due
 from app.services.recall_judge import judge_recall
+from app.services import intent_result
 
 INTERVALS = [1, 3, 7, 14]
 DAILY_LIMIT = 5
@@ -94,7 +95,10 @@ def due_today(db: DbSession, user_id: str) -> dict[str, Any]:
     return {"count": len(items), "items": [_item_dict(i) for i in items]}
 
 
-def start_daily_review(db: DbSession, user_id: str) -> dict[str, Any]:
+def start_daily_review(db: DbSession, user_id: str, request_key: str = "") -> dict[str, Any]:
+    replayed = intent_result.replay(db, user_id, "daily_start", user_id, request_key, "start", "")
+    if replayed is not None:
+        return replayed
     items = due_items(db, user_id)
     if not items:
         return {"session_id": None, "items": []}
@@ -109,7 +113,9 @@ def start_daily_review(db: DbSession, user_id: str) -> dict[str, Any]:
         .first()
     )
     if existing is not None and set(json.loads(existing.daily_review_items or "[]")) == set(ids):
-        return {"session_id": existing.id, "items": [_item_dict(i) for i in items]}
+        response = {"session_id": existing.id, "items": [_item_dict(i) for i in items]}
+        intent_result.remember(db, user_id, "daily_start", user_id, request_key, "start", "", response)
+        return response
     session = Session(
         id=uuid.uuid4().hex,
         user_id=user_id,
@@ -123,7 +129,9 @@ def start_daily_review(db: DbSession, user_id: str) -> dict[str, Any]:
     )
     db.add(session)
     db.commit()
-    return {"session_id": session.id, "items": [_item_dict(i) for i in items]}
+    response = {"session_id": session.id, "items": [_item_dict(i) for i in items]}
+    intent_result.remember(db, user_id, "daily_start", user_id, request_key, "start", "", response)
+    return response
 
 
 def current_item(db: DbSession, session: Session, user_id: str) -> dict[str, Any]:
@@ -156,6 +164,9 @@ def submit_attempt(
         raise AppError("FORBIDDEN", "无权访问该会话", status_code=403)
 
     answer = (answer or "").strip()
+    replayed = intent_result.replay(db, user_id, "daily_attempt", session_id, attempt_key, input_type, answer)
+    if replayed is not None:
+        return replayed
 
     # 幂等检查放最前（仅次归属校验）：同键返回首次结果；同键异内容 409
     if attempt_key:
@@ -201,6 +212,7 @@ def submit_attempt(
 
     success = result == "independent"
     if result == "independent":
+        _resolve_due(db, item, result)
         item.last_practiced_at = _now()
         item.success_count = (item.success_count or 0) + 1
         item.interval_days = _next_interval(item.interval_days)
@@ -209,25 +221,31 @@ def submit_attempt(
             item.status = STATUS_MASTERED
         else:
             item.status = STATUS_AWAITING_RETEST
-        item.due_at = _now() + timedelta(days=item.interval_days)
+        if item.status != STATUS_MASTERED:
+            _schedule_due(db, item, _now() + timedelta(days=item.interval_days))
         _advance(db, session)
     elif result == "hinted":
+        _resolve_due(db, item, result)
         # 看答案后完成：回 1 天，不计独立
         item.last_practiced_at = _now()
         item.interval_days = 1
         item.retest_result = "hinted"
-        item.due_at = _now() + timedelta(days=item.interval_days)
+        _schedule_due(db, item, _now() + timedelta(days=item.interval_days))
         _advance(db, session)
     elif result == "text_completed":
+        _resolve_due(db, item, result)
         # 文字完成：不升级口语独立，推进到下一项
         item.last_practiced_at = _now()
         item.retest_result = "text_completed"
+        _schedule_due(db, item, _now() + timedelta(days=1))
         _advance(db, session)
     # failed / pending：不推进，用户可重试或跳过
     db.commit()
 
     nxt = current_item(db, session, user_id)
-    return {"success": success, "result": result, "help_shown": item.help_shown, "next": nxt}
+    response = {"success": success, "result": result, "help_shown": item.help_shown, "next": nxt}
+    intent_result.remember(db, user_id, "daily_attempt", session_id, attempt_key, input_type, answer, response)
+    return response
 
 
 def control_action(db: DbSession, session_id: str, user_id: str, action: str) -> dict[str, Any]:
@@ -247,14 +265,20 @@ def control_action(db: DbSession, session_id: str, user_id: str, action: str) ->
     item = db.get(ReviewQueueItem, cur["item"]["id"])
     if action == "skip":
         db.add(DailyReviewAttempt(user_id=user_id, session_id=session.id, queue_item_id=item.id, result="skipped"))
+        _resolve_due(db, item, "skipped")
+        _schedule_due(db, item, _now() + timedelta(days=1))
         _advance(db, session)
     elif action == "defer":
         db.add(DailyReviewAttempt(user_id=user_id, session_id=session.id, queue_item_id=item.id, result="deferred"))
-        item.due_at = _now() + timedelta(days=item.interval_days)
+        _resolve_due(db, item, "deferred")
+        _schedule_due(db, item, _now() + timedelta(days=item.interval_days))
         _advance(db, session)
     elif action == "dispute":
         db.add(DailyReviewAttempt(user_id=user_id, session_id=session.id, queue_item_id=item.id, result="disputed"))
         item.status = STATUS_DISPUTED
+        from app.models.entities import ReviewDueEvent
+        for event in db.query(ReviewDueEvent).filter_by(queue_item_id=item.id).all():
+            event.valid = False
         _advance(db, session)
     else:
         raise AppError("INVALID_INPUT", "未知的复练操作", status_code=422)
