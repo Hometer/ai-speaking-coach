@@ -52,11 +52,25 @@ async function checkDevice(): Promise<{ ok: boolean; summary: string; items: Dev
   }
   items.push({ key: "mic", label: "麦克风权限", ok: micOk, hint: "在浏览器地址栏左侧授权本站使用麦克风" });
   items.push({ key: "input", label: "录音输入", ok: inputOk, hint: "检查系统麦克风是否可用、未被占用" });
-  // 3. 音频播放
+  // 3. 音频播放（WebAudio 短音实际播放验证，非仅格式探测）
   let playOk = false;
   try {
-    const a = new Audio();
-    playOk = !!a.canPlayType && (!!a.canPlayType("audio/mp3") || !!a.canPlayType("audio/webm"));
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (Ctx) {
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0.01;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.08);
+      osc.onended = () => { void ctx.close(); };
+      playOk = true;
+    } else {
+      const a = new Audio();
+      playOk = !!a.canPlayType && (!!a.canPlayType("audio/mp3") || !!a.canPlayType("audio/webm"));
+    }
   } catch {
     playOk = false;
   }

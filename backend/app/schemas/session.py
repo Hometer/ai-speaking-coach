@@ -47,6 +47,7 @@ class SessionDetailResponse(BaseModel):
     difficulty: str
     level: str = "basic"
     current_help_level: int = 0
+    pending_risk: dict | None = None
     end_reason: str | None = None
     practice_type: str = "interview"
     scene_id: str = "job_interview"

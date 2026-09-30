@@ -556,6 +556,7 @@ def submit_turn(
                 # 识别风险判定（REQ-32）：中/高先确认，不评估、不教练、不写独立证据
                 risk_level, reasons = assess_risk(transcript)
                 if risk_level in ("mid", "high"):
+                    recording_url = _save_audio(audio_bytes, fmt)  # 保存本人录音供听回
                     db.add(
                         AsrRiskRecord(
                             user_id=user_id,
@@ -568,6 +569,16 @@ def submit_turn(
                             asr_rule_version="v1",
                         )
                     )
+                    session.pending_risk = json.dumps(
+                        {
+                            "turn_id": turn_id,
+                            "risk_level": risk_level,
+                            "reason_codes": reasons,
+                            "transcript": transcript,
+                            "recording_url": recording_url,
+                        },
+                        ensure_ascii=False,
+                    )
                     db.commit()
                     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
                     return {
@@ -576,6 +587,7 @@ def submit_turn(
                         "reason_codes": reasons,
                         "turn_id": turn_id,
                         "transcript": transcript,
+                        "recording_url": recording_url,
                     }
         else:
             text_for_eval = user_text or ""
@@ -782,16 +794,29 @@ def confirm_turn(
     )
     if risk is None:
         raise AppError("NOT_FOUND", "待确认的转写不存在", status_code=404)
-    risk.confirmed_text = confirmed_text
-    risk.action = action or "confirm"
-    risk.resolved_at = _now()
-    db.commit()
 
     partial = submit_turn(
         db, session_id, user_id, "voice",
         pre_transcribed=confirmed_text,
         request_key=f"confirm:{turn_id}",
     )
+    # 提交成功后写确认版本并清空待确认状态
+    risk = (
+        db.query(AsrRiskRecord)
+        .filter(
+            AsrRiskRecord.session_id == session_id,
+            AsrRiskRecord.turn_id == turn_id,
+            AsrRiskRecord.user_id == user_id,
+        )
+        .first()
+    )
+    if risk is not None:
+        risk.confirmed_text = confirmed_text
+        risk.action = action or "confirm"
+        risk.resolved_at = _now()
+    session = _require_session(db, session_id, user_id)
+    session.pending_risk = ""
+    db.commit()
     return synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
 
 
@@ -1039,6 +1064,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
         "goal_text": session.goal_text,
         "difficulty": session.difficulty,
         "level": session.level or "basic",
+        "pending_risk": json.loads(session.pending_risk) if session.pending_risk else None,
         "current_help_level": (
             db.query(Turn)
             .filter(

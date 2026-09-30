@@ -32,6 +32,7 @@ export interface RiskHold {
   reason_codes: string[];
   turn_id: string;
   transcript: string;
+  recording_url: string;
 }
 
 export interface TurnItem {
@@ -130,6 +131,8 @@ export interface SessionDetail {
   goal_text: string;
   difficulty: string;
   level: string;
+  current_help_level: number;
+  pending_risk: RiskHold | null;
   end_reason: string | null;
   practice_type: string;
   scene_id: string;

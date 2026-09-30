@@ -72,6 +72,11 @@ def test_voice_risk_hold_and_confirm(client, monkeypatch):
     risk = next(d for e, d in events if e == "risk_hold")
     assert risk["risk_level"] == "mid"
     assert risk["transcript"] == "I have three years of experience in"
+    assert risk.get("recording_url")  # 有听回录音
+
+    # 刷新恢复：pending_risk 持久化
+    detail = client.get(f"/api/v1/sessions/{sid}", headers=USER).json()
+    assert detail.get("pending_risk") and detail["pending_risk"]["turn_id"] == risk["turn_id"]
 
     # 确认（修订后继续）
     r2 = client.post(

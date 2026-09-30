@@ -23,7 +23,11 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     )
     independent_count = sum(1 for e in evals if e.result == "independent")
     text_completed_count = sum(1 for e in evals if e.result == "text_completed")
-    evaluable = [e for e in evals if e.result in ("independent", "hinted", "incomplete")]
+    # 可评估分母只统计语音子目标（文字回答不参与口语独立率）
+    evaluable = [
+        e for e in evals
+        if e.input_type == "voice" and e.result in ("independent", "hinted", "incomplete")
+    ]
     independent_rate = round(independent_count / len(evaluable), 3) if evaluable else 0.0
 
     # 帮助使用率：使用答案辅助的有效回答占比
@@ -43,8 +47,8 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     due_items = [
         q for q in queue
-        if q.due_at is not None and q.due_at <= now
-        and q.status in ("pending", "awaiting_retest", "mastered")
+        if q.status in ("pending", "awaiting_retest", "mastered")
+        and ((q.due_at is not None and q.due_at <= now) or q.last_practiced_at is not None)
     ]
     due_done = sum(1 for q in due_items if q.retest_result == "independent")
     due_retest_done_rate = round(due_done / len(due_items), 3) if due_items else 0.0

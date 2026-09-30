@@ -47,13 +47,16 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
     result: list[dict[str, Any]] = []
     for s in sessions:
         turns = db.query(Turn).filter(Turn.session_id == s.id).order_by(Turn.seq).all()
-        if filters.get("input_type") or filters.get("help_type") or filters.get("eval_result"):
+        has_turn_filter = bool(filters.get("input_type") or filters.get("help_type") or filters.get("eval_result"))
+        if has_turn_filter:
             turns = [
                 t for t in turns
                 if (not filters.get("input_type") or t.input_type == filters["input_type"])
                 and (not filters.get("help_type") or t.help_type == filters["help_type"])
                 and (not filters.get("eval_result") or t.eval_result == filters["eval_result"])
             ]
+            if not turns:
+                continue  # 剔除零匹配回合的会话
         errors = [
             e.error for e in db.query(EventLog).filter(EventLog.session_id == s.id, EventLog.error != "").all()
         ]

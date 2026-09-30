@@ -154,6 +154,8 @@ def migrate_db() -> None:
             conn.execute(text("ALTER TABLE sessions ADD COLUMN in_flight BOOLEAN DEFAULT 0"))
         if "level" not in scol2:
             conn.execute(text("ALTER TABLE sessions ADD COLUMN level VARCHAR(16) DEFAULT 'basic'"))
+        if "pending_risk" not in scol2:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN pending_risk TEXT DEFAULT ''"))
         tcol2 = {r[1] for r in conn.execute(text("PRAGMA table_info(turns)"))}
         if "request_key" not in tcol2:
             conn.execute(text("ALTER TABLE turns ADD COLUMN request_key VARCHAR(64)"))

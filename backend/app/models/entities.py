@@ -58,6 +58,7 @@ class Session(Base):
     current_question_audio_url: Mapped[str] = mapped_column(String(255), default="")
     request_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 创建会话幂等键
     in_flight: Mapped[bool] = mapped_column(default=False)  # 处理中标记（刷新恢复）
+    pending_risk: Mapped[str] = mapped_column(Text, default="")  # 待确认可疑转写（REQ-32，刷新恢复）
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 

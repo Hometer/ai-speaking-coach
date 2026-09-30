@@ -83,6 +83,7 @@ export default function PracticePage() {
         setSourceInvalid(!!d.source_invalid);
         setDrill(d.drill);
         setTurns(d.turns);
+        if (d.pending_risk) setRiskHold(d.pending_risk);
         const msgs: Msg[] = [];
         for (const t of d.turns) {
           if (t.input_type === "coach") {
@@ -592,6 +593,7 @@ export default function PracticePage() {
             <div className="section-head mt-0 mb-3"><h2><Icon name="mic" size={19} /> 核对一下你说的话</h2><span className="badge">识别可能不准</span></div>
             <p className={styles.practiceSentence}>{riskHold.transcript}</p>
             <p className="text-sm muted mt-2">系统觉得这段转写可能不完整或含杂音。请确认、修改，或直接重说一遍。</p>
+            {riskHold.recording_url && <div className="mt-2"><p className="text-xs muted">听回你的录音：</p><AudioPlayer key={riskHold.recording_url} src={riskHold.recording_url} /></div>}
             <div className="flex items-center gap-2 flex-wrap mt-3">
               <button onClick={() => confirmRisk(riskHold.transcript, "confirm")} disabled={busy} className="btn btn-primary">确认无误</button>
               <button onClick={() => { const t = window.prompt("请修改转写：", riskHold.transcript); if (t && t.trim()) confirmRisk(t.trim(), "revise"); }} disabled={busy} className="btn btn-secondary">修改文字</button>
