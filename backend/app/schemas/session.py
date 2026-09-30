@@ -35,6 +35,7 @@ class TurnItem(BaseModel):
     transcript: str = ""
     reply_text: str = ""
     reply_audio_url: str = ""
+    recording_url: str = ""
     practice_sentence: str = ""
     action_type: str = ""
     hint_used: bool = False

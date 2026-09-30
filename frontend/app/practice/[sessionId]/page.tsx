@@ -48,7 +48,7 @@ export default function PracticePage() {
   const [showHelp, setShowHelp] = useState(false);
   const [practiceSentence, setPracticeSentence] = useState("");
   const [practiceDemo, setPracticeDemo] = useState("");
-  const [practiceRecording, setPracticeRecording] = useState("");
+  const [lastPractice, setLastPractice] = useState<{ sentence: string; demoUrl: string; recordingUrl: string } | null>(null);
   const [slowDemo, setSlowDemo] = useState(false);
   const [slowRepeat, setSlowRepeat] = useState(false);
   const [practiceResult, setPracticeResult] = useState("");
@@ -86,6 +86,23 @@ export default function PracticePage() {
         setTurns(d.turns);
         if (d.pending_risk) setRiskHold(d.pending_risk);
         setQaConsent(!!d.qa_recording_consent);
+        let lastPracticeIndex = -1;
+        for (let i = 0; i < d.turns.length; i++) {
+          if (d.turns[i].input_type === "practice") lastPracticeIndex = i;
+        }
+        if (lastPracticeIndex >= 0) {
+          const practiced = d.turns[lastPracticeIndex];
+          const demo = d.turns.slice(0, lastPracticeIndex).reverse().find((t) =>
+            t.action_type === "suggest_practice" && t.practice_sentence === practiced.practice_sentence,
+          );
+          setLastPractice({
+            sentence: practiced.practice_sentence || "短句练习",
+            demoUrl: demo?.reply_audio_url || "",
+            recordingUrl: practiced.recording_url || "",
+          });
+        } else {
+          setLastPractice(null);
+        }
         const msgs: Msg[] = [];
         for (const t of d.turns) {
           if (t.input_type === "coach") {
@@ -406,7 +423,7 @@ export default function PracticePage() {
       const score = typeof data.eval?.score === "number" ? data.eval.score : null;
       const isMock = !!data.eval?.mock;
       setPracticeResult(score === null ? "本次无法评估" : `评测得分 ${score}${isMock ? "（示例）" : "（实测）"}`);
-      setPracticeRecording(data.recording_url || "");
+      setLastPractice({ sentence: practiceSentence, demoUrl: practiceDemo, recordingUrl: data.recording_url || "" });
       addMsg("coach", data.recheck_reply_text, data.recheck_audio_url);
       setStatus(data.status);
       setPracticeSentence("");
@@ -647,11 +664,16 @@ export default function PracticePage() {
             <div className="section-head mt-0 mb-3"><h2><Icon name="headphones" size={19} /> 试着练这一句</h2><span className="badge">有参考文本的短练</span></div>
             <p className={styles.practiceSentence}>{practiceSentence}</p>
             {practiceDemo && <div><AudioPlayer key={practiceDemo} src={practiceDemo} rate={slowDemo ? 0.75 : 1} /><button onClick={() => setSlowDemo(!slowDemo)} className="btn btn-ghost btn-small mt-1">{slowDemo ? "正常速度" : "慢速示范"}</button></div>}
-            {practiceRecording && <div className="mt-2"><p className="text-xs muted">你的录音（本次评价使用）：</p><AudioPlayer key={practiceRecording} src={practiceRecording} /></div>}
             <div className="flex items-center gap-2 flex-wrap mt-4"><button onClick={() => toggleRecord("practice")} disabled={inputDisabled} className="btn btn-primary"><Icon name={recording && recordMode === "practice" ? "stop" : "mic"} size={16} />{recording && recordMode === "practice" ? "停止并提交" : "录音跟读"}</button><button onClick={handleSkipPractice} disabled={inputDisabled || recording} className="btn btn-ghost">跳过这次跟读</button>{recording && recordMode === "practice" && <><span className={styles.recordingTimer}>{timerText()}</span><button onClick={cancelRecord} className="btn btn-ghost">取消录音</button></>}</div>
             <p className="text-xs muted mt-3">可以直接尝试，也可以先听示范。跟读不等同于独立表达。</p>
           </section>}
-          {practiceResult && <div className="notice mb-4"><Icon name="check" size={17} /><p>上次跟读：{practiceResult}<br /><span className="text-xs">仅供练习参考，不代表语言能力认证。</span></p></div>}
+          {lastPractice && !drill && <section className={styles.readingCard} aria-label="刚才的跟读录音">
+            <div className="section-head mt-0 mb-3"><h2><Icon name="headphones" size={19} /> 刚才的跟读 · 可听回</h2></div>
+            <p className={styles.practiceSentence}>{lastPractice.sentence}</p>
+            <div className="mt-3"><p className="text-xs muted">示范表达</p>{lastPractice.demoUrl ? <AudioPlayer key={lastPractice.demoUrl} src={lastPractice.demoUrl} rate={slowDemo ? 0.75 : 1} /> : <p className="text-xs muted">示范暂不可用</p>}</div>
+            <div className="mt-3"><p className="text-xs muted">你的录音（本次评价使用）</p>{lastPractice.recordingUrl ? <AudioPlayer key={lastPractice.recordingUrl} src={lastPractice.recordingUrl} /> : <p className="text-xs muted">录音已清理或本次未录音</p>}</div>
+            {practiceResult && <p className="text-xs muted mt-3">{practiceResult} · 仅供练习参考</p>}
+          </section>}
           {err && <p className="error-banner" role="alert">{err}{audioRetryTurnId && <button onClick={handleAudioRetry} disabled={busy} className="text-link ml-2">重试语音</button>}</p>}
 
           {ended ? <div className={styles.finished}><Icon name="check" size={22} /><div><strong>本次练习已结束</strong><p>对话已保留。你可以查看回顾，或回首页开始新练习。</p></div><button onClick={() => router.push("/history")} className="btn btn-secondary btn-small">查看历史<Icon name="arrow" size={14} /></button></div> : showComposer ? <div className={styles.composer}>

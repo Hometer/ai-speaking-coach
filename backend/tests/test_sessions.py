@@ -217,6 +217,10 @@ def test_practice_recording_audio_served(client):
     )
     assert r.status_code == 200, r.text
     recording_url = r.json()["recording_url"]
+    detail = client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER)
+    assert detail.status_code == 200
+    practice_turn = next(t for t in detail.json()["turns"] if t["input_type"] == "practice")
+    assert practice_turn["recording_url"] == recording_url
     audio = client.get(recording_url, headers=USER)
     assert audio.status_code == 200, audio.text
 
