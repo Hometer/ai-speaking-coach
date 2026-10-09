@@ -62,7 +62,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-01 教练上下文与相关追问
 
-证据：[会话决策调用](../../backend/app/services/session_svc.py:193)、[真实教练请求](../../backend/app/services/coach.py:119)。
+证据：[会话决策调用](../../backend/app/services/session_svc.py#L193)、[真实教练请求](../../backend/app/services/coach.py#L119)。
 
 修复要求：为决策提供有界的当前目标、题目、有效回答、必要双方历史、设置、提示使用、可用工具结果及剩余边界；不把整份用户档案或真实身份无差别交给模型。
 
@@ -74,7 +74,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-02 跟读结果影响教学
 
-证据：[评测与下一步](../../backend/app/services/session_svc.py:269)。
+证据：[评测与下一步](../../backend/app/services/session_svc.py#L269)。
 
 修复要求：把有效评分、参考句、真实支持的反馈及失败状态送入决策；不只传 practice_done。校验动作与实际状态迁移一致。
 
@@ -86,7 +86,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-03 完成判断与证据校验
 
-证据：[评估输入和保存](../../backend/app/services/session_svc.py:174)、[独立评估输出](../../backend/app/services/evaluator.py:41)。
+证据：[评估输入和保存](../../backend/app/services/session_svc.py#L174)、[独立评估输出](../../backend/app/services/evaluator.py#L41)。
 
 修复要求：按两个子目标取证，记录题目/回答/帮助/输入类型/修订版本，校验引用的存在性、归属和有效性。
 
@@ -99,7 +99,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-04 自动结束与统一收尾
 
-证据：[自动结束分支](../../backend/app/services/session_svc.py:215)、[重复结束直接返回](../../backend/app/services/session_svc.py:339)。
+证据：[自动结束分支](../../backend/app/services/session_svc.py#L215)、[重复结束直接返回](../../backend/app/services/session_svc.py#L339)。
 
 现有复现：两个 Mock 回答使状态 RECHECK → ENDED，再调用 end 得到 review = {}。
 
@@ -113,7 +113,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-05 回顾真实性与空结果
 
-证据：[固定建议生成](../../backend/app/services/review.py:9)、[空建议肯定文案](../../frontend/app/practice/[sessionId]/page.tsx:310)。
+证据：[固定建议生成](../../backend/app/services/review.py#L9)、[空建议肯定文案](../../frontend/app/practice/%5BsessionId%5D/page.tsx#L310)。
 
 验收：
 - 同一原句的重复建议合并；不同问题提供各自证据，而非给所有人同一句模板。
@@ -124,7 +124,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-06 完整历史与刷新恢复
 
-证据：[练习页恢复](../../frontend/app/practice/[sessionId]/page.tsx:48)、[历史页面](../../frontend/app/history/page.tsx)、[会话详情响应](../../backend/app/services/session_svc.py:355)。
+证据：[练习页恢复](../../frontend/app/practice/%5BsessionId%5D/page.tsx#L48)、[历史页面](../../frontend/app/history/page.tsx)、[会话详情响应](../../backend/app/services/session_svc.py#L355)。
 
 验收：
 - 三轮对话后刷新练习页、查看历史，双方消息和顺序与刷新前一致，不只保留 AI 开场。
@@ -134,7 +134,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-07 跟读结果卡与来源标记
 
-证据：[跟读完成处理](../../frontend/app/practice/[sessionId]/page.tsx:198)。
+证据：[跟读完成处理](../../frontend/app/practice/%5BsessionId%5D/page.tsx#L198)。
 
 验收：
 - 跟读完成进入复测后，上一评分仍可查看，不因 practiceSentence 清空而消失。
@@ -144,7 +144,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-08 用户控制与停止优先
 
-证据：[对话控件及结束禁用](../../frontend/app/practice/[sessionId]/page.tsx:371)、[会话状态检查](../../backend/app/services/session_svc.py:144)。
+证据：[对话控件及结束禁用](../../frontend/app/practice/%5BsessionId%5D/page.tsx#L371)、[会话状态检查](../../backend/app/services/session_svc.py#L144)。
 
 验收：
 - 用户主动求助立即收到提示；跳过短练习直接回原目标，不当失败。
@@ -155,7 +155,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-09 转写修订
 
-证据：[语音提交后立即评估](../../backend/app/services/session_svc.py:158)、[对话页](../../frontend/app/practice/[sessionId]/page.tsx)。
+证据：[语音提交后立即评估](../../backend/app/services/session_svc.py#L158)、[对话页](../../frontend/app/practice/[sessionId]/page.tsx)。
 
 验收：
 - 低质量/用户质疑转写时可重录或修正，不先把识别错误写成长期弱项。
@@ -165,7 +165,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-10 设置与计时
 
-证据：[首页 difficulty 用作时长选项](../../frontend/app/page.tsx)、[运行配置](../../backend/app/core/config.py:25)。
+证据：[首页 difficulty 用作时长选项](../../frontend/app/page.tsx)、[运行配置](../../backend/app/core/config.py#L25)。
 
 验收：
 - 水平、任务难度、时长各有明确语义；“简单”不自动等于“三分钟”。
@@ -176,7 +176,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-11 新会话主动复练
 
-证据：[历史页](../../frontend/app/history/page.tsx)、[回顾入口](../../frontend/app/practice/[sessionId]/page.tsx:308)。
+证据：[历史页](../../frontend/app/history/page.tsx)、[回顾入口](../../frontend/app/practice/%5BsessionId%5D/page.tsx#L308)。
 
 验收：
 - 用户主动点击才创建新会话，旧记录不变，完成状态重新开始。
@@ -197,7 +197,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-13 可信身份与音频访问
 
-证据：[固定前端用户](../../frontend/lib/api.ts:3)、[服务端用户头](../../backend/app/api/routes.py:64)、[音频接口](../../backend/app/api/routes.py:54)。
+证据：[固定前端用户](../../frontend/lib/api.ts#L3)、[服务端用户头](../../backend/app/api/routes.py#L64)、[音频接口](../../backend/app/api/routes.py#L54)。
 
 现有复现：在隔离实例中，只提供相同 X-User-Id、无其他认证凭证即可读取测试会话；这不是已发生真实数据泄漏的结论。
 
@@ -209,7 +209,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-14 旧接口统一护栏
 
-证据：[旧文字/语音路由](../../backend/app/api/routes.py:43)、[无状态处理链](../../backend/app/services/turn.py)。
+证据：[旧文字/语音路由](../../backend/app/api/routes.py#L43)、[无状态处理链](../../backend/app/services/turn.py)。
 
 验收：
 - 列出所有能触发模型/语音费用的入口，逐一验证身份、额度、截止时间和日志。
@@ -218,7 +218,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-15 预算、故障与并发运行边界
 
-证据：[额度预留与结算](../../backend/app/services/budget.py:45)、[名义成本调用](../../backend/app/services/session_svc.py:153)、[未完整执行的配置](../../backend/app/core/config.py:29)。
+证据：[额度预留与结算](../../backend/app/services/budget.py#L45)、[名义成本调用](../../backend/app/services/session_svc.py#L153)、[未完整执行的配置](../../backend/app/core/config.py#L29)。
 
 修复方向：统一调用边界，按最大用量预留、实际计费结算，提供幂等和终态保护。具体数据库/锁方案由技术设计决定，不要求替换现有技术栈。
 
@@ -235,7 +235,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-16 数据生命周期与兜底清理
 
-证据：[上传清理函数](../../backend/app/services/cleanup.py:7)、[仅部分结束触发](../../backend/app/services/session_svc.py:349)。
+证据：[上传清理函数](../../backend/app/services/cleanup.py#L7)、[仅部分结束触发](../../backend/app/services/session_svc.py#L349)。
 
 验收：
 - 正常结束、自动结束、浏览器关闭、异常中断均有清理路径，不依赖下一位用户再点结束。
@@ -246,7 +246,7 @@ PRD 规定产品应如何工作；本清单说明已有实现距离需求还有�
 
 ### GAP-17 完整的可选记忆
 
-证据：[记忆生成与列表](../../backend/app/services/memory.py:26)、[教练上下文](../../backend/app/services/session_svc.py:193)。
+证据：[记忆生成与列表](../../backend/app/services/memory.py#L26)、[教练上下文](../../backend/app/services/session_svc.py#L193)。
 
 验收：
 - 默认关闭；关闭期间不生成、不召回历史弱项；开启不回溯旧练习。
