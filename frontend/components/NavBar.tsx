@@ -46,7 +46,7 @@ export default function NavBar() {
 
   return (
     <aside className="sidebar">
-      <Link href="/" className="brand-lockup" aria-label="AI 口语练习首页"><span className="brand-mark"><Icon name="mic" size={22} /></span><span>AI 口语练习<small>A LITTLE EVERY DAY</small></span></Link>
+      <Link href="/" className="brand-lockup" aria-label="AI 口语教练首页"><span className="brand-mark"><Icon name="mic" size={22} /></span><span>AI 口语教练<small>A LITTLE EVERY DAY</small></span></Link>
       <div className="nav-caption">我的学习空间</div>
       <nav ref={navRef} aria-label="主导航" className="main-nav">
         {groups.map((group) => (

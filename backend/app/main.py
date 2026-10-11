@@ -39,7 +39,7 @@ async def lifespan(_app: FastAPI):
             pass
 
 
-app = FastAPI(title="AI 口语练习 · 后端 MVP", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="AI 口语教练 · 后端 MVP", version="0.2.0", lifespan=lifespan)
 
 
 @app.exception_handler(AppError)
