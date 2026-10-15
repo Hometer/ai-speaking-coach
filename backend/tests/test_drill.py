@@ -121,13 +121,17 @@ def test_drill_text_cannot_complete_free_speak(client):
     assert r["next_stage"] == "free_speak"  # 不推进
 
 
-def test_drill_voice_free_speak(client):
+def test_drill_voice_free_speak(client, monkeypatch):
     source_sid, source_tid, imp = _source_improvement(client)
     d = _create_drill(client, source_sid, source_tid)
     sid = d["session_id"]
     target = imp["practice_sentence"]
     for _ in range(3):  # 推进到 free_speak
         _attempt(client, sid, target)
+    class Asr:
+        def transcribe(self, path): return target
+    from app.services import session_svc
+    monkeypatch.setattr(session_svc, "get_asr_provider", lambda: Asr())
     r = client.post(
         f"/api/v1/sessions/{sid}/drill-attempt/voice",
         files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
@@ -200,6 +204,9 @@ def test_drill_write_back_to_queue(client, monkeypatch):
         due.due_at = row.due_at
         db.commit()
         _write_back_queue(db, "user-a", source_tid, "independent")
+        db.refresh(row)
+        assert row.success_count == 0  # 仅脱稿不增加换题成功
+        _write_back_queue(db, "user-a", source_tid, "transfer")
         db.refresh(row)
         assert row.success_count == 1
         assert row.status == "awaiting_retest"

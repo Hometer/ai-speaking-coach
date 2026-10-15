@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session as DbSession
 from app.core.errors import AppError
 from app.models.entities import Evaluation, Session, TrainingPlan, User
 from app.services import review_queue as queue_svc
+from app.services.completion import valid_completion
+from app.services import events as product_events
 from app.services.prompts.scenarios import get_approved_scenes
 
 # 目标类型 → 场景系列（只组合已审核场景）
@@ -102,12 +104,14 @@ def _to_dict(plan: TrainingPlan, db: DbSession | None = None) -> dict[str, Any]:
             Session.ended_at.isnot(None),
         ).all():
             day = next((d for d in days if d.get("day") == s.plan_day), None)
-            if day and day.get("scene_id") == s.scene_id and _local_date(s.ended_at).isoformat() == day.get("scheduled_date"):
+            if valid_completion(db, s) and day and day.get("scene_id") == s.scene_id and _local_date(s.ended_at).isoformat() == day.get("scheduled_date"):
                 completed_days.add(s.plan_day)
         for d in days:
             if d.get("status") not in ("pending", "completed"):
                 continue
             d["status"] = "completed" if d.get("day") in completed_days else "pending"
+        if days and all(d.get("status") in ("completed", "skipped") for d in days):
+            product_events.record(db, f"plan:{plan.id}", "plan_end", str(plan.id), basis="all_days_resolved")
     return {
         "id": plan.id,
         "goal_type": plan.goal_type,
@@ -139,6 +143,9 @@ def create_or_renew_plan(db: DbSession, user_id: str, goal_type: str, available_
     db.add(plan)
     db.commit()
     db.refresh(plan)
+    if existing:
+        product_events.record(db, f"plan:{existing.id}", "plan_end", str(existing.id), basis="superseded")
+    product_events.record(db, f"plan:{plan.id}", "plan_start", str(plan.id))
     return _to_dict(plan, db)
 
 
@@ -171,9 +178,13 @@ def _set_status(db: DbSession, user_id: str, status: str) -> dict[str, Any]:
                     d["scheduled_date"] = (old + timedelta(days=shift)).isoformat()
             plan.days_json = json.dumps(days, ensure_ascii=False)
         plan.paused_at = None
+    previous_status = plan.status
+    if previous_status == status:
+        return _to_dict(plan, db)
     plan.status = status
     plan.updated_at = _now()
     db.commit()
+    product_events.record(db, f"plan:{plan.id}", "plan_pause" if status == "paused" else "plan_resume", plan.updated_at.isoformat())
     return _to_dict(plan, db)
 
 
@@ -200,6 +211,7 @@ def skip_day(db: DbSession, user_id: str, day: int) -> dict[str, Any]:
     plan.days_json = json.dumps(days, ensure_ascii=False)
     plan.updated_at = _now()
     db.commit()
+    product_events.record(db, f"plan:{plan.id}", "plan_skip", str(day))
     return _to_dict(plan, db)
 
 
@@ -214,6 +226,7 @@ def restart_plan(db: DbSession, user_id: str) -> dict[str, Any]:
     goal_type, available_minutes = plan.goal_type, plan.available_minutes or 5
     plan.status = "superseded"
     db.commit()
+    product_events.record(db, f"plan:{plan.id}", "plan_end", str(plan.id), basis="restart")
     return create_or_renew_plan(db, user_id, goal_type, available_minutes)
 
 

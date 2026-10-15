@@ -14,6 +14,9 @@ class RetestRequest(BaseModel):
 
 
 class QueueItemResponse(BaseModel):
+    attempt_stage: str = "recall"
+    question_text: str = ""
+    question_version: int = 1
     id: int
     source_session_id: str
     source_turn_id: str

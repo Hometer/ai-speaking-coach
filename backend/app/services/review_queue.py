@@ -9,6 +9,8 @@ from app.core.errors import AppError
 from app.models.entities import IntentResult, ReviewDueEvent, ReviewQueueItem, Session
 from app.services.recall_judge import judge_recall
 from app.services import intent_result
+from app.services.operations import durable
+from app.services import recall_service
 
 STATUS_PENDING = "pending"            # 待练
 STATUS_AWAITING_RETEST = "awaiting_retest"  # 待复测（跟读已完成）
@@ -38,12 +40,19 @@ def _resolve_due(db: DbSession, item: ReviewQueueItem, result: str, now: datetim
 
 def _schedule_due(db: DbSession, item: ReviewQueueItem, due_at: datetime) -> None:
     item.due_at = due_at
+    item.help_shown = False
+    item.attempt_stage = "recall"
+    item.question_text = ""
+    item.question_version = (item.question_version or 0) + 1
     db.add(ReviewDueEvent(user_id=item.user_id, queue_item_id=item.id, due_at=due_at))
 
 
 def _to_dict(item: ReviewQueueItem, reveal: bool = False) -> dict[str, Any]:
     return {
         "id": item.id,
+        "attempt_stage": item.attempt_stage,
+        "question_text": item.question_text,
+        "question_version": item.question_version,
         "source_session_id": item.source_session_id,
         "source_turn_id": item.source_turn_id,
         "target_ability": item.target_ability,
@@ -144,6 +153,7 @@ def reveal_item(db: DbSession, user_id: str, item_id: int) -> dict[str, Any]:
     return _to_dict(item, reveal=True)
 
 
+@durable("queue_retest", key_arg="attempt_key", object_arg="item_id")
 def submit_retest(
     db: DbSession,
     user_id: str,
@@ -181,7 +191,14 @@ def submit_retest(
     if _now() < due:
         raise AppError("NOT_DUE", "复测尚未到期，请稍后再试", status_code=409)
 
-    result = judge_recall(answer, item.suggestion_sentence, input_type, item.help_shown)
+    result = recall_service.evaluate(db, item, answer, input_type, request_key=attempt_key)
+
+    if result == "recall_completed":
+        db.commit()
+        response = _to_dict(item)
+        response["retest_result"] = result
+        intent_result.remember(db, user_id, "queue_retest", str(item_id), attempt_key, input_type, answer, response)
+        return response
 
     _resolve_due(db, item, result)
 
@@ -237,6 +254,10 @@ def delete_item(db: DbSession, user_id: str, item_id: int) -> None:
         raise AppError("NOT_FOUND", "队列项不存在", status_code=404)
     db.query(ReviewDueEvent).filter_by(queue_item_id=item.id).delete()
     db.query(IntentResult).filter(IntentResult.object_id == str(item.id), IntentResult.scope.in_(["queue_retest", "queue_voice_asr", "queue_voice_result"])).delete()
+    from app.models.entities import RecallEvidence, RequestOperation
+    db.query(RecallEvidence).filter_by(queue_item_id=item.id).delete()
+    db.query(RequestOperation).filter(RequestOperation.user_id == user_id,
+        RequestOperation.object_id == str(item.id), RequestOperation.scope.in_(["queue_retest", "voice"])).delete()
     db.delete(item)
     db.commit()
 

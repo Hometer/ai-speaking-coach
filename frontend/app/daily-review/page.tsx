@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import Icon from "@/components/Icon";
-import { clearIntentKey, dailyReviewAction, dailyReviewAttempt, dailyReviewView, dueToday, getInviteCode, intentKey, revealQueueItem, startDailyReview } from "@/lib/api";
+import { clearIntentKey, dailyReviewAction, dailyReviewAttempt, dailyReviewView, dueToday, getInviteCode, intentKey, recordProductEvent, revealQueueItem, startDailyReview } from "@/lib/api";
 import type { DailyReviewCurrent, DueToday } from "@/lib/types";
 import styles from "./page.module.css";
 
@@ -20,9 +20,22 @@ export default function DailyReviewPage() {
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const recordTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
+  const recordSession = useRef("");
+  function cancelRecording() {
+    if (recordTimeout.current) clearTimeout(recordTimeout.current);
+    if (recRef.current) { recRef.current.onstop = null; if (recRef.current.state === "recording") { recRef.current.stop(); if (recordSession.current) recordProductEvent(recordSession.current, "record_cancel"); } }
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    if (mounted.current) setRecording(false);
+  }
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; cancelRecording(); }; }, []);
+
 
   useEffect(() => {
     let active = true;
+    const saved = sessionStorage.getItem("active-daily-review");
+    if (saved) void dailyReviewView(saved).then(view => { if (active && !view.done) { setSessionId(saved); setCurrent(view); } else if (view.done) { sessionStorage.removeItem("active-daily-review"); clearIntentKey("daily-start"); } }).catch(() => sessionStorage.removeItem("active-daily-review"));
     dueToday()
       .then((data) => { if (active) setDue(data); })
       .catch((e) => { if (active) setErr(e instanceof Error ? e.message : String(e)); });
@@ -39,6 +52,7 @@ export default function DailyReviewPage() {
         setMsg("今天暂无到期复练内容。");
         return;
       }
+      sessionStorage.setItem("active-daily-review", result.session_id);
       setSessionId(result.session_id);
       setCurrent(await dailyReviewView(result.session_id));
     } catch (e) {
@@ -56,8 +70,9 @@ export default function DailyReviewPage() {
       const result = await dailyReviewAttempt(sessionId, answer.trim(), withHelp, "text");
       setAnswer("");
       setShowHint(false);
-      setMsg(result.success ? (withHelp ? "这一条已完成，记录为使用提示。" : "这一条已独立完成。") : "还没有对上，可以再试一次或使用提示。");
-      setCurrent(result.next);
+      setMsg(result.result === "recall_completed" ? "回忆完成。接下来换一个条件说，成功后才推进间隔。" : result.result === "text_completed" ? "已完成文字练习，不计入口语独立。" : result.result === "hinted" ? "已完成提示下练习。" : result.success ? (withHelp ? "这一条已完成，记录为使用提示。" : "这一条已独立完成。") : "还没有对上，可以再试一次或使用提示。");
+      if (result.next.done) { clearIntentKey("daily-start"); sessionStorage.removeItem("active-daily-review"); }
+      setCurrent(result.next.done ? await dailyReviewView(sessionId) : result.next);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -87,18 +102,24 @@ export default function DailyReviewPage() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      if (!mounted.current) { stream.getTracks().forEach(t => t.stop()); return; }
+      streamRef.current = stream;
       chunksRef.current = [];
       const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "";
       const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       recRef.current = rec;
       rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
       rec.onstop = () => {
+        if (recordTimeout.current) clearTimeout(recordTimeout.current);
         stream.getTracks().forEach((t) => t.stop());
         setRecording(false);
         const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
         submitVoice(blob);
       };
       rec.start();
+      recordSession.current = sessionId;
+      recordProductEvent(sessionId, "record_start");
+      recordTimeout.current = setTimeout(() => { if (rec.state === "recording") rec.stop(); }, 60_000);
       setRecording(true);
     } catch {
       setErr("无法获取麦克风，可用文字输入。");
@@ -123,8 +144,9 @@ export default function DailyReviewPage() {
       if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
       clearIntentKey(scope);
       setShowHint(false);
-      setMsg(data.success ? "这一条已独立完成（语音）。" : "还没有对上，可以再试一次或使用提示。");
-      setCurrent(data.next);
+      setMsg(data.result === "recall_completed" ? "回忆完成，接下来请回答换题条件。" : data.success ? "这一条已独立完成（语音）。" : "还没有对上，可以再试一次或使用提示。");
+      if (data.next.done) { clearIntentKey("daily-start"); sessionStorage.removeItem("active-daily-review"); }
+      setCurrent(data.next.done ? await dailyReviewView(sessionId) : data.next);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -134,13 +156,15 @@ export default function DailyReviewPage() {
 
   async function act(action: "skip" | "defer" | "dispute" | "end") {
     if (!sessionId) return;
+    cancelRecording();
     setBusy(true);
     setErr("");
     setMsg("");
     try {
       const result = await dailyReviewAction(sessionId, action);
-      if (action === "end") clearIntentKey("daily-start");
-      setCurrent(result.next);
+      if (action === "end") { clearIntentKey("daily-start"); sessionStorage.removeItem("active-daily-review"); }
+      if (result.next.done) { clearIntentKey("daily-start"); sessionStorage.removeItem("active-daily-review"); }
+      setCurrent(result.next.done ? await dailyReviewView(sessionId) : result.next);
       setAnswer("");
       setShowHint(false);
     } catch (e) {
@@ -218,7 +242,7 @@ export default function DailyReviewPage() {
             <span className={styles.promptIcon}><Icon name={showHint ? "book" : "help"} size={20} /></span>
             <div>
               <p className={styles.promptLabel}>{showHint ? "提示已经展开" : "先不要看答案"}</p>
-              {showHint ? <p className={styles.hintText}>{item.suggestion_sentence}</p> : <p>{item.meaning_zh ? `想表达：${item.meaning_zh}` : "想一想这条表达原本想传达什么，再用自己的话说出来。"}</p>}
+              {showHint ? <p className={styles.hintText}>{item.suggestion_sentence}</p> : <p>{item.question_text ? item.question_text : item.meaning_zh ? `想表达：${item.meaning_zh}` : "想一想这条表达原本想传达什么，再用自己的话说出来。"}</p>}
             </div>
           </div>
 
@@ -237,8 +261,9 @@ export default function DailyReviewPage() {
 
           <div className={styles.primaryActions}>
             {!showHint && <button onClick={reveal} disabled={busy} className="btn btn-secondary"><Icon name="help" size={15} />看提示</button>}
-            <button onClick={toggleRecord} disabled={busy || recording} className="btn btn-primary"><Icon name={recording ? "stop" : "mic"} size={15} />{recording ? "停止并提交" : "录音回忆"}</button>
-            <button onClick={() => submit(false)} disabled={busy || !answer.trim()} className="btn btn-secondary">提交文字<Icon name="arrow" size={15} /></button>
+            <button onClick={toggleRecord} disabled={busy} className="btn btn-primary"><Icon name={recording ? "stop" : "mic"} size={15} />{recording ? "停止并提交" : "录音回忆"}</button>
+            {recording && <button onClick={cancelRecording} className="btn btn-ghost">取消录音</button>}
+            <button onClick={() => submit(false)} disabled={busy || recording || !answer.trim()} className="btn btn-secondary">提交文字<Icon name="arrow" size={15} /></button>
           </div>
 
           <div className={styles.secondaryActions}>

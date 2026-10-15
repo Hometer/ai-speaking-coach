@@ -1,5 +1,6 @@
 """API 路由（同步 def，由 FastAPI 线程池执行，避免阻塞事件循环）。"""
 import json
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
@@ -8,6 +9,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from app.core.auth import get_qa_user_id, get_user_id
 from app.core.config import settings
 from app.core.errors import AppError, error_body
+from app.services import deadline
 from app.models.database import SessionLocal
 from app.models.entities import DeviceCheck, ReviewQueueItem
 from app.schemas.device import DeviceCheckRequest
@@ -168,7 +170,7 @@ def record_device_check(req: DeviceCheckRequest, user_id: str = Depends(get_user
 def create_practice_sentence(req: PracticeSentenceRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return session_svc.create_sentence_practice(db, user_id, req.source_session_id, req.turn_id)
+        return session_svc.create_sentence_practice(db, user_id, req.source_session_id, req.turn_id, req.request_key)
     finally:
         db.close()
 
@@ -176,11 +178,14 @@ def create_practice_sentence(req: PracticeSentenceRequest, user_id: str = Depend
 @router.post("/sessions/{session_id}/turns/text")
 def text_turn_stream(session_id: str, req: TextTurnRequest, user_id: str = Depends(get_user_id)):
     def gen():
+        deadline_at = time.monotonic() + 15
         db = SessionLocal()
         try:
-            partial = session_svc.submit_turn(db, session_id, user_id, "text", user_text=req.text, request_key=req.request_key)
+            with deadline.until(deadline_at):
+                partial = session_svc.submit_turn(db, session_id, user_id, "text", user_text=req.text, request_key=req.request_key)
             yield _sse("chunk", {"text": partial["reply_text"]})
-            done = session_svc.synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
+            with deadline.until(deadline_at):
+                done = session_svc.synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
             yield _sse("done", done)
         except AppError as exc:
             yield _sse("error", error_body(exc.code, exc.message))
@@ -197,15 +202,18 @@ def voice_turn_stream(session_id: str, audio: UploadFile = File(...), request_ke
     data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
 
     def gen():
+        deadline_at = time.monotonic() + 15
         db = SessionLocal()
         try:
-            partial = session_svc.submit_turn(db, session_id, user_id, "voice", audio_bytes=data, request_key=request_key)
+            with deadline.until(deadline_at):
+                partial = session_svc.submit_turn(db, session_id, user_id, "voice", audio_bytes=data, request_key=request_key)
             if partial.get("risk_hold"):
                 yield _sse("risk_hold", partial)
                 yield _sse("done", partial)  # 以 done 收尾
                 return
             yield _sse("chunk", {"text": partial["reply_text"]})
-            done = session_svc.synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
+            with deadline.until(deadline_at):
+                done = session_svc.synthesize_turn_audio(db, session_id, user_id, partial["turn_id"])
             yield _sse("done", done)
         except AppError as exc:
             yield _sse("error", error_body(exc.code, exc.message))
@@ -424,7 +432,7 @@ def list_memories(user_id: str = Depends(get_user_id)):
     try:
         mems = memory_svc.list_memories(db, user_id)
         return [
-            {"id": m.id, "text": m.text, "source_session_id": m.source_session_id, "status": m.status, "evidence_count": m.evidence_count}
+            {"id": m.id, "text": m.text, "source_session_id": m.source_session_id, "status": m.status, "evidence_count": m.evidence_count, "expires_at": m.expires_at.isoformat() if m.expires_at else None, "scene_id": m.scene_id, "version": m.version}
             for m in mems
         ]
     finally:
@@ -725,5 +733,65 @@ def qa_stats(user_id: str = Depends(get_qa_user_id)):
     db = SessionLocal()
     try:
         return qa_svc.stats(db)
+    finally:
+        db.close()
+
+
+from pydantic import BaseModel, Field, StrictBool
+from typing import Literal
+
+class MediaEventRequest(BaseModel):
+    action: Literal["demo_play","recording_play","record_start","record_cancel","record_retry","review_view"]
+    request_key: str = Field(min_length=1,max_length=64)
+    turn_id: str = Field(default="",max_length=64)
+
+class ConversationReviewRequest(BaseModel):
+    answered: StrictBool
+    repeated_followup: StrictBool
+    topic_jump: StrictBool
+
+@router.post("/sessions/{session_id}/events")
+def media_event(session_id: str, req: MediaEventRequest, user_id: str = Depends(get_user_id)):
+    from app.services.events import record, MEDIA_ACTIONS
+    db = SessionLocal()
+    try:
+        session_svc._require_session(db, session_id, user_id)
+        req = req.model_dump()
+        turn_id = req.get("turn_id", "")
+        if turn_id:
+            from app.models.entities import Turn
+            turn = db.get(Turn, turn_id)
+            if turn is None or turn.session_id != session_id:
+                raise AppError("NOT_FOUND", "事件来源不存在", 404)
+        record(db, session_id, req["action"], req["request_key"], turn_id)
+        return {"recorded": True}
+    finally:
+        db.close()
+
+
+@router.get("/qa/learning-metrics")
+def qa_learning_metrics(reviewer: str = Depends(get_qa_user_id)):
+    from app.services.learning_metrics import calculate
+    db = SessionLocal()
+    try:
+        return calculate(db)
+    finally:
+        db.close()
+
+
+@router.patch("/qa/conversation/{turn_id}")
+def review_conversation(turn_id: str, req: ConversationReviewRequest, reviewer: str = Depends(get_qa_user_id)):
+    db=SessionLocal()
+    try:
+        return qa_svc.review_conversation(db,reviewer,turn_id,req.model_dump())
+    finally:
+        db.close()
+
+@router.get("/qa/conversation/{turn_id}/history")
+def conversation_history(turn_id: str, reviewer: str = Depends(get_qa_user_id)):
+    from app.models.entities import ConversationQualityReview
+    db=SessionLocal()
+    try:
+        return [{"reviewer_id":r.reviewer_id,"conclusions":json.loads(r.conclusion_json),"prompt_version":r.prompt_version,"scenario_version":r.scenario_version,"created_at":r.created_at.isoformat()} for r in db.query(ConversationQualityReview).filter_by(turn_id=turn_id).order_by(ConversationQualityReview.id).all()]
     finally:
         db.close()

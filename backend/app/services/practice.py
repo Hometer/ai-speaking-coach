@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 
 from app.core.config import settings
 from app.core.errors import AppError
+from app.services.deadline import remaining
 from app.services.audio_util import transcode_to_pcm_bytes
 
 ISE_HOST = "ise-api.xfyun.cn"
@@ -239,7 +240,7 @@ class XfyunPracticeEvalProvider(PracticeEvalProvider):
 
         url = build_auth_url(ISE_HOST, ISE_PATH, self.api_key, self.api_secret)
         try:
-            ws = websocket.create_connection(url, timeout=15)
+            ws = websocket.create_connection(url, timeout=remaining())
         except Exception as exc:  # noqa: BLE001
             raise AppError("PRACTICE_EVAL_ERROR", "发音评测连接失败，请稍后重试", status_code=502) from exc
 
@@ -268,6 +269,7 @@ class XfyunPracticeEvalProvider(PracticeEvalProvider):
             frames: list[dict[str, Any]] = []
             while True:
                 try:
+                    ws.settimeout(remaining())
                     msg = ws.recv()
                 except websocket.WebSocketTimeoutException:
                     break

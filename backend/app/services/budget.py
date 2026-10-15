@@ -1,5 +1,7 @@
 """成本护栏：调用前预留、超额即拒（确定性框架，真实单价待试算）。"""
-from datetime import date
+import uuid
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
@@ -7,7 +9,8 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.models.entities import BudgetLedger
+from app.models.entities import BudgetLedger, BudgetReservation
+from app.services.operations import current_id
 
 
 class ToolBudget:
@@ -25,12 +28,13 @@ class ToolBudget:
 
 def _day_key(key: str) -> str:
     """按自然日隔离，用户日/项目日预算每天自动重置。"""
-    return f"{key}:{date.today().isoformat()}"
+    return f"{key}:{datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()}"
 
 
 class BudgetGuard:
     def __init__(self, db: DbSession):
         self.db = db
+        self.reservation_ids = []
 
     def _row(self, scope: str, key: str) -> BudgetLedger:
         row = self.db.query(BudgetLedger).filter_by(scope=scope, scope_key=key).first()
@@ -60,7 +64,7 @@ class BudgetGuard:
         ]
         for scope, key, cap in caps:
             self._row(scope, key)  # 确保行存在
-            used = func.coalesce(BudgetLedger.spent, 0) + func.coalesce(BudgetLedger.reserved, 0)
+            used = func.max(func.coalesce(BudgetLedger.spent, 0), func.coalesce(BudgetLedger.actual_spent, 0)) + func.coalesce(BudgetLedger.reserved, 0)
             result = self.db.execute(
                 update(BudgetLedger)
                 .where(
@@ -77,23 +81,37 @@ class BudgetGuard:
                     "费用预算已用尽，本次练习结束",
                     status_code=402,
                 )
+        reservation = BudgetReservation(id=uuid.uuid4().hex, operation_id=current_id(), session_id=session_id,
+            user_id=user_id, day=_day_key("all").rsplit(":", 1)[1], amount=amount)
+        self.db.add(reservation)
+        self.db.commit()
+        self.reservation_ids.append(reservation.id)
+
+    def _finish(self, amount: float, session_id: str, user_id: str, status: str) -> None:
+        q = self.db.query(BudgetReservation).filter_by(session_id=session_id, user_id=user_id, status="reserved")
+        if self.reservation_ids:
+            q = q.filter(BudgetReservation.id.in_(self.reservation_ids))
+        elif current_id():
+            q = q.filter_by(operation_id=current_id())
+        row = q.order_by(BudgetReservation.created_at, BudgetReservation.id).first()
+        if row is None:
+            return  # 重复释放/结算不能影响另一个意图的预留。
+        rid, day, reserved = row.id, row.day, row.amount
+        changed = self.db.execute(update(BudgetReservation).where(BudgetReservation.id == rid,
+            BudgetReservation.status == "reserved").values(status=status))
+        if changed.rowcount != 1:
+            self.db.rollback()
+            return
+        for scope, key in [("session", session_id), ("user", f"{user_id}:{day}"), ("project", f"all:{day}")]:
+            values = {"reserved": func.max(0.0, func.coalesce(BudgetLedger.reserved, 0) - reserved)}
+            if status == "settled":
+                values["spent"] = func.coalesce(BudgetLedger.spent, 0) + reserved
+            self.db.execute(update(BudgetLedger).where(BudgetLedger.scope == scope, BudgetLedger.scope_key == key).values(**values))
         self.db.commit()
 
     def release(self, amount: float, session_id: str, user_id: str) -> None:
-        """失败时释放预留额度，不计入已花费。"""
-        for scope, key in [("session", session_id), ("user", _day_key(user_id)), ("project", _day_key("all"))]:
-            row = self._row(scope, key)
-            row.reserved = max(0.0, (row.reserved or 0.0) - amount)
-        self.db.commit()
+        self._finish(amount, session_id, user_id, "released")
 
     def settle(self, amount: float, session_id: str, user_id: str) -> None:
-        """按估算用量结算：把预留转为已花费（用于预算上限记账）。"""
-        for scope, key in [
-            ("session", session_id),
-            ("user", _day_key(user_id)),
-            ("project", _day_key("all")),
-        ]:
-            row = self._row(scope, key)
-            row.reserved = max(0.0, (row.reserved or 0.0) - amount)
-            row.spent = (row.spent or 0.0) + amount
-        self.db.commit()
+        """预留估算结算；不将该金额冒称供应商实账。"""
+        self._finish(amount, session_id, user_id, "settled")

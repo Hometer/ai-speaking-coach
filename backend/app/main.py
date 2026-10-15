@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    from app.services.operations import recover_interrupted
+    from app.models.database import SessionLocal
+    with SessionLocal() as db:
+        recover_interrupted(db)
+
     async def clean_periodically():
         while True:
             await asyncio.sleep(60)

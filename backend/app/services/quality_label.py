@@ -1,5 +1,7 @@
 """质检工作台：多维筛选脱敏会话 + 标记 + 版本统计。"""
+import json
 from typing import Any
+from app.models.entities import ConversationQualityMark, ConversationQualityReview
 
 from sqlalchemy.orm import Session as DbSession
 
@@ -64,6 +66,7 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
             e.error for e in db.query(EventLog).filter(EventLog.session_id == s.id, EventLog.error != "").all()
         ]
         events = {e.turn_id: e for e in db.query(EventLog).filter(EventLog.session_id == s.id).order_by(EventLog.id).all() if e.turn_id}
+        quality_marks = {m.turn_id: m for m in db.query(ConversationQualityMark).filter_by(session_id=s.id).all()}
         eval_versions = {e.turn_id: e.standard_version for e in db.query(Evaluation).filter(Evaluation.session_id == s.id).all()}
         consent = db.query(QaRecordingConsent).filter_by(session_id=s.id).first()
         recordings = {
@@ -73,6 +76,8 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
         ledger = db.query(BudgetLedger).filter_by(scope="session", scope_key=s.id).first()
         usage_rows = db.query(ProviderUsageEvent).filter_by(session_id=s.id).all()
         disputed = db.query(QualityLabel).filter_by(session_id=s.id, conclusion="disputed").first() is not None
+        from app.services.billing import session_costs
+        costs = session_costs(db, s.id)
         result.append(
             {
                 "session_id": s.id,
@@ -84,8 +89,9 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
                 "disputed": disputed,
                 "estimated_cost": ledger.spent if ledger else 0.0,
                 # 旧 actual_spent 是不完整的硬编码推算；无供应商账单时不能展示为实付或可核对估算。
-                "supplier_estimate": None,
-                "billed_cost": None,
+                "supplier_estimate": costs["supplier_estimate"],
+                "billed_cost": costs["billed_cost"],
+                "billing_status": costs,
                 "provider_usage": {
                     "llm_attempts": sum(1 for r in usage_rows if r.component == "llm"),
                     "llm_input_tokens": sum(r.input_tokens for r in usage_rows if r.component == "llm"),
@@ -99,6 +105,7 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
                 "turns": [
                     {
                         "turn_id": t.id,
+                        "conversation_quality": quality_view(quality_marks.get(t.id)),
                         "input_type": t.input_type,
                         "user_text": _mask(t.revised_text or t.user_text or t.transcript),
                         "reply_text": _mask(t.reply_text),
@@ -224,3 +231,26 @@ def stats(db: DbSession) -> dict[str, Any]:
         by_type[l.issue_type] = by_type.get(l.issue_type, 0) + 1
         by_version[l.review_version or "v1"] = by_version.get(l.review_version or "v1", 0) + 1
     return {"total": len(labels), "by_type": by_type, "by_version": by_version}
+
+
+def quality_view(mark):
+    if mark is None:
+        return None
+    reviewed = mark.review_status == "reviewed"
+    return {"direct_question":mark.user_direct_question, "answered":mark.answered_direct_question if reviewed else None,
+        "repeated_followup":mark.repeated_synonym_followup if reviewed else None,"topic_jump":mark.topic_jump if reviewed else None,
+        "status":mark.review_status,"prompt_version":mark.prompt_version,"scenario_version":mark.scenario_version}
+
+
+def review_conversation(db, reviewer_id, turn_id, values):
+    mark=db.query(ConversationQualityMark).filter_by(turn_id=turn_id).first()
+    if mark is None:
+        raise AppError("NOT_FOUND","对话质检来源不存在",404)
+    db.add(ConversationQualityReview(session_id=mark.session_id,turn_id=turn_id,reviewer_id=reviewer_id,
+        conclusion_json=json.dumps(values),prompt_version=mark.prompt_version,scenario_version=mark.scenario_version))
+    mark.answered_direct_question=values['answered']
+    mark.repeated_synonym_followup=values['repeated_followup']
+    mark.topic_jump=values['topic_jump']
+    mark.review_status='reviewed'
+    db.commit()
+    return quality_view(mark)

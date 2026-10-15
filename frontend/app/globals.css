@@ -162,3 +162,11 @@ h1, h2, h3 { text-wrap: balance; }
   .page-footer { font-size: 9px; flex-wrap: wrap; gap: 7px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* 到期复测需要输入框和多个操作；窄屏单独换行。 */
+.queue-actions { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+@media (max-width: 640px) {
+  .history-row:has(.queue-actions) { min-width: 0; width: 100%; }
+  .queue-actions { width: 100%; flex-basis: 100%; }
+  .queue-actions .field { flex: 1 1 100%; width: 100%; min-width: 0; }
+}

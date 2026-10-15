@@ -36,6 +36,7 @@ export interface RiskHold {
 }
 
 export interface TurnItem {
+  practice_eval?: { score?: number | null; mock?: boolean; word_items?: { word: string; score?: number; issue?: string }[]; error_code?: string } | null;
   turn_id: string;
   seq: number;
   input_type: string;
@@ -70,6 +71,8 @@ export interface DrillAttemptResult extends DrillView {
 }
 
 export interface DueTodayItem {
+  attempt_stage?: string;
+  question_text?: string;
   id: number;
   source_turn_id: string;
   suggestion_sentence: string;
@@ -126,6 +129,8 @@ export interface PhraseCard {
 }
 
 export interface SessionDetail {
+  in_flight?: boolean;
+  request_state?: string | null;
   session_id: string;
   status: string;
   goal_text: string;
@@ -161,6 +166,10 @@ export interface SessionListItem {
 }
 
 export interface MemoryItem {
+  expires_at?: string | null;
+  scene_id?: string;
+  version?: string;
+  usage_reason?: string;
   id: number;
   text: string;
   source_session_id: string;
@@ -187,6 +196,8 @@ export interface Scenario {
 }
 
 export interface QueueItem {
+  attempt_stage?: string;
+  question_text?: string;
   id: number;
   source_session_id: string;
   source_turn_id: string;
@@ -238,6 +249,7 @@ export interface TrainingPlan {
 }
 
 export interface QaTurn {
+  conversation_quality?: { direct_question: boolean; answered: boolean | null; repeated_followup: boolean | null; topic_jump: boolean | null; status: string; prompt_version: string; scenario_version: string } | null;
   turn_id: string;
   input_type: string;
   user_text: string;
@@ -258,6 +270,7 @@ export interface QaSession {
   error_codes: string[];
   disputed: boolean;
   estimated_cost: number;
+  billing_status?: { rate_version: string | null; unpriced_attempts: number; unreconciled_attempts: number };
   supplier_estimate: number | null;
   billed_cost: number | null;
   provider_usage: {

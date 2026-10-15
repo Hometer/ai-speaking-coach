@@ -16,10 +16,13 @@ from app.models.entities import DrillAttempt, EventLog, ReviewQueueItem, Session
 from app.services.prompts.scenarios import SCENARIOS
 from app.services.recall_judge import judge_recall, judge_transfer
 from app.services.transfer_eval import verify_new_condition
+from app.services.semantic_eval import verify_meaning
 from app.services.budget import BudgetGuard
 from app.services.generation_call import reset_usage_attempts
 from app.services import provider_usage as provider_usage_svc
+from app.services import events as product_events
 from app.services import intent_result
+from app.services.operations import durable, fence, require_active
 from app.services.session_svc import _require_session
 
 STAGE_ORDER = ["full_text", "fill_blanks", "structure", "free_speak", "transfer"]
@@ -116,9 +119,9 @@ def drill_view(session: Session, db: DbSession | None = None) -> dict[str, Any]:
     return {
         "drill_stage": stage,
         "stage_label": STAGE_LABEL.get(stage, ""),
-        "drill_target": session.drill_target,
+        "drill_target": session.drill_target if stage not in ("free_speak", "transfer") else "",
         "drill_meaning": session.drill_meaning,
-        "drill_chunk": " · ".join(_keywords(session.scene_id)[:3]),
+        "drill_chunk": " · ".join(_keywords(session.scene_id)[:3]) if stage not in ("free_speak", "transfer") else "",
         "visible_help": _visible_help(session, stage),
         "completed": stage == "ended",
         "outcome": outcome,
@@ -146,7 +149,7 @@ def _record(db: DbSession, session: Session, user_id: str, text: str, result: st
 
 def _write_back_queue(db: DbSession, user_id: str, source_turn_id: str, result: str) -> None:
     """脱稿/换题成功写回原待复练项（沿用跨日规则：独立成功 +1，间隔 24h 才掌握）。"""
-    if result not in ("independent", "transfer"):
+    if result != "transfer":
         return
     item = (
         db.query(ReviewQueueItem)
@@ -180,6 +183,7 @@ def _write_back_queue(db: DbSession, user_id: str, source_turn_id: str, result: 
     db.commit()
 
 
+@durable("drill_svc", key_arg="attempt_key")
 def submit_drill_attempt(
     db: DbSession, session_id: str, user_id: str, text: str, input_type: str = "text", attempt_key: str = ""
 ) -> dict[str, Any]:
@@ -215,16 +219,18 @@ def submit_drill_attempt(
     if session.status == "ENDED" or session.drill_stage == "ended":
         raise AppError("SESSION_ENDED", "脱稿练习已结束", status_code=409)
 
+    require_active(session)
+    operation_version = session.state_version
     stage = session.drill_stage or "full_text"
     transfer_guard = None
-    if stage == "transfer" and input_type == "voice" and settings.provider_mode == "real":
+    if stage in ("transfer", "free_speak") and input_type == "voice" and settings.provider_mode == "real":
         transfer_guard = BudgetGuard(db)
         transfer_guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
         reset_usage_attempts()
 
     if stage == "free_speak":
         # 脱稿说：只看中文意图，语音 + 相关 + 非照抄才独立
-        result = judge_recall(text, session.drill_target, input_type, help_shown=False)
+        result = judge_recall(text, session.drill_target, input_type, help_shown=False, meaning_verified=verify_meaning(session.drill_target, text) if input_type == "voice" else None)
         success = result == "independent"
     elif stage == "transfer":
         # 词重合只能作为线索，不能代替新条件核对；Mock/不确定均保持 pending。
@@ -236,6 +242,7 @@ def submit_drill_attempt(
         success = _judge(text, session.drill_target)
         result = STAGE_RESULT[stage] if success else "failed"
 
+    fence(db, session, operation_version)
     reason = "completed" if success else "error"
     _record(db, session, user_id, text, result, reason, input_type=input_type, help_shown=False, attempt_key=attempt_key)
     db.add(EventLog(session_id=session.id, turn_id="", action_type="drill", basis=result))
@@ -264,6 +271,8 @@ def submit_drill_attempt(
         except Exception:
             db.rollback()
 
+    if session.status == "ENDED":
+        product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason or "")
     view = drill_view(session, db)
     response = {
         "success": success,
@@ -282,6 +291,8 @@ def drill_action(db: DbSession, session_id: str, user_id: str, action: str) -> d
         raise AppError("SOURCE_INVALID", "来源内容已失效，请重新选择练习", status_code=409)
     if session.drill_stage == "ended":
         raise AppError("SESSION_ENDED", "脱稿练习已结束", status_code=409)
+    if action != "end":
+        require_active(session)
     stage = session.drill_stage or "full_text"
     if action == "skip":
         _record(db, session, user_id, "", "skipped", "skipped")
@@ -305,4 +316,6 @@ def drill_action(db: DbSession, session_id: str, user_id: str, action: str) -> d
     else:
         raise AppError("INVALID_INPUT", "未知的脱稿操作", status_code=422)
     db.commit()
+    if session.status == "ENDED":
+        product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason or "")
     return drill_view(session, db)

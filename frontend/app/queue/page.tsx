@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { clearIntentKey, deleteQueueItem, disputeQueueItem, getInviteCode, intentKey, listQueue, retestQueueItem, revealQueueItem, skipQueueItem } from "@/lib/api";
+import { clearIntentKey, deleteQueueItem, disputeQueueItem, getInviteCode, intentKey, listQueue, recordProductEvent, retestQueueItem, revealQueueItem, skipQueueItem } from "@/lib/api";
 import type { QueueItem } from "@/lib/types";
 import Icon from "@/components/Icon";
 
@@ -24,6 +24,18 @@ export default function QueuePage() {
   const [recId, setRecId] = useState<number | null>(null);
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recordSession = useRef("");
+  const recordTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
+  function cancelRecording() {
+    if (recordTimeout.current) clearTimeout(recordTimeout.current);
+    if (recRef.current) { recRef.current.onstop = null; if (recRef.current.state === "recording") { recRef.current.stop(); if (recordSession.current) recordProductEvent(recordSession.current, "record_cancel"); } }
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    if (mounted.current) setRecId(null);
+  }
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; cancelRecording(); }; }, []);
+
 
   useEffect(() => {
     const update = () => setNow(Date.now());
@@ -57,6 +69,7 @@ export default function QueuePage() {
   }
 
   async function act(id: number, fn: (id: number) => Promise<unknown>) {
+    cancelRecording();
     setPending(String(id)); setErr("");
     try { await fn(id); await reload(); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
@@ -72,18 +85,24 @@ export default function QueuePage() {
     if (recRef.current && recRef.current.state === "recording") { recRef.current.stop(); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mounted.current) { stream.getTracks().forEach(t => t.stop()); return; }
+      streamRef.current = stream;
       chunksRef.current = [];
       const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "";
       const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       recRef.current = rec;
       rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
       rec.onstop = () => {
+        if (recordTimeout.current) clearTimeout(recordTimeout.current);
         stream.getTracks().forEach((t) => t.stop());
         setRecId(null);
         const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
         submitVoice(id, blob);
       };
       rec.start();
+      recordSession.current = items.find(it => it.id === id)?.source_session_id || "";
+      if (recordSession.current) recordProductEvent(recordSession.current, "record_start");
+      recordTimeout.current = setTimeout(() => { if (rec.state === "recording") rec.stop(); }, 60_000);
       setRecId(id);
     } catch {
       setErr("无法获取麦克风，可用文字复测。");
@@ -130,7 +149,7 @@ export default function QueuePage() {
             <article key={it.id} className="panel history-row">
               <span className="icon-tile"><Icon name="check" /></span>
               <div className="history-info">
-                <h3>{it.help_shown && it.suggestion_sentence ? it.suggestion_sentence : (it.meaning_zh || "（暂无提示）")}</h3>
+                <h3>{it.help_shown && it.suggestion_sentence ? it.suggestion_sentence : (it.question_text || it.meaning_zh || "（暂无提示）")}</h3>
                 <div className="history-meta">
                   <span>{STATUS_CN[it.status] || it.status}</span>
                   {it.due_at && <span>到期 {new Date(it.due_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
@@ -138,12 +157,13 @@ export default function QueuePage() {
                 </div>
               </div>
               <span className={`badge ${it.status === "mastered" ? "" : "badge-neutral"}`}>{STATUS_CN[it.status] || it.status}</span>
-              <div className="row-actions">
+              <div className="row-actions queue-actions">
                 {it.status === "pending" || it.status === "awaiting_retest" ? (
                   <>
                     {isDue ? <><input className="field field-small" placeholder="写下复测回答" value={answers[it.id] || ""} onChange={(e) => setAnswers((prev) => ({ ...prev, [it.id]: e.target.value }))} />
-                    <button onClick={() => retest(it.id)} disabled={!!pending} className="btn btn-secondary btn-small">{pending === String(it.id) ? "提交中…" : "复测"}</button>
-                    <button onClick={() => toggleRecord(it.id)} disabled={!!pending} className="btn btn-primary btn-small"><Icon name={recId === it.id ? "stop" : "mic"} size={14} />{recId === it.id ? "停止" : "录音复测"}</button></> : <span className="text-xs muted">到期后可复测</span>}
+                    <button onClick={() => retest(it.id)} disabled={!!pending || recId !== null} className="btn btn-secondary btn-small">{pending === String(it.id) ? "提交中…" : "复测"}</button>
+                    <button onClick={() => toggleRecord(it.id)} disabled={!!pending || (recId !== null && recId !== it.id)} className="btn btn-primary btn-small"><Icon name={recId === it.id ? "stop" : "mic"} size={14} />{recId === it.id ? "停止" : "录音复测"}</button>
+                    {recId === it.id && <button onClick={cancelRecording} className="btn btn-ghost btn-small">取消录音</button>}</> : <span className="text-xs muted">到期后可复测</span>}
                     {!it.help_shown && <button onClick={() => reveal(it.id)} disabled={!!pending} className="btn btn-ghost btn-small">看答案</button>}
                     <button onClick={() => act(it.id, skipQueueItem)} disabled={!!pending} className="btn btn-ghost btn-small">跳过</button>
                   </>

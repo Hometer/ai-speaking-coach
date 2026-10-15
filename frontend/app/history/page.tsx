@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { addToQueue, createSession, deleteAllSessions, deleteSession, getSession, listScenarios, listSessions } from "@/lib/api";
+import { recordProductEvent, addToQueue, createSession, deleteAllSessions, deleteSession, getSession, listScenarios, listSessions } from "@/lib/api";
 import type { Scenario, SessionDetail, SessionListItem } from "@/lib/types";
 import Icon from "@/components/Icon";
 
@@ -44,7 +44,7 @@ export default function HistoryPage() {
 
   async function view(id: string) {
     setErr(""); setPending(id);
-    try { setDetail(await getSession(id)); } catch(e) { setErr(e instanceof Error ? e.message : String(e)); }
+    try { setDetail(await getSession(id)); recordProductEvent(id, "review_view"); } catch(e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setPending(""); }
   }
 

@@ -92,6 +92,12 @@ def test_submit_attempt_complete_advances(client, monkeypatch):
     _make_due(item["source_turn_id"])
     s = client.post("/api/v1/review-queue/daily-review/start", headers=USER).json()
     r = _voice_attempt(client, s["session_id"], sentence, monkeypatch)
+    assert r["success"] is False and r["result"] == "recall_completed"
+    with SessionLocal() as db:
+        assert db.get(ReviewQueueItem, item["id"]).interval_days == 1
+    from app.services import recall_service
+    monkeypatch.setattr(recall_service, "verify_new_condition", lambda *args: True)
+    r = _voice_attempt(client, s["session_id"], "At university I led a school project and finished it on time.", monkeypatch)
     assert r["success"] is True and r["result"] == "independent"
     assert r["next"]["done"] is True
     db = SessionLocal()

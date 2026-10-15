@@ -1,7 +1,7 @@
 """SQLAlchemy 实体模型（阶段 2.2 初版 schema）。"""
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.database import Base
@@ -58,6 +58,8 @@ class Session(Base):
     current_question_audio_url: Mapped[str] = mapped_column(String(255), default="")
     request_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # 创建会话幂等键
     in_flight: Mapped[bool] = mapped_column(default=False)  # 处理中标记（刷新恢复）
+    initiation: Mapped[str] = mapped_column(String(16), default="self")
+    state_version: Mapped[int] = mapped_column(Integer, default=0)
     pending_risk: Mapped[str] = mapped_column(Text, default="")  # 待确认可疑转写（REQ-32，刷新恢复）
     plan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     plan_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -76,6 +78,7 @@ class Turn(Base):
     session_id: Mapped[str] = mapped_column(String(64), ForeignKey("sessions.id"), index=True)
     seq: Mapped[int] = mapped_column(Integer, default=0)
     input_type: Mapped[str] = mapped_column(String(16), default="text")  # voice/text/practice
+    speech_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     transcript: Mapped[str] = mapped_column(Text, default="")
     user_text: Mapped[str] = mapped_column(Text, default="")
     reply_text: Mapped[str] = mapped_column(Text, default="")
@@ -144,6 +147,7 @@ class ProviderUsageEvent(Base):
     source: Mapped[str] = mapped_column(String(32), default="unreported")
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    audio_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     input_bytes: Mapped[int] = mapped_column(Integer, default=0)
     text_chars: Mapped[int] = mapped_column(Integer, default=0)
     attempts: Mapped[int] = mapped_column(Integer, default=1)
@@ -181,8 +185,51 @@ class Memory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class MemorySource(Base):
+    __tablename__ = "memory_sources"
+    __table_args__ = (UniqueConstraint("memory_id", "session_id", "turn_id", name="ux_memory_source"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    memory_id: Mapped[int] = mapped_column(Integer, index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), default="")
+    revision_version: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class RequestOperation(Base):
+    """外部调用前的持久认领；不保存请求正文或音频。"""
+    __tablename__ = "request_operations"
+    __table_args__ = (UniqueConstraint("user_id", "scope", "object_id", "request_key", name="ux_operation_intent"), Index("ux_operation_active_session", "session_id", unique=True, sqlite_where=text("status = 'running' AND session_id != ''")))
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    scope: Mapped[str] = mapped_column(String(32))
+    object_id: Mapped[str] = mapped_column(String(64))
+    session_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    request_key: Mapped[str] = mapped_column(String(64))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="running")
+    response_json: Mapped[str] = mapped_column(Text, default="")
+    error_code: Mapped[str] = mapped_column(String(64), default="")
+    error_message: Mapped[str] = mapped_column(String(255), default="")
+    error_status: Mapped[int] = mapped_column(Integer, default=409)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class BudgetReservation(Base):
+    __tablename__ = "budget_reservations"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    operation_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    day: Mapped[str] = mapped_column(String(16))
+    amount: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(16), default="reserved")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class EventLog(Base):
     __tablename__ = "event_logs"
+    __table_args__ = (Index("ux_event_request", "session_id", "request_key", unique=True, sqlite_where=text("request_key LIKE 'event:%'")),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(String(64), index=True)
@@ -228,7 +275,10 @@ class ReviewQueueItem(Base):
     target_ability: Mapped[str] = mapped_column(String(32), default="")
     suggestion_sentence: Mapped[str] = mapped_column(Text, default="")
     meaning_zh: Mapped[str] = mapped_column(Text, default="")
-    help_shown: Mapped[bool] = mapped_column(default=False)  # 服务端记录：用户是否看过答案
+    attempt_stage: Mapped[str] = mapped_column(String(16), default="recall")
+    question_version: Mapped[int] = mapped_column(Integer, default=1)
+    question_text: Mapped[str] = mapped_column(Text, default="")
+    help_shown: Mapped[bool] = mapped_column(default=False)  # 本次到期任务是否看过答案
     evidence_status: Mapped[str] = mapped_column(String(16), default="active")
     status: Mapped[str] = mapped_column(String(24), default="pending")
     success_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -414,6 +464,8 @@ class ConversationQualityMark(Base):
     user_direct_question: Mapped[bool] = mapped_column(default=False)
     user_ask_explanation: Mapped[bool] = mapped_column(default=False)
     user_gave_info: Mapped[bool] = mapped_column(default=False)
+    answered_direct_question: Mapped[bool | None] = mapped_column(nullable=True)
+    review_status: Mapped[str] = mapped_column(String(16), default="unreviewed")
     coach_action: Mapped[str] = mapped_column(String(32), default="")
     repeated_synonym_followup: Mapped[bool] = mapped_column(default=False)
     topic_jump: Mapped[bool] = mapped_column(default=False)
@@ -440,4 +492,40 @@ class PhraseCard(Base):
     replaceable: Mapped[str] = mapped_column(Text, default="")
     example_text: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="active")  # active / invalid
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class RecallEvidence(Base):
+    __tablename__ = "recall_evidence"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    queue_item_id: Mapped[int] = mapped_column(Integer, index=True)
+    question_version: Mapped[int] = mapped_column(Integer)
+    stage: Mapped[str] = mapped_column(String(16))
+    question: Mapped[str] = mapped_column(Text, default="")
+    input_type: Mapped[str] = mapped_column(String(16))
+    help_shown: Mapped[bool] = mapped_column(default=False)
+    result: Mapped[str] = mapped_column(String(32))
+    request_key: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ConversationQualityReview(Base):
+    __tablename__ = "conversation_quality_reviews"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), index=True)
+    reviewer_id: Mapped[str] = mapped_column(String(64))
+    conclusion_json: Mapped[str] = mapped_column(Text)
+    prompt_version: Mapped[str] = mapped_column(String(16))
+    scenario_version: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class SupplierBillLine(Base):
+    __tablename__ = "supplier_bill_lines"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    usage_event_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    reference: Mapped[str] = mapped_column(String(128), unique=True)
+    amount: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

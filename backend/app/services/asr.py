@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.errors import AppError
+from app.services.deadline import bounded
 from app.services.audio_util import transcode_to_wav_file
 
 
@@ -41,7 +42,7 @@ class DashScopeASRProvider(ASRProvider):
                 format="wav",
                 sample_rate=16000,
             )
-            result = recognition.call(str(wav_path))
+            result = bounded(lambda: recognition.call(str(wav_path)))
         except AppError:
             raise
         except Exception as exc:  # noqa: BLE001

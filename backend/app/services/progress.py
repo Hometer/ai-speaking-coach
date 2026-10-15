@@ -1,6 +1,7 @@
 """进步中心：事实型指标（后端计算，前端不自行拼接权威结论）。"""
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from app.services.completion import valid_completion
 
 from sqlalchemy.orm import Session as DbSession
 
@@ -13,7 +14,7 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
     session_scene = {s.id: s.scene_id for s in sessions}
 
     # 完成练习数：已结束且有回顾（AC10-15，任意结束不算完成）
-    completed_count = sum(1 for s in sessions if s.status == "ENDED" and s.review)
+    completed_count = sum(1 for s in sessions if s.practice_type == "interview" and valid_completion(db, s))
 
     # 独立完成率：独立评估数 / 可评估子目标尝试数（independent/hinted/incomplete）
     evals = (
@@ -56,7 +57,7 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
 
     # 语音可评估率：有效语音评测数 / 提交语音数
     voice_turns = [t for t in user_turns if t.input_type == "voice"]
-    voice_evaluable = sum(1 for t in voice_turns if t.eval_result)
+    voice_evaluable = sum(1 for t in voice_turns if t.eval_result in ("independent", "hinted", "incomplete"))
     voice_evaluable_rate = round(voice_evaluable / len(voice_turns), 3) if voice_turns else 0.0
 
     # v0.8 新增：脱稿完成数 / 迁移成功数（按 DrillAttempt 结果计数）
@@ -124,7 +125,9 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
         for q in queue if q.status == "mastered"
     ]
 
+    from app.services.learning_metrics import calculate
     return {
+        "learning_metrics": calculate(db, user_id),
         "completed_count": completed_count,
         "independent_rate": independent_rate,
         "text_completed_count": text_completed_count,
@@ -139,5 +142,5 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
         "before_after_seven": before_after_seven,
         "trend": trend,
         "mastered_list": mastered_list,
-        "calc_version": "v5",
+        "calc_version": "v6",
     }

@@ -98,12 +98,16 @@ export async function createSession(
 }
 
 export async function createPracticeSentence(sourceSessionId: string, turnId: string): Promise<SessionCreated> {
+  const scope = `sentence-create:${sourceSessionId}:${turnId}`;
+  const key = await intentKey(scope, `${sourceSessionId}:${turnId}`);
   const res = await fetch("/api/v1/sessions/practice-sentence", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ source_session_id: sourceSessionId, turn_id: turnId }),
+    body: JSON.stringify({ source_session_id: sourceSessionId, turn_id: turnId, request_key: key }),
   });
-  return handle<SessionCreated>(res);
+  const result = await handle<SessionCreated>(res);
+  clearIntentKey(scope);
+  return result;
 }
 
 export async function getSession(sessionId: string): Promise<SessionDetail> {
@@ -514,4 +518,20 @@ export async function fetchAudio(url: string): Promise<string> {
   if (!res.ok) throw new Error(`音频加载失败 HTTP ${res.status}`);
   const blob = await res.blob();
   return URL.createObjectURL(blob);
+}
+
+export async function updateMemory(id: number, text: string): Promise<void> {
+  await handle(await fetch(`/api/v1/users/me/memories/${id}`, {method: "PATCH", headers: {"Content-Type":"application/json", ...authHeaders()}, body: JSON.stringify({text})}));
+}
+
+export function recordProductEvent(sessionId: string, action: "demo_play" | "recording_play" | "record_start" | "record_cancel" | "record_retry" | "review_view", key = crypto.randomUUID()): void {
+  void fetch(`/api/v1/sessions/${sessionId}/events`, {method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({action,request_key:key})}).catch(() => {});
+}
+
+export async function reviewConversation(turnId: string, answered: boolean, repeated_followup: boolean, topic_jump: boolean): Promise<void> {
+  await handle(await fetch(`/api/v1/qa/conversation/${turnId}`, {method:"PATCH",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({answered,repeated_followup,topic_jump})}));
+}
+
+export async function qaLearningMetrics(): Promise<{eligible_users:number;active_review_users:number;active_review_rate:number|null;full_scene_review_users:number;pending_observation_users:number}> {
+  return handle(await fetch("/api/v1/qa/learning-metrics",{headers:authHeaders()}));
 }

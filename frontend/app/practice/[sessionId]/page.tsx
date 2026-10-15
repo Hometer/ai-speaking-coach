@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { addToQueue, clearIntentKey, createPhraseCard, createPracticeSentence, discardRisk, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, intentKey, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, setQaRecordingConsent, skipPractice, submitTurn } from "@/lib/api";
-import type { DrillView, RiskHold, TurnItem } from "@/lib/types";
+import { recordProductEvent, addToQueue, clearIntentKey, createPhraseCard, createPracticeSentence, discardRisk, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, intentKey, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, setQaRecordingConsent, skipPractice, submitTurn } from "@/lib/api";
+import type { SessionDetail, DrillView, RiskHold, TurnItem } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 import Icon from "@/components/Icon";
 import styles from "./page.module.css";
@@ -52,6 +52,7 @@ export default function PracticePage() {
   const [slowDemo, setSlowDemo] = useState(false);
   const [slowRepeat, setSlowRepeat] = useState(false);
   const [practiceResult, setPracticeResult] = useState("");
+  const [practiceEvaluation, setPracticeEvaluation] = useState<TurnItem["practice_eval"]>(null);
   const [recording, setRecording] = useState(false);
   const [audioRetryTurnId, setAudioRetryTurnId] = useState<string | null>(null);
   const [drill, setDrill] = useState<DrillView | null>(null);
@@ -65,6 +66,8 @@ export default function PracticePage() {
   const [sessionLoading, setSessionLoading] = useState(true);
   const [turns, setTurns] = useState<TurnItem[]>([]);
 
+  const requestEpoch = useRef(0);
+  const [controlBusy, setControlBusy] = useState(false);
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -74,8 +77,7 @@ export default function PracticePage() {
 
   useEffect(() => {
     let active = true;
-    getSession(sessionId)
-      .then((d) => {
+    const receive = (d: SessionDetail) => {
         if (!active) return;
         setGoal(d.goal_text);
         setSceneLabel(d.scene_label || "");
@@ -95,6 +97,9 @@ export default function PracticePage() {
           const demo = d.turns.slice(0, lastPracticeIndex).reverse().find((t) =>
             t.action_type === "suggest_practice" && t.practice_sentence === practiced.practice_sentence,
           );
+          const evaluation = practiced.practice_eval;
+          setPracticeEvaluation(evaluation);
+          setPracticeResult(evaluation ? (typeof evaluation.score === "number" ? `评测得分 ${evaluation.score}${evaluation.mock ? "（示例）" : "（实测）"}` : "本次无法评估") : "");
           setLastPractice({
             sentence: practiced.practice_sentence || "短句练习",
             demoUrl: demo?.reply_audio_url || "",
@@ -121,10 +126,22 @@ export default function PracticePage() {
           }
         }
         setMessages(msgs);
+      };
+    let polling: ReturnType<typeof setInterval> | null = null;
+    getSession(sessionId)
+      .then((d) => {
+        receive(d);
+        if (d.in_flight) {
+          setBusy(true);
+          polling = setInterval(() => { void getSession(sessionId).then(next => {
+            if (active && !next.in_flight) { receive(next); setBusy(false); if (polling) clearInterval(polling); }
+          }).catch(() => {}); }, 1000);
+        }
+        if (d.request_state === "uncertain") setErr("上次操作结果待核对。请查看已保存记录，同一请求不会自动重新调用模型。");
       })
       .catch((e) => { if (active) setErr(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (active) setSessionLoading(false); });
-    return () => { active = false; };
+    return () => { active = false; if (polling) clearInterval(polling); };
   }, [sessionId]);
 
   useEffect(() => {
@@ -159,6 +176,7 @@ export default function PracticePage() {
   }
 
   async function handleTurn(input: { text?: string; audio?: Blob }, typedText?: string) {
+    const epoch = requestEpoch.current;
     setBusy(true);
     setErr("");
     setAudioRetryTurnId(null);
@@ -166,9 +184,11 @@ export default function PracticePage() {
     try {
       if (typedText) { setText(""); addMsg("user", typedText); }
       const done = await submitTurn(sessionId, input, (text) => {
+        if (epoch !== requestEpoch.current) return;
         coachShown = true;
         addMsg("coach", text); // chunk：教练文字生成后立即显示
       });
+      if (epoch !== requestEpoch.current) return;
       if ("risk_hold" in done) {
         setRiskHold(done);
         return;
@@ -200,14 +220,16 @@ export default function PracticePage() {
         setReview(detail.review);
       }
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
   async function confirmRisk(text: string, action: string) {
     if (!riskHold || busy) return;
+    const epoch = requestEpoch.current;
     setBusy(true); setErr("");
     try {
       const res = await fetch(`/api/v1/sessions/${sessionId}/turns/${riskHold.turn_id}/confirm`, {
@@ -216,6 +238,7 @@ export default function PracticePage() {
         body: JSON.stringify({ confirmed_text: text, action }),
       });
       const done = await res.json();
+      if (epoch !== requestEpoch.current) return;
       if (!res.ok) { setErr(done?.error?.message ?? `HTTP ${res.status}`); return; }
       setRiskHold(null);
       addMsg("user", text, undefined, done.turn_id);
@@ -226,59 +249,69 @@ export default function PracticePage() {
         setPracticeDemo(done.reply_audio_url);
       }
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
   async function rerecordRisk() {
     if (!riskHold || busy) return;
+    const epoch = requestEpoch.current;
     setBusy(true); setErr("");
     try {
       await discardRisk(sessionId, riskHold.turn_id);
       setRiskHold(null);
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
   async function handleAudioRetry() {
     if (!audioRetryTurnId || busy) return;
+    const epoch = requestEpoch.current;
     setBusy(true);
     setErr("");
     try {
       const r = await retryTurnAudio(sessionId, audioRetryTurnId);
+      if (epoch !== requestEpoch.current) return;
       attachLastCoachAudio(r.reply_audio_url);
       if (r.audio_status === "failed") setErr("语音仍不可用，可以阅读文字。");
       else { setErr(""); setAudioRetryTurnId(null); }
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
   async function handleDrillAttempt() {
     if (!drill || busy || !drillText.trim()) return;
+    const epoch = requestEpoch.current;
     setBusy(true);
     setErr("");
     try {
       const r = await drillAttempt(sessionId, drillText.trim());
+      if (epoch !== requestEpoch.current) return;
       setDrillText("");
       setDrill(r);
       if (r.completed) setStatus("ENDED");
       setErr(r.success ? (r.result === "independent" ? "脱稿成功，已记为本次独立表达。" : r.result === "transfer" ? "换题成功，已形成迁移证据。" : "说对了，进入下一级。") : "没对上，再试一次或降一级。");
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
   async function submitDrillVoice(blob: Blob) {
+    const epoch = requestEpoch.current;
     setBusy(true);
     setErr("");
     try {
@@ -292,6 +325,7 @@ export default function PracticePage() {
         body: fd,
       });
       const data = await res.json();
+      if (epoch !== requestEpoch.current) return;
       if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
       clearIntentKey(scope);
       setDrillText("");
@@ -299,24 +333,29 @@ export default function PracticePage() {
       if (data.completed) setStatus("ENDED");
       setErr(data.success ? (data.result === "independent" ? "脱稿成功，已记为本次独立表达。" : data.result === "transfer" ? "换题成功，已形成迁移证据。" : "说对了，进入下一级。") : "没对上，再试一次或降一级。");
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
   async function handleDrillAction(action: "skip" | "downgrade" | "jump" | "end") {
     if (!drill || busy) return;
+    cancelRecord();
+    const epoch = requestEpoch.current;
     setBusy(true);
     setErr("");
     try {
       const r = await drillAction(sessionId, action);
+      if (epoch !== requestEpoch.current) return;
       setDrill(r);
       if (r.completed) setStatus("ENDED");
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
@@ -350,6 +389,7 @@ export default function PracticePage() {
       document.querySelectorAll("audio").forEach(audio => audio.pause());
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      if (chunksRef.current.length) recordProductEvent(sessionId, "record_retry");
       chunksRef.current = [];
       cancelRef.current = false;
       setElapsed(0);
@@ -377,6 +417,7 @@ export default function PracticePage() {
         else submitDrillVoice(blob);
       };
       rec.start();
+      recordProductEvent(sessionId, "record_start");
       setRecording(true);
       setRecordMode(mode);
       timerRef.current = setInterval(() => {
@@ -396,12 +437,14 @@ export default function PracticePage() {
 
   function cancelRecord() {
     if (recRef.current && recRef.current.state === "recording") {
+      recordProductEvent(sessionId, "record_cancel");
       cancelRef.current = true;
       recRef.current.stop();
     }
   }
 
   async function submitPractice(blob: Blob) {
+    const epoch = requestEpoch.current;
     setBusy(true);
     setErr("");
     try {
@@ -415,6 +458,7 @@ export default function PracticePage() {
         body: fd,
       });
       const data = await res.json();
+      if (epoch !== requestEpoch.current) return;
       if (!res.ok) {
         setErr(data?.error?.message ?? `HTTP ${res.status}`);
         return;
@@ -423,35 +467,41 @@ export default function PracticePage() {
       const score = typeof data.eval?.score === "number" ? data.eval.score : null;
       const isMock = !!data.eval?.mock;
       setPracticeResult(score === null ? "本次无法评估" : `评测得分 ${score}${isMock ? "（示例）" : "（实测）"}`);
+      setPracticeEvaluation(data.eval);
       setLastPractice({ sentence: practiceSentence, demoUrl: practiceDemo, recordingUrl: data.recording_url || "" });
       addMsg("coach", data.recheck_reply_text, data.recheck_audio_url);
       setStatus(data.status);
       setPracticeSentence("");
       setPracticeDemo("");
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
   async function handleSkipPractice() {
+    const epoch = requestEpoch.current;
     setBusy(true);
     setErr("");
     try {
       const r = await skipPractice(sessionId);
+      if (epoch !== requestEpoch.current) return;
       addMsg("coach", r.reply_text, r.reply_audio_url);
       setStatus(r.status);
       setPracticeSentence("");
       setPracticeDemo("");
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
   async function handleHelp(type: string) {
+    const epoch = requestEpoch.current;
     setBusy(true);
     setErr("");
     setShowHelp(false);
@@ -466,6 +516,7 @@ export default function PracticePage() {
         sourceText = src.trim();
       }
       const r = await requestHelp(sessionId, type, sourceText);
+      if (epoch !== requestEpoch.current) return;
       if (type === "repeat") {
         // 重播已有音频，不追加新消息；可选慢速
         if (r.reply_audio_url) {
@@ -477,9 +528,10 @@ export default function PracticePage() {
         addMsg("coach", r.reply_text, r.reply_audio_url);
       }
     } catch (e) {
+      if (epoch !== requestEpoch.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
@@ -563,23 +615,25 @@ export default function PracticePage() {
   }
 
   async function togglePause() {
-    if (busy || sessionLoading || status === "ENDED") return;
+    if (controlBusy || sessionLoading || status === "ENDED") return;
+    requestEpoch.current += 1;
     cancelRecord();
     document.querySelectorAll("audio").forEach(audio => audio.pause());
-    setBusy(true); setErr(""); setShowHelp(false);
+    setControlBusy(true); setErr(""); setShowHelp(false);
     try {
       if (status === "PAUSED") await resumeSession(sessionId); else await pauseSession(sessionId);
       const d = await getSession(sessionId); setStatus(d.status);
     } catch(e) { setErr(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
+    finally { setControlBusy(false); setBusy(false); }
   }
 
   async function end() {
-    if (busy || sessionLoading) return;
+    if (controlBusy || sessionLoading) return;
+    requestEpoch.current += 1;
     cancelRecord();
     document.querySelectorAll("audio").forEach(audio => audio.pause());
     setShowHelp(false);
-    setBusy(true);
+    setControlBusy(true);
     setErr("");
     try {
       const r = await endSession(sessionId);
@@ -589,7 +643,7 @@ export default function PracticePage() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setControlBusy(false); setBusy(false);
     }
   }
 
@@ -606,6 +660,7 @@ export default function PracticePage() {
 
   const ended = status === "ENDED";
   const paused = status === "PAUSED";
+  const hideDrillAnswer = !!drill && ["free_speak", "transfer"].includes(drill.drill_stage);
   const inputDisabled = busy || sessionLoading || ended || paused || !status;
   const answerCount = messages.filter(m => m.who === "user").length;
   // 跟读 / 脱稿阶梯进行时，收起普通输入区，只保留当前任务的固定操作，避免两套录音按钮并存。
@@ -621,11 +676,11 @@ export default function PracticePage() {
       <div className="notice mb-4"><Icon name="shield" size={16} /><span>内部质检录音需单独同意。{qaConsent ? "已授权，可随时撤回并删除质检副本。" : "当前未授权，普通录音不会作为质检材料保留。"}</span><button className="btn btn-ghost btn-small" onClick={toggleQaConsent} disabled={busy || sessionLoading || (ended && !qaConsent)}>{qaConsent ? "撤回质检录音授权" : "同意本次录音用于质检"}</button></div>
       <div className={styles.practiceLayout}>
         <div className={styles.conversation}>
-          <div className={styles.conversationHeading}><span className="icon-tile"><Icon name="spark" size={20} /></span><div><h2>AI 口语教练</h2><p>专注你的表达，一起把话说清楚</p></div><span className={styles.turnCount}>{answerCount} 轮回答</span>{!ended && <div className={styles.headerActions}><button onClick={togglePause} disabled={busy || sessionLoading || !status} className="btn btn-ghost btn-small"><Icon name={paused ? "play" : "pause"} size={14} />{paused ? "继续" : "暂停"}</button><button onClick={end} disabled={busy || sessionLoading || !status} className="btn btn-ghost btn-small"><Icon name="stop" size={14} />结束练习</button></div>}</div>
+          <div className={styles.conversationHeading}><span className="icon-tile"><Icon name="spark" size={20} /></span><div><h2>AI 口语教练</h2><p>专注你的表达，一起把话说清楚</p></div><span className={styles.turnCount}>{answerCount} 轮回答</span>{!ended && <div className={styles.headerActions}><button onClick={togglePause} disabled={controlBusy || sessionLoading || !status} className="btn btn-ghost btn-small"><Icon name={paused ? "play" : "pause"} size={14} />{paused ? "继续" : "暂停"}</button><button onClick={end} disabled={controlBusy || sessionLoading || !status} className="btn btn-ghost btn-small"><Icon name="stop" size={14} />结束练习</button></div>}</div>
           {sourceInvalid && <div role="status" className="error-banner">该练习的来源建议已失效，请以新反馈为准。</div>}
           <div className={styles.messages} role="log" aria-label="练习对话">
             {sessionLoading && <div role="status" aria-label="加载对话"><div className="skeleton" /><div className="skeleton" /></div>}
-            {messages.map((m,i) => <div key={i} className={`${styles.messageRow} ${m.who === "user" ? styles.userRow : ""}`}>
+            {(hideDrillAnswer ? [] : messages).map((m,i) => <div key={i} className={`${styles.messageRow} ${m.who === "user" ? styles.userRow : ""}`}>
               {m.who === "coach" && <span className={styles.coachAvatar}><Icon name="spark" size={16} /></span>}
               <div className={`${styles.bubble} ${m.who === "user" ? styles.userBubble : ""}`}><div className={styles.messageLabel}>{m.who === "user" ? "你的回答" : "AI 教练"}</div><p>{m.text}</p>
                 {m.who === "user" && m.turnId && <button disabled={busy} onClick={() => handleRevise(m.turnId!)} className={styles.revise}>修订转写</button>}
@@ -640,7 +695,7 @@ export default function PracticePage() {
             <div className="section-head mt-0 mb-3"><h2><Icon name="mic" size={19} /> 核对一下你说的话</h2><span className="badge">识别可能不准</span></div>
             <p className={styles.practiceSentence}>{riskHold.transcript}</p>
             <p className="text-sm muted mt-2">系统觉得这段转写可能不完整或含杂音。你可以听回、确认、修改、改用文字，或重说一遍。</p>
-            {riskHold.recording_url && <div className="mt-2"><p className="text-xs muted">听回你的录音：</p><AudioPlayer key={riskHold.recording_url} src={riskHold.recording_url} /></div>}
+            {riskHold.recording_url && <div className="mt-2"><p className="text-xs muted">听回你的录音：</p><AudioPlayer key={riskHold.recording_url} src={riskHold.recording_url} kind="recording_play" /></div>}
             <div className="flex items-center gap-2 flex-wrap mt-3">
               <button onClick={() => confirmRisk(riskHold.transcript, "confirm")} disabled={busy} className="btn btn-primary">确认无误</button>
               <button onClick={() => { const t = window.prompt("请修改转写：", riskHold.transcript); if (t && t.trim()) confirmRisk(t.trim(), "revise"); }} disabled={busy} className="btn btn-secondary">修改文字</button>
@@ -653,9 +708,9 @@ export default function PracticePage() {
             <div className="section-head mt-0 mb-3"><h2><Icon name="book" size={19} /> 脱稿阶梯 · {drill.stage_label}</h2><span className="badge">逐级减少帮助</span></div>
             <p className={styles.practiceSentence}>{drill.visible_help}</p>
             {drill.drill_stage === "full_text" && <p className="text-sm muted mt-2">中文意思：{drill.drill_meaning}</p>}
-            {drill.drill_stage === "free_speak" && <p className="text-sm muted mt-2">目标语块：{drill.drill_chunk}</p>}
+
             <textarea value={drillText} onChange={e => setDrillText(e.target.value)} placeholder={drill.drill_stage === "free_speak" || drill.drill_stage === "transfer" ? "这一级需要语音：点击下方「录音说出」…" : "用英文说出这一句（不用逐字一样，意思对即可）…"} disabled={busy} maxLength={2000} style={{ width: "100%", minHeight: "72px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d7ded4", fontSize: "15px", resize: "vertical" }} />
-            <div className="flex items-center gap-2 flex-wrap mt-3">{(drill.drill_stage === "free_speak" || drill.drill_stage === "transfer") ? <button onClick={() => toggleRecord("drill")} disabled={busy || recording} className="btn btn-primary"><Icon name={recording && recordMode === "drill" ? "stop" : "mic"} size={16} />{recording && recordMode === "drill" ? "停止并提交" : "录音说出"}</button> : <button onClick={handleDrillAttempt} disabled={busy || !drillText.trim()} className="btn btn-primary">提交</button>}<button onClick={() => handleDrillAction("downgrade")} disabled={busy} className="btn btn-ghost">降一级</button><button onClick={() => handleDrillAction("skip")} disabled={busy} className="btn btn-ghost">跳过这级</button>{drill.drill_stage !== "transfer" && <button onClick={() => handleDrillAction("jump")} disabled={busy} className="btn btn-ghost">跳级到换题</button>}<button onClick={() => handleDrillAction("end")} disabled={busy} className="btn btn-ghost">结束</button>{recording && recordMode === "drill" && <span className={styles.recordingTimer}>{timerText()}</span>}</div>
+            <div className="flex items-center gap-2 flex-wrap mt-3">{(drill.drill_stage === "free_speak" || drill.drill_stage === "transfer") ? <button onClick={() => toggleRecord("drill")} disabled={inputDisabled} className="btn btn-primary"><Icon name={recording && recordMode === "drill" ? "stop" : "mic"} size={16} />{recording && recordMode === "drill" ? "停止并提交" : "录音说出"}</button> : <button onClick={handleDrillAttempt} disabled={busy || !drillText.trim()} className="btn btn-primary">提交</button>}<button onClick={() => handleDrillAction("downgrade")} disabled={busy} className="btn btn-ghost">降一级</button><button onClick={() => handleDrillAction("skip")} disabled={busy} className="btn btn-ghost">跳过这级</button>{drill.drill_stage !== "transfer" && <button onClick={() => handleDrillAction("jump")} disabled={busy} className="btn btn-ghost">跳级到换题</button>}<button onClick={() => handleDrillAction("end")} disabled={busy} className="btn btn-ghost">结束</button>{recording && recordMode === "drill" && <span className={styles.recordingTimer}>{timerText()}</span>}</div>
             <p className="text-xs muted mt-3">看全文/补关键词=有参考练习；看结构=提示下完成；脱稿说=独立表达；换题=迁移证据。</p>
           </section>}
           {drill?.completed && <div className="notice mb-4"><Icon name="check" size={17} /><p>{drill.outcome === "transfer" ? "换题成功，已形成迁移证据，写回待复练记录。" : drill.outcome === "independent" ? "脱稿完成，已记为本次独立表达。" : "脱稿练习已结束。独立/换题结果会按帮助证据写回待复练。"}</p></div>}
@@ -671,7 +726,8 @@ export default function PracticePage() {
             <div className="section-head mt-0 mb-3"><h2><Icon name="headphones" size={19} /> 刚才的跟读 · 可听回</h2></div>
             <p className={styles.practiceSentence}>{lastPractice.sentence}</p>
             <div className="mt-3"><p className="text-xs muted">示范表达</p>{lastPractice.demoUrl ? <AudioPlayer key={lastPractice.demoUrl} src={lastPractice.demoUrl} rate={slowDemo ? 0.75 : 1} /> : <p className="text-xs muted">示范暂不可用</p>}</div>
-            <div className="mt-3"><p className="text-xs muted">你的录音（本次评价使用）</p>{lastPractice.recordingUrl ? <AudioPlayer key={lastPractice.recordingUrl} src={lastPractice.recordingUrl} /> : <p className="text-xs muted">录音已清理或本次未录音</p>}</div>
+            <div className="mt-3"><p className="text-xs muted">你的录音（本次评价使用）</p>{lastPractice.recordingUrl ? <AudioPlayer key={lastPractice.recordingUrl} src={lastPractice.recordingUrl} kind="recording_play" /> : <p className="text-xs muted">录音已清理或本次未录音</p>}</div>
+            {practiceEvaluation?.word_items?.slice(0,3).map((item, i) => <p className="text-xs muted" key={i}>{item.word}：{item.score == null ? "供应商未返回局部分数" : item.score}</p>)}
             {practiceResult && <p className="text-xs muted mt-3">{practiceResult} · 仅供练习参考</p>}
           </section>}
           {err && <p className="error-banner" role="alert">{err}{audioRetryTurnId && <button onClick={handleAudioRetry} disabled={busy} className="text-link ml-2">重试语音</button>}</p>}
@@ -705,7 +761,7 @@ export default function PracticePage() {
 
         {practiceTurns.length > 0 && <div className={styles.reviewSubBlock}>
           <div className="section-head mt-0"><h3><Icon name="headphones" size={17} /> 示范与本人录音</h3><span>相邻播放，听出差异</span></div>
-          <div className={styles.reviewAudioList}>{practiceTurns.map((t, i) => <div key={t.turn_id} className={styles.reviewAudioItem}><div><small>示范表达 {String(i + 1).padStart(2, "0")}</small><p>{t.practice_sentence || "短句练习"}</p>{t.reply_audio_url ? <AudioPlayer key={t.reply_audio_url} src={t.reply_audio_url} /> : <p className="text-xs muted">示范暂不可用</p>}</div><div><small>本人录音 {String(i + 1).padStart(2, "0")}</small>{t.recording_url ? <AudioPlayer key={t.recording_url} src={t.recording_url} /> : <p className="text-xs muted">录音已清理或本次未录音</p>}</div></div>)}</div>
+          <div className={styles.reviewAudioList}>{practiceTurns.map((t, i) => <div key={t.turn_id} className={styles.reviewAudioItem}><div><small>示范表达 {String(i + 1).padStart(2, "0")}</small><p>{t.practice_sentence || "短句练习"}</p>{t.reply_audio_url ? <AudioPlayer key={t.reply_audio_url} src={t.reply_audio_url} /> : <p className="text-xs muted">示范暂不可用</p>}</div><div><small>本人录音 {String(i + 1).padStart(2, "0")}</small>{t.recording_url ? <AudioPlayer key={t.recording_url} src={t.recording_url} kind="recording_play" /> : <p className="text-xs muted">录音已清理或本次未录音</p>}</div></div>)}</div>
           <p className="text-xs muted mt-3">发音评测只在跟读时给出；这里只做听感对比，不生成新的评分。</p>
         </div>}
 

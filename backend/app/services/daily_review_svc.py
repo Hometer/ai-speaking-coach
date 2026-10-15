@@ -16,6 +16,9 @@ from app.models.entities import DailyReviewAttempt, EventLog, ReviewQueueItem, S
 from app.services.review_queue import STATUS_AWAITING_RETEST, STATUS_DISPUTED, STATUS_MASTERED, STATUS_PENDING, _resolve_due, _schedule_due
 from app.services.recall_judge import judge_recall
 from app.services import intent_result
+from app.services import recall_service
+from app.services import events as product_events
+from app.services.operations import durable, fence, require_active
 
 INTERVALS = [1, 3, 7, 14]
 DAILY_LIMIT = 5
@@ -79,6 +82,9 @@ def due_items(db: DbSession, user_id: str, limit: int = DAILY_LIMIT) -> list[Rev
 def _item_dict(i: ReviewQueueItem) -> dict[str, Any]:
     return {
         "id": i.id,
+        "attempt_stage": i.attempt_stage,
+        "question_text": i.question_text,
+        "question_version": i.question_version,
         "source_turn_id": i.source_turn_id,
         "suggestion_sentence": i.suggestion_sentence if i.help_shown else "",
         "meaning_zh": i.meaning_zh,
@@ -95,10 +101,15 @@ def due_today(db: DbSession, user_id: str) -> dict[str, Any]:
     return {"count": len(items), "items": [_item_dict(i) for i in items]}
 
 
+@durable("daily_start", object_arg="user_id")
 def start_daily_review(db: DbSession, user_id: str, request_key: str = "") -> dict[str, Any]:
     replayed = intent_result.replay(db, user_id, "daily_start", user_id, request_key, "start", "")
     if replayed is not None:
         return replayed
+    active = db.query(Session).filter(Session.user_id == user_id, Session.practice_type == "daily_review", Session.status != "ENDED").first()
+    if active is not None:
+        ids=json.loads(active.daily_review_items or "[]")
+        return {"session_id":active.id,"items":[_item_dict(db.get(ReviewQueueItem,i)) for i in ids if db.get(ReviewQueueItem,i) is not None]}
     items = due_items(db, user_id)
     if not items:
         return {"session_id": None, "items": []}
@@ -129,6 +140,7 @@ def start_daily_review(db: DbSession, user_id: str, request_key: str = "") -> di
     )
     db.add(session)
     db.commit()
+    product_events.record(db, session.id, "session_start", session.id)
     response = {"session_id": session.id, "items": [_item_dict(i) for i in items]}
     intent_result.remember(db, user_id, "daily_start", user_id, request_key, "start", "", response)
     return response
@@ -137,6 +149,8 @@ def start_daily_review(db: DbSession, user_id: str, request_key: str = "") -> di
 def current_item(db: DbSession, session: Session, user_id: str) -> dict[str, Any]:
     ids = json.loads(session.daily_review_items or "[]")
     idx = session.daily_review_index
+    if session.status == "ENDED":
+        return {"done": True, "index": idx, "total": len(ids)}
     if idx >= len(ids):
         return {"done": True, "index": idx, "total": len(ids)}
     item = db.get(ReviewQueueItem, ids[idx])
@@ -156,6 +170,7 @@ def _advance(db: DbSession, session: Session) -> None:
         session.end_reason = "goal_reached"
 
 
+@durable("daily_review", key_arg="attempt_key")
 def submit_attempt(
     db: DbSession, session_id: str, user_id: str, answer: str, input_type: str = "text", attempt_key: str = ""
 ) -> dict[str, Any]:
@@ -186,16 +201,20 @@ def submit_attempt(
                 "next": nxt,
             }
 
+    if session.status == "PAUSED":
+        raise AppError("SESSION_PAUSED", "今日复练已暂停", 409)
     if session.practice_type != "daily_review" or session.status == "ENDED":
         raise AppError("INVALID_STATE", "今日复练已结束或不存在", status_code=409)
 
+    require_active(session)
+    operation_version = session.state_version
     cur = current_item(db, session, user_id)
     if cur.get("done"):
         raise AppError("SESSION_ENDED", "今日复练已结束", status_code=409)
     item = db.get(ReviewQueueItem, cur["item"]["id"])
 
-    result = judge_recall(answer, item.suggestion_sentence, input_type, item.help_shown)
-
+    result = recall_service.evaluate(db, item, answer, input_type, session.id, attempt_key,
+        validate=lambda: fence(db, session, operation_version))
     db.add(
         DailyReviewAttempt(
             user_id=user_id,
@@ -242,6 +261,8 @@ def submit_attempt(
     # failed / pending：不推进，用户可重试或跳过
     db.commit()
 
+    if session.status == "ENDED":
+        product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason)
     nxt = current_item(db, session, user_id)
     response = {"success": success, "result": result, "help_shown": item.help_shown, "next": nxt}
     intent_result.remember(db, user_id, "daily_attempt", session_id, attempt_key, input_type, answer, response)
@@ -252,13 +273,16 @@ def control_action(db: DbSession, session_id: str, user_id: str, action: str) ->
     session = db.get(Session, session_id)
     if session is None or session.user_id != user_id:
         raise AppError("FORBIDDEN", "无权访问该会话", status_code=403)
+    if session.status == "PAUSED":
+        raise AppError("SESSION_PAUSED", "今日复练已暂停", 409)
     if session.practice_type != "daily_review" or session.status == "ENDED":
         raise AppError("INVALID_STATE", "今日复练已结束或不存在", status_code=409)
     if action == "end":
         session.status = "ENDED"
         session.end_reason = "user_ended"
         db.commit()
-        return {"next": {"done": True, "index": session.daily_review_index, "total": len(json.loads(session.daily_review_items or "[]"))}}
+        product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason)
+        return {"next": {"done": True, "index": session.daily_review_index, "total": len(json.loads(session.daily_review_items or "[]")), "summary": summary(db, session_id, user_id)}}
     cur = current_item(db, session, user_id)
     if cur.get("done"):
         raise AppError("SESSION_ENDED", "今日复练已结束", status_code=409)
@@ -283,7 +307,9 @@ def control_action(db: DbSession, session_id: str, user_id: str, action: str) ->
     else:
         raise AppError("INVALID_INPUT", "未知的复练操作", status_code=422)
     db.commit()
-    return {"next": current_item(db, session, user_id)}
+    if session.status == "ENDED":
+        product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason)
+    return {"next": {**current_item(db, session, user_id), "summary": summary(db, session_id, user_id)}}
 
 
 def summary(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]:

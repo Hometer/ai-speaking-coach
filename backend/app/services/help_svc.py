@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.models.entities import Session, Turn
 from app.services.budget import BudgetGuard
+from app.services.operations import durable, fence
 from app.services.generation_call import reset_usage_attempts
 from app.services import provider_usage as provider_usage_svc
 from app.services.prompts.scenarios import SCENARIOS
@@ -135,12 +136,14 @@ def _record_help(
     return turn
 
 
+@durable("help")
 def request_help(
     db: DbSession,
     session_id: str,
     user_id: str,
     help_type: str,
     source_text: str = "",
+    request_key: str = "",
 ) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
     if session.status == "ENDED":
@@ -148,6 +151,7 @@ def request_help(
     if session.status == "PAUSED":
         raise AppError("SESSION_PAUSED", "会话已暂停，请先恢复", status_code=409)
 
+    operation_version = session.state_version
     qid, qtext, qaudio = _current_question(session)
     if not qid:
         raise AppError("INVALID_STATE", "当前没有可求助的问题", status_code=409)
@@ -231,6 +235,7 @@ def request_help(
         reset_usage_attempts()
         try:
             translated = _translate(text)
+            fence(db, session, operation_version)
             turn = _record_help(db, session, "translate", 0, translated, "")
             turn.user_text = text  # 记录用户中文原意，不参与答案评估
             db.commit()

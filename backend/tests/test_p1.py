@@ -103,8 +103,14 @@ def test_add_to_queue_and_retest_mastery(client, monkeypatch):
     db.commit()
     db.close()
 
-    # 第一次复测独立成功 -> awaiting_retest
-    r1 = _voice_retest(client, item["id"], "I have three years of experience in software development.", monkeypatch)
+    from app.services import recall_service
+    monkeypatch.setattr(recall_service, "verify_new_condition", lambda *args: True)
+    # 回忆本身不能升级；随后回答新条件才计一次独立。
+    with SessionLocal() as db:
+        target = db.get(ReviewQueueItem, item["id"]).suggestion_sentence
+    recalled = _voice_retest(client, item["id"], target, monkeypatch)
+    assert recalled.json()["success_count"] == 0
+    r1 = _voice_retest(client, item["id"], "At university I built a school project and finished it on time.", monkeypatch)
     assert r1.status_code == 200, r1.text
     assert r1.json()["success_count"] == 1
     assert r1.json()["status"] == "awaiting_retest"
@@ -125,7 +131,8 @@ def test_add_to_queue_and_retest_mastery(client, monkeypatch):
     db.commit()
     db.close()
 
-    r3 = _voice_retest(client, item["id"], "I have three years of experience in software development.", monkeypatch)
+    _voice_retest(client, item["id"], target, monkeypatch)
+    r3 = _voice_retest(client, item["id"], "At university I led a school project with useful results.", monkeypatch)
     assert r3.status_code == 200, r3.text
     assert r3.json()["status"] == "mastered"
 
@@ -225,16 +232,16 @@ def test_retest_attempt_key_idempotent(client, monkeypatch):
     qi.due_at = datetime.now(timezone.utc) - timedelta(hours=1)
     db.commit()
     db.close()
-    # 首次：语音独立成功
+    # 首次提交仅保存本次语义待判断/回忆结果，幂等不应增加成功次数
     r1 = client.post(
         f"/api/v1/review-queue/{item['id']}/retest/voice",
         files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
         data={"attempt_key": "k1"},
         headers=USER,
     )
-    # mock ASR 返回固定转写，命中 job_interview 目标 → independent
+    # mock ASR 与目标不同不能只凭词重合判独立
     assert r1.status_code == 200, r1.text
-    assert r1.json()["success_count"] == 1
+    assert r1.json()["success_count"] == 0
     # 同键不同内容 → 409
     r2 = client.post(
         f"/api/v1/review-queue/{item['id']}/retest",
@@ -267,7 +274,7 @@ def test_progress_endpoint_returns_factual_metrics(client):
     assert p["completed_count"] >= 1
     for key in ("independent_rate", "help_usage_rate", "due_retest_done_rate", "mastered_count", "voice_evaluable_rate", "drill_completed_count", "transfer_completed_count", "text_completed_count", "samples", "by_scene", "trend", "mastered_list", "before_after_seven"):
         assert key in p
-    assert p["calc_version"] == "v5"
+    assert p["calc_version"] == "v6"
 
 
 def test_mock_practice_has_no_word_items(client):

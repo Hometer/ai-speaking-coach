@@ -20,3 +20,7 @@ class MemoryItem(BaseModel):
     source_session_id: str = ""
     status: str = "candidate"
     evidence_count: int = 0
+    expires_at: str | None = None
+    scene_id: str = ""
+    version: str = "v1"
+    usage_reason: str = "同场景、来源有效且未到期；至少两个独立会话重复出现才用于后续练习"

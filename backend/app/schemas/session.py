@@ -28,6 +28,7 @@ class SessionCreatedResponse(BaseModel):
 
 
 class TurnItem(BaseModel):
+    practice_eval: dict | None = None
     turn_id: str
     seq: int
     input_type: str
@@ -44,6 +45,8 @@ class TurnItem(BaseModel):
 
 
 class SessionDetailResponse(BaseModel):
+    in_flight: bool = False
+    request_state: str | None = None
     session_id: str
     status: str
     goal_text: str
@@ -124,6 +127,7 @@ class DrillActionRequest(BaseModel):
 
 
 class PracticeSentenceRequest(BaseModel):
+    request_key: str = ""
     source_session_id: str
     turn_id: str
 

@@ -24,7 +24,7 @@ export default function PlanPage() {
   useEffect(() => {
     let active = true;
     getPlan()
-      .then((p) => { if (active) { setPlan(p); if (p) setAvailableMinutes(p.available_minutes || 5); } })
+      .then((p) => { if (active) { setPlan(p); if (p) { setAvailableMinutes(p.available_minutes || 5); setGoal(p.goal_type); } } })
       .catch((e) => { if (active) setErr(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -100,7 +100,7 @@ export default function PlanPage() {
               </div>
               <span className={`badge ${d.status !== "completed" ? "badge-neutral" : ""}`}>{d.status === "skipped" ? "已跳过" : d.status === "completed" ? "已完成" : "待练"}</span>
               <div className="row-actions">
-                {d.status === "pending" && d.scheduled_date === new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" }) ? <Link className="btn btn-secondary btn-small" href={`/?scene=${d.scene_id}&plan_id=${plan.id}&plan_day=${d.day}`}>练这一场景 <Icon name="arrow" size={13} /></Link> : <span className="text-xs muted">{d.status === "pending" ? "到计划日期可练" : "本日已处理"}</span>}
+                {plan.status === "active" && d.status === "pending" && d.scheduled_date === new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" }) ? <Link className="btn btn-secondary btn-small" href={`/?scene=${d.scene_id}&plan_id=${plan.id}&plan_day=${d.day}`}>练这一场景 <Icon name="arrow" size={13} /></Link> : <span className="text-xs muted">{d.status === "pending" ? "到计划日期可练" : "本日已处理"}</span>}
                 {d.status !== "skipped" && <button onClick={() => skip(d.day)} disabled={!!pending} className="btn btn-ghost btn-small">跳过</button>}
               </div>
             </article>

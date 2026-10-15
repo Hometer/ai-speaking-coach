@@ -233,3 +233,30 @@ def migrate_db() -> None:
         ecols = {r[1] for r in conn.execute(text("PRAGMA table_info(event_logs)"))}
         if "request_key" not in ecols:
             conn.execute(text("ALTER TABLE event_logs ADD COLUMN request_key VARCHAR(64)"))
+
+        # v0.10 审计修复：保留旧记录，新增状态版本与活动请求唯一索引。
+        session_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))}
+        if "state_version" not in session_cols:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN state_version INTEGER DEFAULT 0"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_operation_active_session ON request_operations(session_id) WHERE status = 'running' AND session_id != ''"))
+
+        rqcols = {r[1] for r in conn.execute(text("PRAGMA table_info(review_queue_items)"))}
+        for col, ddl in {"attempt_stage":"VARCHAR(16) DEFAULT 'recall'", "question_version":"INTEGER DEFAULT 1", "question_text":"TEXT DEFAULT ''"}.items():
+            if col not in rqcols:
+                conn.execute(text(f"ALTER TABLE review_queue_items ADD COLUMN {col} {ddl}"))
+
+        for table, cols in {"sessions":{"initiation":"VARCHAR(16) DEFAULT 'self'"}, "turns":{"speech_seconds":"FLOAT"}}.items():
+            present = {r[1] for r in conn.execute(text(f"PRAGMA table_info({table})"))}
+            for col, ddl in cols.items():
+                if col not in present:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_event_request ON event_logs(session_id, request_key) WHERE request_key LIKE 'event:%'"))
+
+        cqcols = {r[1] for r in conn.execute(text("PRAGMA table_info(conversation_quality_marks)"))}
+        for col, ddl in {"answered_direct_question":"BOOLEAN", "review_status":"VARCHAR(16) DEFAULT 'unreviewed'"}.items():
+            if col not in cqcols:
+                conn.execute(text(f"ALTER TABLE conversation_quality_marks ADD COLUMN {col} {ddl}"))
+
+        ucols = {r[1] for r in conn.execute(text("PRAGMA table_info(provider_usage_events)"))}
+        if "audio_seconds" not in ucols:
+            conn.execute(text("ALTER TABLE provider_usage_events ADD COLUMN audio_seconds FLOAT"))

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from app.core.config import settings
 from app.core.errors import AppError
+from app.services.deadline import bounded
 
 
 @dataclass
@@ -89,7 +90,7 @@ class DashScopeTTSProvider(TTSProvider):
 
         dashscope.api_key = self.api_key
         synthesizer = SpeechSynthesizer(model=self.model, voice=self.voice, language_hints=["en"])
-        audio = synthesizer.call(text)
+        audio = bounded(lambda: synthesizer.call(text))
         if not audio:
             raise AppError("TTS_EMPTY", "语音合成为空", status_code=502)
         return audio

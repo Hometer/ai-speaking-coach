@@ -19,6 +19,8 @@ from app.services import memory as memory_svc
 from app.services import qa_recording as qa_recording_svc
 from app.services import provider_usage as provider_usage_svc
 from app.services import intent_result
+from app.services import events as product_events
+from app.services.operations import durable, fence, require_active
 from app.services.budget import BudgetGuard, ToolBudget
 from app.services.cleanup import cleanup_old_uploads
 from app.services.coach import get_coach_provider
@@ -74,6 +76,7 @@ def transcribe_voice_bytes(audio_bytes: bytes) -> str:
     from app.services.turn import _validate_audio
 
     fmt = _validate_audio(audio_bytes)
+    provider_usage_svc.set_audio_seconds(None)
     uploads_dir = settings.data_dir / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
     audio_path = uploads_dir / f"{uuid.uuid4().hex}.{fmt}"
@@ -84,15 +87,20 @@ def transcribe_voice_bytes(audio_bytes: bytes) -> str:
         audio_path.unlink(missing_ok=True)
 
 
+@durable("voice", object_arg="object_id")
 def submit_voice_intent(
     db: DbSession, user_id: str, session_id: str, scope: str, object_id: str,
     request_key: str, audio_bytes: bytes, submit: Callable[[str], dict[str, Any]],
 ) -> dict[str, Any]:
     """语音入口先重放，再 ASR；转写结果落库供业务提交失败后的同键重试复用。"""
+    live_session = _require_session(db, session_id, user_id)
+    operation_version = live_session.state_version
     raw_hash = hashlib.sha256(audio_bytes).hexdigest()
     result = intent_result.replay(db, user_id, f"{scope}_result", object_id, request_key, "audio", raw_hash)
     if result is not None:
         return result
+    if scope != "queue_voice":
+        require_active(live_session)
     cached = intent_result.replay(db, user_id, f"{scope}_asr", object_id, request_key, "audio", raw_hash)
     if cached is None:
         _validate_audio(audio_bytes)
@@ -116,6 +124,11 @@ def submit_voice_intent(
             db.rollback()
     else:
         transcript = cached["transcript"]
+    if scope != "queue_voice":
+        db.refresh(live_session)
+        require_active(live_session)
+        if live_session.state_version != operation_version:
+            raise AppError("STALE_OPERATION", "练习状态已改变", 409)
     response = submit(transcript)
     intent_result.remember(db, user_id, f"{scope}_result", object_id, request_key, "audio", raw_hash, response)
     return response
@@ -345,6 +358,8 @@ def _recent_history(db: DbSession, session_id: str, limit: int = 5) -> list[dict
 
 def finalize_session(db: DbSession, session: Session) -> None:
     """幂等收尾：生成回顾并保存，按记忆开关生成候选记忆。"""
+    if session.status == S_ENDED:
+        product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason or "")
     if session.review:
         return
     review = build_review(db, session, session.end_reason or "user_ended")
@@ -354,6 +369,7 @@ def finalize_session(db: DbSession, session: Session) -> None:
         memory_svc.generate_candidates(db, session.user_id, session.id, review)
 
 
+@durable("create_session", object_arg="user_id")
 def create_session(
     db: DbSession,
     user_id: str,
@@ -473,12 +489,14 @@ def create_session(
         "reply_text": decision.reply_text,
         "reply_audio_url": audio_url,
     }
+    product_events.record(db, session_id, "session_start", session_id)
     intent_result.remember(db, user_id, "create_session", user_id, request_key, "create", request_payload, response)
     return response
 
 
+@durable("sentence_create", object_arg="source_turn_id")
 def create_sentence_practice(
-    db: DbSession, user_id: str, source_session_id: str, source_turn_id: str
+    db: DbSession, user_id: str, source_session_id: str, source_turn_id: str, request_key: str = ""
 ) -> dict[str, Any]:
     source = db.get(Session, source_session_id)
     if source is None or source.user_id != user_id:
@@ -506,6 +524,7 @@ def create_sentence_practice(
             Session.user_id == user_id,
             Session.practice_type == "sentence_practice",
             Session.source_turn_id == source_turn_id,
+            Session.status != S_ENDED,
         )
         .first()
     )
@@ -573,6 +592,7 @@ def create_sentence_practice(
         raise
     guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
     _record_generated_audio_usage(db, user_id, session_id, opening_turn_id, sentence, tts_attempts, bool(audio_url))
+    product_events.record(db, session_id, "session_start", session_id)
     return {
         "session_id": session_id,
         "status": S_PRACTICE,
@@ -582,6 +602,7 @@ def create_sentence_practice(
     }
 
 
+@durable("turn")
 def submit_turn(
     db: DbSession,
     session_id: str,
@@ -624,6 +645,7 @@ def submit_turn(
     if session.pending_risk and not request_key.startswith("confirm:"):
         raise AppError("RISK_CONFIRM_REQUIRED", "请先确认或重录待核对的语音", status_code=409)
 
+    operation_version = session.state_version
     turn_start = time.perf_counter()
 
     # 时长校验（F-07）：精确累计非暂停时长，到时停止新提交并收尾
@@ -640,6 +662,7 @@ def submit_turn(
     tool_budget = ToolBudget()
     reset_usage_attempts()
     risk_recording_url = ""
+    measured_speech_seconds = None
     risk_persisted = False
     asr_called = False
     asr_completed = False
@@ -663,6 +686,9 @@ def submit_turn(
                 asr_called = True
                 transcript = asr.transcribe(audio_path)
                 asr_completed = True
+                if settings.provider_mode == "real":
+                    from app.services.audio_util import speech_seconds
+                    measured_speech_seconds = speech_seconds(audio_path)
                 text_for_eval = transcript
                 # 识别风险判定（REQ-32）：中/高先确认，不评估、不教练、不写独立证据
                 risk_level, reasons = assess_risk(transcript)
@@ -777,7 +803,7 @@ def submit_turn(
             {
                 "goal": session.goal_text,
                 "difficulty": session.difficulty,
-                "level": user.level if user else "basic",
+                "level": session.level,
                 "scene_context": SCENARIOS.get(session.scene_id, {}).get("coach_context", "an English conversation coach"),
                 "scene_id": session.scene_id,
                 "coach_persona": SCENARIOS.get(session.scene_id, {}).get("coach_persona", ""),
@@ -834,6 +860,7 @@ def submit_turn(
         guard.release(settings.nominal_cost_per_turn, session_id, user_id)
         raise AppError(code, msg, status_code=409)
 
+    fence(db, session, operation_version)
     # 统一应用变更
     db.add(
         Evaluation(
@@ -866,6 +893,7 @@ def submit_turn(
         seq=_next_seq(db, session_id),
         input_type=input_type,
         transcript=transcript,
+        speech_seconds=measured_speech_seconds,
         user_text=text_for_eval,
         reply_text=decision.reply_text,
         reply_audio_url="",
@@ -1005,8 +1033,9 @@ def _turn_done(db: DbSession, session: Session, turn: Turn) -> dict[str, Any]:
     }
 
 
+@durable("turn_audio")
 def synthesize_turn_audio(
-    db: DbSession, session_id: str, user_id: str, turn_id: str, retry_failed: bool = False
+    db: DbSession, session_id: str, user_id: str, turn_id: str, retry_failed: bool = False, request_key: str = ""
 ) -> dict[str, Any]:
     """为已落库的回合补充语音。TTS 失败不毁文字回合；幂等（已有音频直接返回）。"""
     session = _require_session(db, session_id, user_id)
@@ -1020,6 +1049,9 @@ def synthesize_turn_audio(
     if turn.audio_status == "failed" and not retry_failed:
         return _turn_done(db, session, turn)
 
+    if session.status in (S_ENDED, S_PAUSED):
+        return _turn_done(db, session, turn)
+    operation_version = session.state_version
     text = turn.practice_sentence or turn.reply_text
     if not text:
         turn.audio_status = "failed"
@@ -1030,6 +1062,12 @@ def synthesize_turn_audio(
     tts_result = tts.synthesize_result(text)
     audio_url = _save_audio(tts_result.audio, tts.ext) if tts_result.audio is not None else ""
     audio_status = "ok" if audio_url else "failed"
+    try:
+        fence(db, session, operation_version)
+    except AppError:
+        if audio_url:
+            _delete_audio_files({os.path.basename(audio_url)})
+        raise
     turn.reply_audio_url = audio_url
     turn.audio_status = audio_status
     if session.current_question_id == turn_id:
@@ -1048,6 +1086,7 @@ def synthesize_turn_audio(
     return _turn_done(db, session, turn)
 
 
+@durable("practice")
 def submit_practice(
     db: DbSession, session_id: str, user_id: str, audio_bytes: bytes, sentence: str, request_key: str = ""
 ) -> dict[str, Any]:
@@ -1059,6 +1098,7 @@ def submit_practice(
     if session.status != S_PRACTICE:
         raise AppError("INVALID_STATE", "当前状态不能提交跟读", status_code=409)
 
+    operation_version = session.state_version
     fmt = _validate_audio(audio_bytes)
     guard = BudgetGuard(db)
     guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
@@ -1079,6 +1119,7 @@ def submit_practice(
         try:
             eval_result = provider.evaluate(audio_path, sentence)
         except AppError as exc:
+            fence(db, session, operation_version)
             # 评测失败：保留本人录音供对比，无评分，不冒充结果（AC10-06）
             eval_result = {"score": None, "dimension": "sentence", "word_items": [], "error_code": exc.code}
             eval_result["recording_url"] = recording_url
@@ -1119,6 +1160,10 @@ def submit_practice(
             except Exception:
                 db.rollback()
             return response
+        db.refresh(session)
+        require_active(session)
+        if session.state_version != operation_version:
+            raise AppError("STALE_OPERATION", "练习状态已改变", 409)
         # 评价成功：绑定录音版本 / 参考句版本 / 阶梯阶段
         eval_result["recording_url"] = recording_url
         eval_result["reference_version"] = session.scene_version or ""
@@ -1145,6 +1190,7 @@ def submit_practice(
         tts_result = tts.synthesize_result(decision.reply_text)
         audio_url = _save_audio(tts_result.audio, tts.ext) if tts_result.audio is not None else ""
 
+        fence(db, session, operation_version)
         turn = Turn(
             id=uuid.uuid4().hex,
             session_id=session_id,
@@ -1243,12 +1289,14 @@ def _summary(db: DbSession, session: Session) -> dict[str, Any]:
 
 def end_session(db: DbSession, session_id: str, user_id: str, reason: str) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
+    session.state_version += 1
     if session.status != S_ENDED:
         session.status = S_ENDED
         session.end_reason = reason or "user_ended"
         session.ended_at = _now()
         db.commit()
     finalize_session(db, session)  # 幂等：已生成则跳过
+    product_events.record(db, session_id, "session_end", session_id, basis=session.end_reason or "")
     cleanup_old_uploads()
     return _end_result(db, session)
 
@@ -1264,6 +1312,8 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
         "goal_text": session.goal_text,
         "difficulty": session.difficulty,
         "level": session.level or "basic",
+        "in_flight": session.in_flight,
+        "request_state": request_state(db, session_id),
         "pending_risk": json.loads(session.pending_risk) if session.pending_risk else None,
         "qa_recording_consent": qa_recording_svc.consent_status(db, user_id, session_id)["granted"],
         "current_help_level": (
@@ -1291,6 +1341,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
                 "reply_text": t.reply_text,
                 "reply_audio_url": t.reply_audio_url,
                 "practice_sentence": t.practice_sentence,
+                "practice_eval": json.loads(t.practice_eval) if t.practice_eval else None,
                 "action_type": t.action_type,
                 "recording_url": t.recording_url,
                 "hint_used": t.hint_used,
@@ -1387,11 +1438,18 @@ def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
 
     memory_svc.delete_by_session(db, session.id)
     qa_recording_svc.remove_session(db, session.id)
+    from app.models.entities import RequestOperation, RecallEvidence, ConversationQualityReview
+    db.query(ConversationQualityReview).filter_by(session_id=session.id).delete()
+    db.query(ConversationQualityMark).filter_by(session_id=session.id).delete()
+    db.query(RequestOperation).filter(RequestOperation.user_id == session.user_id).filter((RequestOperation.session_id == session.id) | ((RequestOperation.scope == "create_session") & (RequestOperation.request_key == session.request_key))).delete(synchronize_session=False)
     db.query(Evaluation).filter(Evaluation.session_id == session.id).delete()
     db.query(EventLog).filter(EventLog.session_id == session.id).delete()
     db.query(DailyReviewAttempt).filter(DailyReviewAttempt.session_id == session.id).delete()
     db.query(DrillAttempt).filter(DrillAttempt.drill_session_id == session.id).delete()
     db.query(QualityLabel).filter(QualityLabel.session_id == session.id).delete()
+    from app.models.entities import SupplierBillLine
+    usage_ids = [u.id for u in db.query(ProviderUsageEvent).filter_by(session_id=session.id).all()]
+    db.query(SupplierBillLine).filter(SupplierBillLine.usage_event_id.in_(usage_ids)).delete()
     db.query(ProviderUsageEvent).filter(ProviderUsageEvent.session_id == session.id).delete()
     if session.request_key:
         db.query(IntentResult).filter_by(scope="create_session", object_id=session.user_id, request_key=session.request_key).delete()
@@ -1408,6 +1466,8 @@ def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
                 audio_filenames.add(os.path.basename(pending_url))
         except (ValueError, TypeError, AttributeError):
             pass
+    turn_ids = [t.id for t in db.query(Turn).filter_by(session_id=session.id).all()]
+    db.query(RequestOperation).filter(RequestOperation.user_id == session.user_id, RequestOperation.scope == "sentence_create", RequestOperation.object_id.in_(turn_ids)).delete(synchronize_session=False)
     for t in db.query(Turn).filter(Turn.session_id == session.id).all():
         if t.reply_audio_url:
             audio_filenames.add(os.path.basename(t.reply_audio_url))
@@ -1418,6 +1478,7 @@ def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
     # 删除来源时移除只有该来源支撑的派生项；用户在后续练习中自己提交的回答保留。
     for item in db.query(ReviewQueueItem).filter(ReviewQueueItem.source_session_id == session.id).all():
         db.query(IntentResult).filter(IntentResult.object_id == str(item.id), IntentResult.scope.in_(["queue_retest", "queue_voice_asr", "queue_voice_result"])).delete()
+        db.query(RecallEvidence).filter_by(queue_item_id=item.id).delete()
         db.query(ReviewDueEvent).filter_by(queue_item_id=item.id).delete()
         db.delete(item)
     for card in db.query(PhraseCard).filter(PhraseCard.source_session_id == session.id).all():
@@ -1429,6 +1490,7 @@ def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
         .filter(Session.practice_type == "sentence_practice", Session.source_session_id == session.id)
         .all()
     ):
+        db.query(RequestOperation).filter_by(user_id=session.user_id, session_id=sp.id).update({"response_json":"", "status":"failed", "error_code":"SOURCE_INVALID", "error_message":"来源已失效", "error_status":409})
         sp.source_invalid = True
         sp.practice_sentence = ""
         sp.practice_goal = ""
@@ -1469,6 +1531,7 @@ def delete_session(db: DbSession, session_id: str, user_id: str) -> None:
 
 def set_paused(db: DbSession, session_id: str, user_id: str, paused: bool) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
+    session.state_version += 1
     if paused:
         if session.status == S_ENDED:
             raise AppError("SESSION_ENDED", "会话已结束", status_code=409)
@@ -1481,11 +1544,15 @@ def set_paused(db: DbSession, session_id: str, user_id: str, paused: bool) -> di
             session.active_since = _now()
             session.status = S_WAITING
     db.commit()
+    product_events.record(db, session_id, "pause" if paused else "resume", str(session.state_version))
     return {"session_id": session_id, "status": session.status}
 
 
-def skip_practice(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]:
+@durable("skip_practice")
+def skip_practice(db: DbSession, session_id: str, user_id: str, request_key: str = "") -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
+    require_active(session)
+    operation_version = session.state_version
     if session.status != S_PRACTICE:
         raise AppError("INVALID_STATE", "当前状态不能跳过跟读", status_code=409)
     guard = BudgetGuard(db)
@@ -1497,6 +1564,7 @@ def skip_practice(db: DbSession, session_id: str, user_id: str) -> dict[str, Any
         decision = coach.decide({"skipped_practice": True})
         tts = get_tts_provider()
         audio_url, _, tts_attempts = _synth_and_save(tts, decision.reply_text)
+        fence(db, session, operation_version)
         session.status = S_WAITING
         coach_turn_id = uuid.uuid4().hex
         db.add(
@@ -1535,10 +1603,11 @@ def delete_all_sessions(db: DbSession, user_id: str) -> None:
     cleanup_old_uploads()
 
 
-def request_hint(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]:
+@durable("request_hint")
+def request_hint(db: DbSession, session_id: str, user_id: str, request_key: str = "") -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
-    if session.status == S_ENDED:
-        raise AppError("SESSION_ENDED", "会话已结束", status_code=409)
+    require_active(session)
+    operation_version = session.state_version
     guard = BudgetGuard(db)
     guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
     audio_url = ""
@@ -1548,6 +1617,7 @@ def request_hint(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]
         decision = coach.decide({"help_requested": True})
         tts = get_tts_provider()
         audio_url, _, tts_attempts = _synth_and_save(tts, decision.reply_text)
+        fence(db, session, operation_version)
         coach_turn_id = uuid.uuid4().hex
         db.add(
             Turn(
@@ -1576,27 +1646,43 @@ def request_hint(db: DbSession, session_id: str, user_id: str) -> dict[str, Any]
 def _invalidate_derived_turn(db: DbSession, user_id: str, turn_id: str) -> None:
     """修订或争议后，撤销该回合派生的学习材料与进行中的练习。"""
     from app.services import phrase_card_svc, review_queue
-    from app.models.entities import ReviewQueueItem
+    from app.models.entities import ReviewQueueItem, RequestOperation, IntentResult
 
     phrase_card_svc.invalidate_by_turn(db, turn_id)
     review_queue.invalidate_by_turn(db, turn_id)
     invalid_ids = {
         item.id for item in db.query(ReviewQueueItem).filter(ReviewQueueItem.source_turn_id == turn_id).all()
     }
+    memory_svc.invalidate_by_turn(db, turn_id)
+    # 缓存快照同样是派生内容，失效后不得通过旧请求键重放。
+    stale = {"response_json": "", "status": "failed", "error_code": "SOURCE_INVALID",
+             "error_message": "来源已失效，请刷新查看", "error_status": 409}
+    db.query(RequestOperation).filter_by(user_id=user_id, scope="sentence_create", object_id=turn_id).update(stale)
     if invalid_ids:
+        objects = [str(item_id) for item_id in invalid_ids]
+        db.query(RequestOperation).filter(RequestOperation.user_id == user_id,
+            RequestOperation.scope.in_(["queue_retest", "voice"]), RequestOperation.object_id.in_(objects)).update(stale)
+        db.query(IntentResult).filter(IntentResult.user_id == user_id, IntentResult.object_id.in_(objects),
+            IntentResult.scope.in_(["queue_retest", "queue_voice_asr", "queue_voice_result"])).delete()
         for daily in db.query(Session).filter(
             Session.user_id == user_id, Session.practice_type == "daily_review", Session.status != S_ENDED
         ).all():
             if invalid_ids.intersection(json.loads(daily.daily_review_items or "[]")):
                 daily.status = S_ENDED
                 daily.end_reason = "source_invalid"
+                daily.state_version += 1
+                db.query(RequestOperation).filter_by(user_id=user_id, session_id=daily.id).update(stale)
     for sp in db.query(Session).filter(
         Session.practice_type == "sentence_practice", Session.source_turn_id == turn_id
     ).all():
         sp.source_invalid = True
+        sp.state_version += 1
+        db.query(RequestOperation).filter_by(user_id=user_id, session_id=sp.id).update(stale)
+        db.query(IntentResult).filter_by(user_id=user_id, object_id=sp.id).delete()
         sp.practice_sentence = ""
         sp.drill_target = ""
         sp.drill_meaning = ""
+        sp.drill_chunk = ""
 
 
 def dispute_review_improvement(db: DbSession, session_id: str, user_id: str, turn_id: str) -> dict[str, Any]:
@@ -1685,3 +1771,9 @@ def resolve_audio_for_user(db: DbSession, filename: str, user_id: str) -> Path:
     if not path.is_file():
         raise AppError("NOT_FOUND", "音频不存在", status_code=404)
     return path
+
+
+def request_state(db, session_id):
+    from app.models.entities import RequestOperation
+    row=db.query(RequestOperation).filter_by(session_id=session_id).order_by(RequestOperation.created_at.desc()).first()
+    return row.status if row else None

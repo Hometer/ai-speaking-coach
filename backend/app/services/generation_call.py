@@ -5,6 +5,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.errors import AppError
+from app.services.deadline import remaining, bounded
 
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 
@@ -71,13 +72,13 @@ def call_generation(*, api_key: str, model: str, messages: list[dict[str, str]])
     attempts = max(1, settings.max_tool_retry + 1)
     for attempt in range(attempts):
         try:
-            response = dashscope.Generation.call(
+            response = bounded(lambda: dashscope.Generation.call(
                 model=model,
                 messages=messages,
                 result_format="message",
                 api_key=api_key,
-                request_timeout=settings.llm_timeout_seconds,
-            )
+                request_timeout=remaining(settings.llm_timeout_seconds),
+            ))
         except Exception as exc:
             _append_attempt(model, "exception")
             if attempt + 1 < attempts and _retryable_exception(exc):
