@@ -26,7 +26,8 @@ def _improvements(db, turns):
                 "suggestion":item.practice_sentence,"explanation_cn":item.explanation_cn,
                 "practice_sentence":item.practice_sentence,"source_quote":item.source_quote,
                 "issue_type":item.issue_type,"turn_id":turn.id,"revision_version":turn.revision_version,
-                "feedback_version":VERSION,"feedback_source":evaluation.feedback_origin})
+                "feedback_version":VERSION,"feedback_source":evaluation.feedback_origin,
+                "practice_material":item.practice_material.model_dump() if item.practice_material else None})
     return result[:2]
 
 

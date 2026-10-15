@@ -5,18 +5,18 @@ from app.services.completion import valid_completion
 
 
 def aware(dt):
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
 def calculate(db, user_id=None, now=None, cohort_start=None, exclude_users=None):
-    now=now or datetime.now(timezone.utc)
-    sessions=db.query(Session).all()
+    now=aware(now or datetime.now(timezone.utc))
+    sessions=db.query(Session).filter(Session.started_at <= now).all()
     if exclude_users:
         sessions=[s for s in sessions if s.user_id not in exclude_users]
     if user_id:
         sessions=[s for s in sessions if s.user_id==user_id]
     ordinary=[s for s in sessions if s.practice_type=='interview']
-    completed=[s for s in ordinary if s.ended_at is not None and valid_completion(db,s)]
+    completed=[s for s in ordinary if s.ended_at is not None and aware(s.ended_at)<=now and valid_completion(db,s)]
     first={}
     for s in sorted(completed,key=lambda s:aware(s.ended_at)):
         first.setdefault(s.user_id,s)

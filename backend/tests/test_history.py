@@ -287,7 +287,7 @@ def test_cleanup_expired_audio_clears_recording_and_reference(client):
     _send_text(client, s["session_id"], "just working")
     r = client.post(
         f"/api/v1/sessions/{s['session_id']}/practice",
-        data={"sentence": "I have three years of experience."},
+        data={"sentence": next(t["practice_sentence"] for t in reversed(client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()["turns"]) if t["practice_sentence"])},
         files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
         headers=USER,
     )

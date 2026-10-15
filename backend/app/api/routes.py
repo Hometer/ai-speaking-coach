@@ -1,10 +1,11 @@
 """API 路由（同步 def，由 FastAPI 线程池执行，避免阻塞事件循环）。"""
+from app.core.dates import utc_iso
 import json
 import time
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, UploadFile, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.auth import get_qa_user_id, get_user_id
@@ -434,7 +435,7 @@ def list_memories(user_id: str = Depends(get_user_id)):
     try:
         mems = memory_svc.list_memories(db, user_id)
         return [
-            {"id": m.id, "text": m.text, "source_session_id": m.source_session_id, "status": m.status, "evidence_count": m.evidence_count, "expires_at": m.expires_at.isoformat() if m.expires_at else None, "scene_id": m.scene_id, "version": m.version}
+            {"id": m.id, "text": m.text, "source_session_id": m.source_session_id, "status": m.status, "evidence_count": m.evidence_count, "expires_at": utc_iso(m.expires_at) if m.expires_at else None, "scene_id": m.scene_id, "version": m.version}
             for m in mems
         ]
     finally:
@@ -799,6 +800,13 @@ def begin_recovery(session_id: str, req: RecoveryRequest, user_id: str = Depends
         return recover(db,user_id,session_id,req.operation_id)
 
 
+@router.get('/sessions/{session_id}/operations/lookup')
+def lookup_session_operation(session_id: str, scope: Literal['turn', 'voice', 'practice', 'drill_svc', 'daily_review', 'create_session'], request_key: str = Query(min_length=1, max_length=64), user_id: str = Depends(get_user_id)):
+    from app.services.product_data import lookup_operation
+    with SessionLocal() as db:
+        return lookup_operation(db, user_id, session_id, scope, request_key)
+
+
 @router.get('/sessions/{session_id}/recoveries/{recovery_id}')
 def read_recovery(session_id: str, recovery_id: str, user_id: str = Depends(get_user_id)):
     from app.services.product_data import recovery_status
@@ -841,6 +849,6 @@ def conversation_history(turn_id: str, reviewer: str = Depends(get_qa_user_id)):
     from app.models.entities import ConversationQualityReview
     db=SessionLocal()
     try:
-        return [{"reviewer_id":r.reviewer_id,"conclusions":json.loads(r.conclusion_json),"prompt_version":r.prompt_version,"scenario_version":r.scenario_version,"created_at":r.created_at.isoformat()} for r in db.query(ConversationQualityReview).filter_by(turn_id=turn_id).order_by(ConversationQualityReview.id).all()]
+        return [{"reviewer_id":r.reviewer_id,"conclusions":json.loads(r.conclusion_json),"prompt_version":r.prompt_version,"scenario_version":r.scenario_version,"created_at":utc_iso(r.created_at)} for r in db.query(ConversationQualityReview).filter_by(turn_id=turn_id).order_by(ConversationQualityReview.id).all()]
     finally:
         db.close()

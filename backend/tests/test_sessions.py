@@ -176,7 +176,7 @@ def test_practice_flow(client):
     _send_text(client, s["session_id"], "just working")  # → PRACTICE
     r = client.post(
         f"/api/v1/sessions/{s['session_id']}/practice",
-        data={"sentence": "I have three years of experience."},
+        data={"sentence": next(t["practice_sentence"] for t in reversed(client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()["turns"]) if t["practice_sentence"])},
         files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
         headers=USER,
     )
@@ -192,7 +192,7 @@ def test_practice_recording_binding(client):
     _send_text(client, s["session_id"], "just working")  # → PRACTICE
     r = client.post(
         f"/api/v1/sessions/{s['session_id']}/practice",
-        data={"sentence": "I have three years of experience."},
+        data={"sentence": next(t["practice_sentence"] for t in reversed(client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()["turns"]) if t["practice_sentence"])},
         files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
         headers=USER,
     )
@@ -211,7 +211,7 @@ def test_practice_recording_audio_served(client):
     _send_text(client, s["session_id"], "just working")  # → PRACTICE
     r = client.post(
         f"/api/v1/sessions/{s['session_id']}/practice",
-        data={"sentence": "I have three years of experience."},
+        data={"sentence": next(t["practice_sentence"] for t in reversed(client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()["turns"]) if t["practice_sentence"])},
         files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
         headers=USER,
     )
@@ -430,7 +430,7 @@ def test_revise_scene_turn_revokes_derived_evidence(client, monkeypatch):
     completed = _done(_send_voice(client, sid, "I have a reservation under the name Li.", monkeypatch))
     completed_id = completed["turn_id"]
     assert completed["eval_result"] == "independent"
-    incomplete = _done(_send_text(client, sid, "Yesterday I go to work."))
+    incomplete = _done(_send_text(client, sid, "Yesterday I book a room for two nights."))
     source_id = incomplete["turn_id"]
     client.post(f"/api/v1/sessions/{sid}/end", json={"reason": "user_ended"}, headers=USER)
     source = {"source_session_id": sid, "source_turn_id": source_id}
@@ -520,7 +520,7 @@ def test_practice_failure_releases_budget_and_removes_recording(client, monkeypa
     monkeypatch.setattr(session_svc, "get_practice_eval_provider", lambda: FailingPracticeProvider())
     r = client.post(
         f"/api/v1/sessions/{s['session_id']}/practice",
-        data={"sentence": "I have three years of experience."},
+        data={"sentence": next(t["practice_sentence"] for t in reversed(client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()["turns"]) if t["practice_sentence"])},
         files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
         headers=USER,
     )
@@ -547,7 +547,7 @@ def test_practice_eval_failure_keeps_recording(client, monkeypatch):
     monkeypatch.setattr(session_svc, "get_practice_eval_provider", lambda: FailingEvalProvider())
     r = client.post(
         f"/api/v1/sessions/{s['session_id']}/practice",
-        data={"sentence": "I have three years of experience."},
+        data={"sentence": next(t["practice_sentence"] for t in reversed(client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()["turns"]) if t["practice_sentence"])},
         files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
         headers=USER,
     )

@@ -1,4 +1,5 @@
 """质检录音特别授权、独立副本、访问审计与七天清理。"""
+from app.core.dates import utc_iso
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -35,7 +36,7 @@ def consent_status(db: DbSession, user_id: str, session_id: str) -> dict[str, ob
     if session is None or session.user_id != user_id:
         raise AppError("FORBIDDEN", "无权访问该会话", status_code=403)
     row = db.query(QaRecordingConsent).filter_by(session_id=session_id, user_id=user_id).first()
-    return {"granted": _active(row), "expires_at": row.expires_at.isoformat() if _active(row) else None}
+    return {"granted": _active(row), "expires_at": utc_iso(row.expires_at) if _active(row) else None}
 
 
 def set_consent(db: DbSession, user_id: str, session_id: str, granted: bool) -> dict[str, object]:
@@ -107,7 +108,7 @@ def complete_review(db: DbSession, reviewer_id: str, recording_id: int) -> dict[
 
 def access_log(db: DbSession, recording_id: int) -> list[dict[str, str]]:
     return [
-        {"reviewer_id": row.reviewer_id, "action": row.action, "outcome": row.outcome, "created_at": row.created_at.isoformat() if row.created_at else ""}
+        {"reviewer_id": row.reviewer_id, "action": row.action, "outcome": row.outcome, "created_at": utc_iso(row.created_at) if row.created_at else ""}
         for row in db.query(QaRecordingAccess).filter_by(recording_id=recording_id).order_by(QaRecordingAccess.id).all()
     ]
 

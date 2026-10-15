@@ -87,7 +87,9 @@ def test_paused_drill_cannot_advance():
 def test_late_practice_cannot_reopen_session(monkeypatch):
     with SessionLocal() as db:
         source(db)
-        db.add(Session(id='late',user_id='u',status='PRACTICE',scene_id='hotel_checkin'));db.commit()
+        db.add(Session(id='late',user_id='u',status='PRACTICE',scene_id='hotel_checkin'))
+        db.add(Turn(id="late-reference",session_id="late",input_type="coach",action_type="suggest_practice",practice_sentence="test sentence"))
+        db.commit()
         class Eval:
             def evaluate(self,*args):
                 with SessionLocal() as other:

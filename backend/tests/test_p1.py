@@ -282,7 +282,7 @@ def test_mock_practice_has_no_word_items(client):
     _send_text_turn(client, s["session_id"], "this is my answer")  # incomplete -> suggest_practice
     pr = client.post(
         f"/api/v1/sessions/{s['session_id']}/practice",
-        data={"sentence": "I have a reservation under the name Li."},
+        data={"sentence": next(t["practice_sentence"] for t in reversed(client.get(f"/api/v1/sessions/{s['session_id']}", headers=USER).json()["turns"]) if t["practice_sentence"])},
         files={"audio": ("a.webm", b"\x1aE\xdf\xa3" + b"\x00" * 100, "audio/webm")},
         headers=USER,
     )

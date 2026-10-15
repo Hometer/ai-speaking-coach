@@ -1,4 +1,5 @@
 """待复练队列：回顾建议 -> 跨日队列 -> 到期复测 -> 掌握 / 争议 / 失效。"""
+from app.core.dates import utc_iso
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -48,7 +49,12 @@ def _schedule_due(db: DbSession, item: ReviewQueueItem, due_at: datetime) -> Non
 
 
 def _to_dict(item: ReviewQueueItem, reveal: bool = False) -> dict[str, Any]:
+    from sqlalchemy.orm import object_session
+    from app.services.practice_materials import existing_material
+    db = object_session(item)
+    material = existing_material(db, item.source_session_id, item.source_turn_id, item.suggestion_sentence) if db else None
     return {
+        'material_available': material is not None,
         "id": item.id,
         "attempt_stage": item.attempt_stage,
         "question_text": item.question_text,
@@ -57,12 +63,12 @@ def _to_dict(item: ReviewQueueItem, reveal: bool = False) -> dict[str, Any]:
         "source_turn_id": item.source_turn_id,
         "target_ability": item.target_ability,
         "suggestion_sentence": item.suggestion_sentence if (reveal or item.help_shown) else "",
-        "meaning_zh": item.meaning_zh,
+        "meaning_zh": material.meaning_zh if material else '这条表达的复练材料尚未准备好。',
         "help_shown": item.help_shown,
         "status": item.status,
         "success_count": item.success_count,
-        "due_at": item.due_at.isoformat() if item.due_at else None,
-        "last_practiced_at": item.last_practiced_at.isoformat() if item.last_practiced_at else None,
+        "due_at": utc_iso(item.due_at) if item.due_at else None,
+        "last_practiced_at": utc_iso(item.last_practiced_at) if item.last_practiced_at else None,
         "retest_result": item.retest_result,
     }
 
@@ -96,8 +102,8 @@ def add_to_queue(db: DbSession, user_id: str, source_session_id: str, source_tur
     if existing:
         return _to_dict(existing)
 
-    scene = SCENARIOS.get(source.scene_id or "", {})
-    meaning_zh = scene.get("goal_zh", "") or imp.get("explanation_cn", "")
+    from app.services.practice_materials import material_for
+    meaning_zh = material_for(imp, source.scene_id).meaning_zh
 
     item = ReviewQueueItem(
         user_id=user_id,
@@ -191,6 +197,11 @@ def submit_retest(
     if _now() < due:
         raise AppError("NOT_DUE", "复测尚未到期，请稍后再试", status_code=409)
 
+    from app.services.practice_materials import existing_material
+    material = existing_material(db, item.source_session_id, item.source_turn_id, item.suggestion_sentence)
+    if material is None:
+        raise AppError('MATERIAL_NOT_AVAILABLE', '复练材料尚未准备好，请先查看原回顾', 409)
+    item.meaning_zh = material.meaning_zh
     result = recall_service.evaluate(db, item, answer, input_type, request_key=attempt_key)
 
     if result == "recall_completed":

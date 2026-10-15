@@ -12,6 +12,9 @@ def grounded(answer: str, values) -> list[AnswerFeedback]:
     result = []
     for value in values[:2]:
         try:
+            if isinstance(value, dict):
+                from app.services.practice_materials import validated
+                value = {**value, 'practice_material': validated(value.get('practice_sentence', ''), value.get('practice_material'))}
             item = value if isinstance(value, AnswerFeedback) else AnswerFeedback.model_validate(value)
         except (ValidationError, TypeError, ValueError):
             continue
@@ -34,6 +37,7 @@ def mock_feedback(answer: str) -> list[AnswerFeedback]:
         "just working": ("I am working.", "如果想把这段原话说成完整陈述句，可补出主语 I 和 am。"),
         "heii I": ("Hello.", "这是一条固定离线拼写样例，将问候词整理为 Hello；真实意思仍需核对。"),
         "heiil": ("Hi.", "这是一条固定离线拼写样例，将问候词整理为 Hi；真实意思仍需核对。"),
+        "Yesterday I book a room for two nights.": ("Yesterday I booked a room for two nights.", "昨天发生的动作使用过去式，book 改为 booked。"),
         "Yesterday I go to work.": ("Yesterday I went to work.", "Yesterday 表示过去，这里的 go 应使用过去式 went。"),
         "She have a book.": ("She has a book.", "主语 She 是第三人称单数，这里的 have 应使用 has。"),
     }

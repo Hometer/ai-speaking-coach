@@ -3,8 +3,9 @@ import uuid
 import json
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import update
 from app.core.errors import AppError
-from app.models.entities import ProductEvent, ReviewSurvey, RecoveryAttempt, RequestOperation, DeviceCheck, Turn
+from app.models.entities import ProductEvent, ReviewSurvey, ReviewSurveyAnswer, RecoveryAttempt, RequestOperation, DeviceCheck, Turn
 from app.services.completion import valid_completion
 from app.services.session_svc import _require_session
 from app.services.prompts.scenarios import get_scene
@@ -69,18 +70,29 @@ def survey(db, user_id, session_id, answer):
             db.rollback()
             row = db.query(ReviewSurvey).filter_by(session_id=session_id).one()
     if answer != "shown" and row.answer != answer:
-        row.answer = answer
-        row.version += 1
-        row.answered_at = datetime.now(timezone.utc)
+        old_answer, old_version, old_time = row.answer, row.version, row.answered_at
+        answered_at = datetime.now(timezone.utc)
+        changed = db.execute(update(ReviewSurvey).where(ReviewSurvey.id==row.id, ReviewSurvey.version==old_version)
+            .values(answer=answer, version=old_version+1, answered_at=answered_at))
+        if changed.rowcount != 1:
+            db.rollback()
+            raise AppError('SURVEY_CHANGED', '评价已在其他页面更新，请刷新后重试', 409)
+        if old_answer and old_time and not db.query(ReviewSurveyAnswer).filter_by(session_id=session_id, version=old_version).first():
+            db.add(ReviewSurveyAnswer(user_id=user_id, session_id=session_id, answer=old_answer, version=old_version, answered_at=old_time))
+        db.add(ReviewSurveyAnswer(user_id=user_id, session_id=session_id, answer=answer, version=old_version+1, answered_at=answered_at))
         db.commit()
+        db.refresh(row)
     return {"answer":row.answer or None, "version":row.version}
 
 
-def recovery_status(db, row):
+def recovery_status(db, row, as_of=None):
     op = db.get(RequestOperation, row.operation_id)
     state = "unresolved"
     if op:
-        if op.status == "done" and op.response_json:
+        from app.services.learning_metrics import aware
+        if as_of and ((op.finished_at is not None and aware(op.finished_at) > as_of) or (op.finished_at is None and op.status in ('done', 'failed'))):
+            state = 'pending' if op.finished_at else 'unresolved'
+        elif op.status == "done" and op.response_json:
             state = "succeeded"
         elif op.status == "running":
             state = "pending"
@@ -96,8 +108,6 @@ def recover(db, user_id, session_id, operation_id):
         raise AppError("NOT_FOUND", "待恢复操作不存在", 404)
     row = db.query(RecoveryAttempt).filter_by(operation_id=operation_id).first()
     if row is None:
-        if op.status not in ("running", "uncertain"):
-            raise AppError("NOT_PENDING", "操作已结束，无需创建恢复尝试", 409)
         row = RecoveryAttempt(id=uuid.uuid4().hex, user_id=user_id, session_id=session_id, operation_id=operation_id)
         db.add(row)
         try:
@@ -106,6 +116,19 @@ def recover(db, user_id, session_id, operation_id):
             db.rollback()
             row = db.query(RecoveryAttempt).filter_by(operation_id=operation_id).one()
     return recovery_status(db, row)
+
+
+def lookup_operation(db, user_id, session_id, scope, request_key):
+    _require_session(db, session_id, user_id)
+    op = db.query(RequestOperation).filter_by(user_id=user_id, session_id=session_id, scope=scope,
+        request_key=request_key).order_by(RequestOperation.created_at.desc()).first()
+    if op is None and scope in ('drill_svc', 'daily_review'):
+        op = db.query(RequestOperation).filter_by(user_id=user_id, session_id=session_id, scope='voice', request_key=request_key).first()
+    if op is None:
+        raise AppError('NOT_FOUND', '原请求尚无受理记录', 404)
+    if op.parent_id and op.parent_id != 'legacy':
+        op = db.get(RequestOperation, op.parent_id) or op
+    return {'operation_id': op.id, 'state': op.status}
 
 
 def word_dispute(db,user_id,session_id,turn_id):

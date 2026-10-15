@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { disputePronunciation, recordStage, startRecovery, recordProductEvent, addToQueue, clearIntentKey, createPhraseCard, createPracticeSentence, discardRisk, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, intentKey, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, setQaRecordingConsent, skipPractice, submitTurn } from "@/lib/api";
+import { recoverPendingSubmissions, disputePronunciation, recordStage, startRecovery, recordProductEvent, addToQueue, clearIntentKey, createPhraseCard, createPracticeSentence, discardRisk, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, intentKey, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, setQaRecordingConsent, skipPractice, submitTurn } from "@/lib/api";
 import type { SessionDetail, DrillView, RiskHold, TurnItem } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
 import ReviewSurvey from "@/components/ReviewSurvey";
@@ -79,6 +79,7 @@ export default function PracticePage() {
 
   useEffect(() => {
     let active = true;
+    void recoverPendingSubmissions(sessionId);
     const recoveries=new Set<string>();
     const receive = (d: SessionDetail) => {
         if (!active) return;
@@ -153,7 +154,7 @@ export default function PracticePage() {
   }, [sessionId]);
 
   useEffect(()=>{
-    if(drill && status!=="ENDED") recordStage(sessionId,drill.drill_stage,"stage_view");
+    if(drill && status!=="ENDED" && status!=="PAUSED") recordStage(sessionId,drill.drill_stage,"stage_view");
   },[sessionId,drill,status]);
 
   useEffect(() => {
@@ -676,8 +677,9 @@ export default function PracticePage() {
 
   const ended = status === "ENDED";
   const paused = status === "PAUSED";
-  const hideDrillAnswer = !!drill && ["free_speak", "transfer"].includes(drill.drill_stage);
+  const hideDrillAnswer = !!drill && (drill.material_available === false || ["free_speak", "transfer"].includes(drill.drill_stage));
   const inputDisabled = busy || sessionLoading || ended || paused || !status;
+  const drillBlocked = drill?.material_available === false;
   const answerCount = messages.filter(m => m.who === "user").length;
   // 跟读 / 脱稿阶梯进行时，收起普通输入区，只保留当前任务的固定操作，避免两套录音按钮并存。
   const inPractice = !!practiceSentence && !drill && !ended;
@@ -725,8 +727,8 @@ export default function PracticePage() {
             <p className={styles.practiceSentence}>{drill.visible_help}</p>
             {drill.drill_stage === "full_text" && <p className="text-sm muted mt-2">中文意思：{drill.drill_meaning}</p>}
 
-            <textarea value={drillText} onChange={e => setDrillText(e.target.value)} placeholder={drill.drill_stage === "free_speak" || drill.drill_stage === "transfer" ? "这一级需要语音：点击下方「录音说出」…" : "用英文说出这一句（不用逐字一样，意思对即可）…"} disabled={busy} maxLength={2000} style={{ width: "100%", minHeight: "72px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d7ded4", fontSize: "15px", resize: "vertical" }} />
-            <div className="flex items-center gap-2 flex-wrap mt-3">{(drill.drill_stage === "free_speak" || drill.drill_stage === "transfer") ? <button onClick={() => toggleRecord("drill")} disabled={inputDisabled} className="btn btn-primary"><Icon name={recording && recordMode === "drill" ? "stop" : "mic"} size={16} />{recording && recordMode === "drill" ? "停止并提交" : "录音说出"}</button> : <button onClick={handleDrillAttempt} disabled={busy || !drillText.trim()} className="btn btn-primary">提交</button>}<button onClick={() => handleDrillAction("downgrade")} disabled={busy} className="btn btn-ghost">降一级</button><button onClick={() => handleDrillAction("skip")} disabled={busy} className="btn btn-ghost">跳过这级</button>{drill.drill_stage !== "transfer" && <button onClick={() => handleDrillAction("jump")} disabled={busy} className="btn btn-ghost">跳级到换题</button>}<button onClick={() => handleDrillAction("end")} disabled={busy} className="btn btn-ghost">结束</button>{recording && recordMode === "drill" && <span className={styles.recordingTimer}>{timerText()}</span>}</div>
+            <textarea value={drillText} onChange={e => setDrillText(e.target.value)} placeholder={drill.drill_stage === "free_speak" || drill.drill_stage === "transfer" ? "这一级需要语音：点击下方「录音说出」…" : "用英文说出这一句（不用逐字一样，意思对即可）…"} disabled={busy || drillBlocked || paused} maxLength={2000} style={{ width: "100%", minHeight: "72px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d7ded4", fontSize: "15px", resize: "vertical" }} />
+            <div className="flex items-center gap-2 flex-wrap mt-3">{(drill.drill_stage === "free_speak" || drill.drill_stage === "transfer") ? <button onClick={() => toggleRecord("drill")} disabled={inputDisabled || drillBlocked} className="btn btn-primary"><Icon name={recording && recordMode === "drill" ? "stop" : "mic"} size={16} />{recording && recordMode === "drill" ? "停止并提交" : "录音说出"}</button> : <button onClick={handleDrillAttempt} disabled={busy || drillBlocked || paused || !drillText.trim()} className="btn btn-primary">提交</button>}<button onClick={() => handleDrillAction("downgrade")} disabled={busy || drillBlocked || paused} className="btn btn-ghost">降一级</button><button onClick={() => handleDrillAction("skip")} disabled={busy || drillBlocked || paused} className="btn btn-ghost">跳过这级</button>{drill.drill_stage !== "transfer" && <button onClick={() => handleDrillAction("jump")} disabled={busy || drillBlocked || paused} className="btn btn-ghost">跳级到换题</button>}<button onClick={() => handleDrillAction("end")} disabled={busy} className="btn btn-ghost">结束</button>{recording && recordMode === "drill" && <span className={styles.recordingTimer}>{timerText()}</span>}</div>
             <p className="text-xs muted mt-3">看全文/补关键词=有参考练习；看结构=提示下完成；脱稿说=独立表达；换题=迁移证据。</p>
           </section>}
           {drill?.completed && <div className="notice mb-4"><Icon name="check" size={17} /><p>{drill.outcome === "transfer" ? "换题成功，已形成迁移证据，写回待复练记录。" : drill.outcome === "independent" ? "脱稿完成，已记为本次独立表达。" : "脱稿练习已结束。独立/换题结果会按帮助证据写回待复练。"}</p></div>}
@@ -785,7 +787,7 @@ export default function PracticePage() {
 
         <div className="section-head mt-5"><h3><Icon name="book" size={17} /> 表达建议</h3><span>最多两条主要建议</span></div>
         {review && !review.feedback_version && <p className="text-xs muted">这是历史版本回顾，建议尚未按新的原回合反馈口径核验。</p>}
-        {review ? improvements.length ? <div className={styles.reviewGrid}>{improvements.map((imp,i) => <article key={i} className={styles.reviewItem}><span className="badge badge-neutral">表达建议 {String(i+1).padStart(2,"0")}</span>{imp.feedback_source === "mock_fixture" && <p className="text-xs muted">离线固定样例反馈，真实效果待验。</p>}<div className={styles.reviewOriginal}><small>你的原句</small><p>{String(imp.original ?? "")}</p></div><p className="muted text-sm">{String(imp.explanation_cn ?? "")}</p><div className={styles.reviewSuggestion}><small>可以试着这样说</small><p>{String(imp.practice_sentence ?? imp.suggestion ?? "")}</p></div>{imp.disputed || sourceInvalid ? <p className="text-xs muted">已标记有误或来源已失效，待复核。</p> : <div className={styles.reviewActions}><button onClick={() => handlePracticeSentence(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-primary btn-small"><Icon name="mic" size={14} />练这一句</button><button onClick={() => handlePhraseCard(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small"><Icon name="book" size={14} />语块卡</button><button onClick={() => handleAddQueue(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small"><Icon name="check" size={14} />加入待复练</button><button onClick={() => handleDispute(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small">评价有误</button></div>}</article>)}</div> : <div className="notice"><Icon name="book" size={19} /><p>本次暂无可展示的改进建议。<br />这不代表整体能力已达标；可以回看对话，再尝试一段新的表达。</p></div> : <div className="notice"><Icon name="help" size={19} /><p>回顾暂未就绪，已提交的对话仍然保留。<button className="text-link ml-2" onClick={end} disabled={busy}>重新获取回顾</button></p></div>}
+        {review ? improvements.length ? <div className={styles.reviewGrid}>{improvements.map((imp,i) => <article key={i} className={styles.reviewItem}><span className="badge badge-neutral">表达建议 {String(i+1).padStart(2,"0")}</span>{imp.feedback_source === "mock_fixture" && <p className="text-xs muted">离线固定样例反馈，真实效果待验。</p>}<div className={styles.reviewOriginal}><small>你的原句</small><p>{String(imp.original ?? "")}</p></div><p className="muted text-sm">{String(imp.explanation_cn ?? "")}</p><div className={styles.reviewSuggestion}><small>可以试着这样说</small><p>{String(imp.practice_sentence ?? imp.suggestion ?? "")}</p></div>{imp.disputed || sourceInvalid ? <p className="text-xs muted">已标记有误或来源已失效，待复核。</p> : imp.practice_available === false ? <div><p className="text-xs muted">这条建议的复练材料尚未准备好，可先参考纠错说明。</p><button onClick={() => handleDispute(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small">评价有误</button></div> : <div className={styles.reviewActions}><button onClick={() => handlePracticeSentence(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-primary btn-small"><Icon name="mic" size={14} />练这一句</button><button onClick={() => handlePhraseCard(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small"><Icon name="book" size={14} />语块卡</button><button onClick={() => handleAddQueue(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small"><Icon name="check" size={14} />加入待复练</button><button onClick={() => handleDispute(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small">评价有误</button></div>}</article>)}</div> : <div className="notice"><Icon name="book" size={19} /><p>本次暂无可展示的改进建议。<br />这不代表整体能力已达标；可以回看对话，再尝试一段新的表达。</p></div> : <div className="notice"><Icon name="help" size={19} /><p>回顾暂未就绪，已提交的对话仍然保留。<button className="text-link ml-2" onClick={end} disabled={busy}>重新获取回顾</button></p></div>}
 
         {drill && drill.completed && <div className={styles.reviewSubBlock}><div className="section-head mt-0"><h3><Icon name="book" size={17} /> 脱稿练习</h3><span className="badge badge-neutral">{drill.outcome === "transfer" ? "迁移成功" : drill.outcome === "independent" ? "独立完成" : "已结束"}</span></div><p className="text-sm muted">{drill.outcome === "transfer" ? "换题成功，已形成迁移证据，并写回待复练记录。" : drill.outcome === "independent" ? "脱稿完成，已记为本次独立表达。" : "本次脱稿练习已结束，结果按帮助证据记录。"}</p></div>}
 

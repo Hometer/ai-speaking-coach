@@ -143,7 +143,7 @@ def cleanup_expired_data() -> None:
 
 def cleanup_audit_state():
     from app.models.database import SessionLocal
-    from app.models.entities import RequestOperation, Memory, MemorySource, EventLog, ProductEvent, ReviewSurvey, RecoveryAttempt
+    from app.models.entities import RequestOperation, Memory, MemorySource, EventLog, ProductEvent, ReviewSurvey, ReviewSurveyAnswer, RecoveryAttempt
     cutoff=datetime.now(timezone.utc)-timedelta(days=30)
     with SessionLocal() as db:
         db.query(RequestOperation).filter(RequestOperation.created_at < cutoff).delete()
@@ -151,6 +151,7 @@ def cleanup_audit_state():
         db.query(ProductEvent).filter(ProductEvent.created_at < cutoff).delete()
         db.query(RecoveryAttempt).filter(RecoveryAttempt.created_at < cutoff).delete()
         db.query(ReviewSurvey).filter(ReviewSurvey.shown_at < cutoff).delete()
+        db.query(ReviewSurveyAnswer).filter(ReviewSurveyAnswer.answered_at < cutoff).delete()
         expired=[m.id for m in db.query(Memory).filter(Memory.expires_at.isnot(None),Memory.expires_at < datetime.now(timezone.utc)).all()]
         db.query(MemorySource).filter(MemorySource.memory_id.in_(expired)).delete()
         db.query(Memory).filter(Memory.id.in_(expired)).delete()

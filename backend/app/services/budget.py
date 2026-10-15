@@ -57,10 +57,11 @@ class BudgetGuard:
 
     def reserve(self, amount: float, session_id: str, user_id: str) -> None:
         """原子预留：条件更新 + rowcount 校验，避免并发共同突破预算。"""
+        day = _day_key("all").rsplit(":", 1)[1]
         caps = [
             ("session", session_id, settings.budget_session),
-            ("user", _day_key(user_id), settings.budget_user_day),
-            ("project", _day_key("all"), settings.budget_project_day),
+            ("user", f"{user_id}:{day}", settings.budget_user_day),
+            ("project", f"all:{day}", settings.budget_project_day),
         ]
         for scope, key, cap in caps:
             self._row(scope, key)  # 确保行存在
@@ -82,7 +83,7 @@ class BudgetGuard:
                     status_code=402,
                 )
         reservation = BudgetReservation(id=uuid.uuid4().hex, operation_id=current_id(), session_id=session_id,
-            user_id=user_id, day=_day_key("all").rsplit(":", 1)[1], amount=amount)
+            user_id=user_id, day=day, amount=amount)
         self.db.add(reservation)
         self.db.commit()
         self.reservation_ids.append(reservation.id)
@@ -96,6 +97,8 @@ class BudgetGuard:
         row = q.order_by(BudgetReservation.created_at, BudgetReservation.id).first()
         if row is None:
             return  # 重复释放/结算不能影响另一个意图的预留。
+        if status == 'released' and row.provider_started:
+            status = 'settled'  # 已尝试供应商不能声称没有费用；实账另行核对。
         rid, day, reserved = row.id, row.day, row.amount
         changed = self.db.execute(update(BudgetReservation).where(BudgetReservation.id == rid,
             BudgetReservation.status == "reserved").values(status=status))
@@ -115,3 +118,17 @@ class BudgetGuard:
     def settle(self, amount: float, session_id: str, user_id: str) -> None:
         """预留估算结算；不将该金额冒称供应商实账。"""
         self._finish(amount, session_id, user_id, "settled")
+
+    def mark_called(self) -> None:
+        self.db.query(BudgetReservation).filter(BudgetReservation.id.in_(self.reservation_ids),
+            BudgetReservation.status == 'reserved').update({'provider_started': True}, synchronize_session=False)
+        self.db.commit()
+
+
+def finish_operation(db, operation_id):
+    """任何退出路径都确定性结束本操作的预留；原日期不变，调用结果未知不冒充实付。"""
+    db.rollback()  # 不让预算 commit 顺带写入未通过状态核对的教学内容。
+    for row in db.query(BudgetReservation).filter_by(operation_id=operation_id, status='reserved').all():
+        guard = BudgetGuard(db)
+        guard.reservation_ids = [row.id]
+        guard._finish(row.amount, row.session_id, row.user_id, 'settled' if row.provider_started else 'released')

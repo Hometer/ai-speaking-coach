@@ -1,4 +1,5 @@
 """进步中心：事实型指标（后端计算，前端不自行拼接权威结论）。"""
+from app.core.dates import utc_iso
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from app.services.completion import valid_completion
@@ -120,7 +121,7 @@ def get_progress(db: DbSession, user_id: str) -> dict[str, Any]:
             "id": q.id,
             "suggestion_sentence": q.suggestion_sentence,
             "target_ability": q.target_ability,
-            "last_practiced_at": q.last_practiced_at.isoformat() if q.last_practiced_at else None,
+            "last_practiced_at": utc_iso(q.last_practiced_at) if q.last_practiced_at else None,
         }
         for q in queue if q.status == "mastered"
     ]

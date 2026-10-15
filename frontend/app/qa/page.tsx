@@ -1,4 +1,5 @@
 "use client";
+import { apiDate } from "@/lib/dates";
 
 import { useEffect, useState } from "react";
 import { qaLearningMetrics, reviewConversation, completeQaRecording, qaAddLabel, qaRecordingAccessLog, qaSessions, qaStats } from "@/lib/api";
@@ -117,7 +118,7 @@ export default function QaPage() {
                     <span className="badge badge-neutral">{s.status}</span>
                     <span className="badge badge-neutral">场景版 {s.scene_version}</span>
                     {s.disputed && <span className="badge badge-neutral">有争议</span>}
-                    <span className="text-xs muted">{s.started_at ? new Date(s.started_at).toLocaleString("zh-CN") : ""}</span>
+                    <span className="text-xs muted">{s.started_at ? apiDate(s.started_at).toLocaleString("zh-CN") : ""}</span>
                   </div>
                   <p className="text-xs muted mb-2">预算预留结算 ¥{s.estimated_cost.toFixed(3)}；供应商估算 {s.supplier_estimate === null ? "费率/计量待核对" : `¥${s.supplier_estimate.toFixed(3)}`}；供应商账单 {s.billed_cost === null ? "待核对" : `¥${s.billed_cost.toFixed(3)}`}；LLM {s.provider_usage.llm_attempts} 次（输入 {s.provider_usage.llm_input_tokens} / 输出 {s.provider_usage.llm_output_tokens} token）；ASR 上传 {s.provider_usage.asr_input_bytes} 字节；TTS {s.provider_usage.tts_attempts} 次、{s.provider_usage.tts_text_chars} 字符；发音评测 {s.provider_usage.ise_attempts} 次、上传 {s.provider_usage.ise_input_bytes} 字节{ s.error_codes.length ? `；错误码 ${s.error_codes.join("、")}` : ""}</p>
                   {s.turns.map((t) => (

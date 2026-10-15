@@ -14,6 +14,7 @@ class RetestRequest(BaseModel):
 
 
 class QueueItemResponse(BaseModel):
+    material_available: bool = True
     attempt_stage: str = "recall"
     question_text: str = ""
     question_version: int = 1

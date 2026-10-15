@@ -35,7 +35,7 @@ export default function DailyReviewPage() {
   useEffect(() => {
     let active = true;
     const saved = sessionStorage.getItem("active-daily-review");
-    if (saved) void dailyReviewView(saved).then(view => { if (active && !view.done) { setSessionId(saved); setCurrent(view); } else if (view.done) { sessionStorage.removeItem("active-daily-review"); clearIntentKey("daily-start"); } }).catch(() => sessionStorage.removeItem("active-daily-review"));
+    if (saved) void dailyReviewView(saved).then(view => { if (active && !view.done) { setSessionId(saved); setCurrent(view); } else if (active && view.done) { if(view.notice)setMsg(view.notice); sessionStorage.removeItem("active-daily-review"); clearIntentKey("daily-start"); } }).catch(() => sessionStorage.removeItem("active-daily-review"));
     dueToday()
       .then((data) => { if (active) setDue(data); })
       .catch((e) => { if (active) setErr(e instanceof Error ? e.message : String(e)); });
@@ -189,7 +189,7 @@ export default function DailyReviewPage() {
       <p className="page-description">一次只练今天真正到期的内容。卡住可以看提示，退出和服务故障都不会记成学习失败。</p>
 
       {err && <div className="error-banner" role="alert">{err}</div>}
-      {msg && <div className="notice mt-4" role="status"><Icon name="check" size={17} /><p>{msg}</p></div>}
+      {(msg || current?.notice) && <div className="notice mt-4" role="status"><Icon name={current?.notice ? "help" : "check"} size={17} /><p>{msg || current?.notice}</p></div>}
 
       {!current && due === null && !err && (
         <div className={styles.loading} role="status" aria-label="加载今日复练">

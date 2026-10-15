@@ -22,7 +22,7 @@ from app.services.generation_call import reset_usage_attempts
 from app.services import provider_usage as provider_usage_svc
 from app.services import events as product_events
 from app.services import intent_result
-from app.services.operations import durable, fence, require_active
+from app.services.operations import durable, fence, require_active, bump_version
 from app.services.session_svc import _require_session
 
 STAGE_ORDER = ["full_text", "fill_blanks", "structure", "free_speak", "transfer"]
@@ -103,6 +103,12 @@ def _judge(text: str, target: str) -> bool:
 
 def drill_view(session: Session, db: DbSession | None = None) -> dict[str, Any]:
     stage = session.drill_stage or "full_text"
+    material = None
+    available = True
+    if db is not None and session.source_session_id and not session.source_invalid:
+        from app.services.practice_materials import existing_material
+        material = existing_material(db, session.source_session_id, session.source_turn_id, session.drill_target)
+        available = material is not None
     # 结束后的准确结论：换题成功/脱稿成功/仅结束。用于前端不编造"已写回"。
     outcome = ""
     if stage == "ended":
@@ -117,12 +123,13 @@ def drill_view(session: Session, db: DbSession | None = None) -> dict[str, Any]:
             if "independent" in results:
                 outcome = "independent"
     return {
+        'material_available': available,
         "drill_stage": stage,
         "stage_label": STAGE_LABEL.get(stage, ""),
         "drill_target": session.drill_target if stage not in ("free_speak", "transfer") else "",
-        "drill_meaning": session.drill_meaning,
+        "drill_meaning": material.meaning_zh if material else session.drill_meaning if available else '',
         "drill_chunk": " · ".join(_keywords(session.scene_id)[:3]) if stage not in ("free_speak", "transfer") else "",
-        "visible_help": _visible_help(session, stage),
+        "visible_help": material.meaning_zh if material and stage=='free_speak' else _visible_help(session, stage) if available else '复练材料尚未准备好，请先查看原回顾。',
         "completed": stage == "ended",
         "outcome": outcome,
     }
@@ -220,6 +227,8 @@ def submit_drill_attempt(
         raise AppError("SESSION_ENDED", "脱稿练习已结束", status_code=409)
 
     require_active(session)
+    if not drill_view(session, db)['material_available']:
+        raise AppError('MATERIAL_NOT_AVAILABLE', '复练材料尚未准备好，请先查看原回顾', 409)
     operation_version = session.state_version
     stage = session.drill_stage or "full_text"
     transfer_guard = None
@@ -227,6 +236,7 @@ def submit_drill_attempt(
         transfer_guard = BudgetGuard(db)
         transfer_guard.reserve(settings.nominal_cost_per_turn, session_id, user_id)
         reset_usage_attempts()
+        transfer_guard.mark_called()
 
     if stage == "free_speak":
         # 脱稿说：只看中文意图，语音 + 相关 + 非照抄才独立
@@ -242,6 +252,10 @@ def submit_drill_attempt(
         success = _judge(text, session.drill_target)
         result = STAGE_RESULT[stage] if success else "failed"
 
+    if transfer_guard is not None:
+        transfer_guard.settle(settings.nominal_cost_per_turn, session_id, user_id)
+        provider_usage_svc.record_llm_attempts(db, user_id, session_id)
+        transfer_guard = None
     fence(db, session, operation_version)
     reason = "completed" if success else "error"
     _record(db, session, user_id, text, result, reason, input_type=input_type, help_shown=False, attempt_key=attempt_key)
@@ -315,6 +329,9 @@ def drill_action(db: DbSession, session_id: str, user_id: str, action: str) -> d
         session.end_reason = "user_ended"
     else:
         raise AppError("INVALID_INPUT", "未知的脱稿操作", status_code=422)
+    bump_version(db, session.id)
+    if session.status == 'ENDED' and session.ended_at is None:
+        session.ended_at = datetime.now(timezone.utc)
     db.commit()
     if session.status == "ENDED":
         product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason or "")

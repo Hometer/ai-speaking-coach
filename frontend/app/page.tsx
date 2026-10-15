@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import {
   clearInviteCode,
   createSession,
+  pendingCreation,
+  resumeCreation,
   dueToday,
   getInviteCode,
   getPlan,
@@ -133,6 +135,7 @@ export default function Home() {
   });
   const [scene, setScene] = useState<Scenario | null>(null);
   const [loading, setLoading] = useState(false);
+  const [recoveringCreate,setRecoveringCreate]=useState(false);
   const [err, setErr] = useState("");
   const [dueCount, setDueCount] = useState<number | null>(null);
   const [queueCount, setQueueCount] = useState<number | null>(null);
@@ -147,6 +150,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!loggedIn) return;
+    void pendingCreation().then(value=>setRecoveringCreate(!!value));
     listScenarios()
       .then((list) => {
         setScenes(list);
@@ -216,6 +220,8 @@ export default function Home() {
     setLoading(true);
     setErr("");
     try {
+      const restored=await resumeCreation();
+      if(restored){router.push(`/practice/${restored.session_id}`);return;}
       // 设备预检（失败不阻断，可转文字练习）
       const device = await checkDevice();
       setDeviceItems(device.items);
@@ -228,6 +234,7 @@ export default function Home() {
       router.push(`/practice/${s.session_id}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      setRecoveringCreate(!!(await pendingCreation()));
       setLoading(false);
     }
   }
@@ -281,8 +288,8 @@ export default function Home() {
               <fieldset><legend className="field-label">我的英语水平</legend><div className={styles.levels}>{levels.map(option => <button key={option.value} className={level === option.value ? styles.selected : ""} aria-pressed={level === option.value} onClick={() => setLevel(option.value)} disabled={loading}><span>{option.label}</span><small>{option.note}</small></button>)}</div></fieldset>
               <fieldset><legend className="field-label">这次想练的难度</legend><div className={styles.segments}>{[{value:"simple",label:"简单",note:"轻松开口"},{value:"standard",label:"标准",note:"多一点挑战"}].map(option => <button key={option.value} className={difficulty === option.value ? styles.selected : ""} aria-pressed={difficulty === option.value} onClick={() => setDifficulty(option.value)} disabled={loading}>{option.label}<small>{option.note}</small></button>)}</div></fieldset>
               <fieldset><legend className="field-label">给自己几分钟？</legend><div className={styles.durations}>{[5,10,15].map(value => <button key={value} className={duration === value ? styles.selected : ""} aria-pressed={duration === value} onClick={() => setDuration(value)} disabled={loading}>{value}<small> 分钟</small>{value === 5 && <span>推荐</span>}</button>)}</div></fieldset>
-              <button className={`btn btn-primary ${styles.start}`} onClick={start} disabled={loading}><Icon name="mic" size={18} />{loading ? "正在准备练习…" : "开始练习"}<Icon name="arrow" size={18} /></button>
-              {deviceItems.length > 0 && <div className={styles.deviceGrid}>{deviceItems.map(item => <span key={item.key} className={item.ok ? styles.deviceOk : styles.deviceBad} title={item.ok ? "正常" : item.hint}><Icon name={item.ok ? "check" : "shield"} size={12} />{item.label}{!item.ok && <small>{item.hint}</small>}</span>)}</div>}
+              <button className={`btn btn-primary ${styles.start}`} onClick={start} disabled={loading}><Icon name="mic" size={18} />{loading ? "正在准备练习…" : recoveringCreate ? "恢复上次创建" : "开始练习"}<Icon name="arrow" size={18} /></button>
+              {recoveringCreate && <p className="text-xs muted mt-2">先恢复上次选择的场景和设置，确认结果后再开始新的练习。</p>}{deviceItems.length > 0 && <div className={styles.deviceGrid}>{deviceItems.map(item => <span key={item.key} className={item.ok ? styles.deviceOk : styles.deviceBad} title={item.ok ? "正常" : item.hint}><Icon name={item.ok ? "check" : "shield"} size={12} />{item.label}{!item.ok && <small>{item.hint}</small>}</span>)}</div>}
               <p className={styles.micNote}><Icon name="shield" size={12} /> 开始后，点击录音才会开启麦克风；语音不可用时可用文字</p>
               <button className={`text-link ${styles.logout}`} onClick={logout} disabled={loading}><Icon name="logout" size={13} /> 退出 / 切换邀请凭证</button>
             </div>

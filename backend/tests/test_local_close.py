@@ -16,6 +16,8 @@ from app.services.provider_usage import record_llm_attempts
 def test_queue_replay_keeps_first_response_after_later_state_change():
     with SessionLocal() as db:
         db.add(User(id="u"))
+        db.add(Session(id="s",user_id="u",status="ENDED",scene_id="hotel_checkin"))
+        db.add(Turn(id="t",session_id="s",input_type="voice",eval_result="incomplete"))
         item = ReviewQueueItem(user_id="u", source_session_id="s", source_turn_id="t", suggestion_sentence="I booked a room for two nights", due_at=datetime.now(timezone.utc) - timedelta(hours=1))
         db.add(item)
         db.commit()
@@ -60,7 +62,7 @@ def test_provider_usage_is_raw_and_qa_bill_stays_unknown():
     try:
         with SessionLocal() as db:
             db.add(User(id="u"))
-            db.add(Session(id="s", user_id="u", status="ENDED"))
+            db.add(Session(id="s", user_id="u", status="ENDED", scene_id="hotel_checkin"))
             db.add(BudgetLedger(scope="session", scope_key="s", spent=0.2, actual_spent=99.0))
             db.commit()
             reset_usage_attempts()
@@ -89,6 +91,7 @@ def test_practice_replay_after_state_change_does_not_repeat_cost():
     with SessionLocal() as db:
         db.add(User(id="u"))
         db.add(Session(id="practice", user_id="u", status="PRACTICE", practice_type="interview", scene_id="job_interview"))
+        db.add(Turn(id="practice-reference",session_id="practice",input_type="coach",action_type="suggest_practice",practice_sentence="Please repeat this sentence"))
         db.commit()
         first = session_svc.submit_practice(db, "practice", "u", audio, "Please repeat this sentence", "same")
         assert session_svc.submit_practice(db, "practice", "u", audio, "Please repeat this sentence", "same") == first
@@ -101,7 +104,7 @@ def test_practice_replay_after_state_change_does_not_repeat_cost():
 def test_daily_start_replay_after_end():
     with SessionLocal() as db:
         db.add(User(id="u"))
-        db.add(Session(id="source", user_id="u", status="ENDED"))
+        db.add(Session(id="source", user_id="u", status="ENDED", scene_id="hotel_checkin"))
         db.add(Turn(id="turn", session_id="source", seq=1, input_type="voice", eval_result="incomplete"))
         db.add(ReviewQueueItem(user_id="u", source_session_id="source", source_turn_id="turn", suggestion_sentence="I booked a room", due_at=datetime.now(timezone.utc) - timedelta(hours=1)))
         db.commit()

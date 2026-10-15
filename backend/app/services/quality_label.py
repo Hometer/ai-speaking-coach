@@ -1,4 +1,5 @@
 """质检工作台：多维筛选脱敏会话 + 标记 + 版本统计。"""
+from app.core.dates import utc_iso
 import json
 from typing import Any
 from app.models.entities import ConversationQualityMark, ConversationQualityReview
@@ -84,7 +85,7 @@ def list_sessions(db: DbSession, filters: dict[str, Any] | None = None) -> list[
                 "scene_id": s.scene_id,
                 "scene_version": s.scene_version,
                 "status": s.status,
-                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "started_at": utc_iso(s.started_at) if s.started_at else None,
                 "error_codes": sorted(set(errors))[:5],
                 "disputed": disputed,
                 "estimated_cost": ledger.spent if ledger else 0.0,
@@ -217,7 +218,7 @@ def label_history(db: DbSession, label_id: int) -> list[dict[str, Any]]:
             "new_conclusion": c.new_conclusion,
             "old_review_version": c.old_review_version,
             "new_review_version": c.new_review_version,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "created_at": utc_iso(c.created_at) if c.created_at else None,
         }
         for c in changes
     ]

@@ -37,7 +37,9 @@ def durable(scope: str, key_arg: str = 'request_key', object_arg: str = 'session
             bound.apply_defaults()
             values = bound.arguments
             db, user_id = values['db'], values['user_id']
-            sid = values.get('session_id', '')
+            parent_id = current_id()
+            parent = db.get(RequestOperation, parent_id) if parent_id else None
+            sid = values.get('session_id', '') or (parent.session_id if parent else '')
             if sid:
                 session = db.get(Session, sid)
                 if session is None or session.user_id != user_id:
@@ -54,7 +56,7 @@ def durable(scope: str, key_arg: str = 'request_key', object_arg: str = 'session
             row = db.query(RequestOperation).filter_by(user_id=user_id, scope=scope, object_id=obj, request_key=key).first()
             if row is None:
                 row = RequestOperation(id=uuid.uuid4().hex, user_id=user_id, scope=scope,
-                    object_id=obj, session_id=sid if not _stack.get() else '', request_key=key, request_hash=digest)
+                    object_id=obj, session_id=sid, parent_id=parent_id, request_key=key, request_hash=digest)
                 db.add(row)
                 try:
                     db.commit()  # 在任何供应商调用之前认领；唯一索引是并发裁判
@@ -68,14 +70,16 @@ def durable(scope: str, key_arg: str = 'request_key', object_arg: str = 'session
                 return _existing(row, digest)
             op_id = row.id
             token = _stack.set(_stack.get() + (op_id,))
-            if sid:
+            if sid and not parent_id:
                 db.execute(update(Session).where(Session.id == sid).values(in_flight=True))
                 db.commit()
             deadline_token = deadline.begin()
             try:
                 result = fn(*bound.args, **bound.kwargs)
+                result_sid = sid or (result.get('session_id', '') if isinstance(result, dict) else '')
                 saved = db.execute(update(RequestOperation).where(RequestOperation.id == op_id,
-                    RequestOperation.status == 'running').values(status='done', response_json=json.dumps(result, ensure_ascii=False)))
+                    RequestOperation.status == 'running').values(status='done', session_id=result_sid or '',
+                        finished_at=datetime.now(timezone.utc), response_json=json.dumps(result, ensure_ascii=False)))
                 if saved.rowcount != 1:
                     raise AppError('SOURCE_INVALID', '操作已被撤回或来源失效，请刷新查看', 409)
                 db.commit()
@@ -88,14 +92,23 @@ def durable(scope: str, key_arg: str = 'request_key', object_arg: str = 'session
                     row.error_code = exc.code if isinstance(exc, AppError) else 'REQUEST_UNCERTAIN'
                     row.error_message = exc.message if isinstance(exc, AppError) else '上次操作结果待核对，请刷新查看，勿重复提交'
                     row.error_status = exc.status_code if isinstance(exc, AppError) else 409
+                    row.finished_at = datetime.now(timezone.utc)
                     db.commit()
                 raise
             finally:
                 deadline.reset(deadline_token)
-                _stack.reset(token)
-                if sid and not _stack.get():
-                    db.execute(update(Session).where(Session.id == sid).values(in_flight=False))
-                    db.commit()
+                # 业务路径可在状态校验处退出；仅收尾本意图剩余的预留，不触碰其他请求。
+                from app.services.budget import finish_operation
+                try:
+                    finish_operation(db, op_id)
+                finally:
+                    _stack.reset(token)
+                    if sid and not _stack.get():
+                        db.rollback()
+                        running = db.query(RequestOperation).filter_by(session_id=sid, parent_id='', status='running').first()
+                        db.execute(update(Session).where(Session.id == sid).values(in_flight=running is not None))
+                        db.commit()
+
         return run
     return decorate
 
@@ -114,6 +127,14 @@ def require_active(session):
     if session.status in ('ENDED', 'PAUSED') or session.source_invalid:
         code = 'SOURCE_INVALID' if session.source_invalid else 'SESSION_' + session.status
         raise AppError(code, '练习已结束、暂停或来源失效，请刷新查看', 409)
+
+
+def bump_version(db, session_id):
+    changed = db.execute(update(Session).where(Session.id==session_id)
+        .values(state_version=Session.state_version+1).execution_options(synchronize_session=False))
+    if changed.rowcount != 1:
+        db.rollback()
+        raise AppError('SESSION_NOT_FOUND', '练习已被删除', 404)
 
 
 def fence(db, session, version: int):

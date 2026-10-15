@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from app.core.errors import AppError
-from app.models.entities import (Session, Turn, ProductEvent, ReviewSurvey, RecoveryAttempt,
+from app.models.entities import (Session, Turn, ProductEvent, ReviewSurvey, ReviewSurveyAnswer, RecoveryAttempt,
     DeviceCheck, DrillAttempt, DailyReviewAttempt, ReviewDueEvent, ReviewQueueItem, EventLog, Invite)
 from app.core.config import settings
 from app.services.completion import valid_completion
@@ -11,6 +11,7 @@ from app.services.product_data import recovery_status
 
 
 def report(db, start=None, end=None):
+    historical = end is not None
     now = datetime.now(timezone.utc)
     end = min(aware(end), now) if end else now
     start = aware(start) if start else end-timedelta(days=30)
@@ -35,14 +36,24 @@ def report(db, start=None, end=None):
     for s in sorted(ordinary,key=lambda s:aware(s.started_at)):
         first.setdefault(s.user_id,s)
     cohort = [s for s in first.values() if within(s.started_at)]
-    metric("first_completion","首练完成率",sum(valid_completion(db,s) for s in cohort),len(cohort),"窗口内开始首个普通场景的唯一用户；失败、空结束和退出保留分母")
+    metric("first_completion","首练完成率",sum(bool(s.ended_at and aware(s.ended_at)<=end and valid_completion(db,s)) for s in cohort),len(cohort),"窗口内开始首个普通场景的唯一用户；截止前有效完成，失败、空结束和退出保留分母")
     viewed = {e.session_id for e in db.query(EventLog).filter(EventLog.action_type=="review_view",EventLog.created_at<=end).all()
         if e.session_id in completed and aware(e.created_at)>=aware(completed[e.session_id].ended_at)}
     metric("review_view","回顾查看率",len(set(completed)&viewed),len(completed),"窗口内有效完成的普通会话；同一会话只计一次")
     surveys = [s for s in db.query(ReviewSurvey).all() if s.session_id in completed and within(s.shown_at)]
-    replied = [s for s in surveys if s.answer and s.answered_at and aware(s.answered_at)<=end]
+    replied = []
+    unknown_survey = 0
+    for survey in surveys:
+        latest = db.query(ReviewSurveyAnswer).filter(ReviewSurveyAnswer.session_id==survey.session_id,
+            ReviewSurveyAnswer.answered_at<=end).order_by(ReviewSurveyAnswer.version.desc()).first()
+        if latest:
+            replied.append(latest)
+        elif survey.answer and survey.answered_at and aware(survey.answered_at)<=end:
+            replied.append(survey)
+        elif survey.answer and historical:
+            unknown_survey += 1
     judged = [s for s in replied if s.answer != "uncertain"]
-    metric("feedback_helpful","反馈有帮助率",sum(s.answer=="helpful" for s in judged),len(judged),"有帮助 /（有帮助+帮助不大）；无法判断单列",sum(s.answer=="uncertain" for s in replied))
+    metric("feedback_helpful","反馈有帮助率",sum(s.answer=="helpful" for s in judged),len(judged),"有帮助 /（有帮助+帮助不大）；无法判断单列",sum(s.answer=="uncertain" for s in replied)+unknown_survey)
     metric("survey_response","问卷回复率",len(replied),len(surveys),"已回复（含无法判断）的会话 / 展示问卷的有效完成会话")
     north = calculate(db,now=end,cohort_start=start,exclude_users=excluded)
     metric("active_review","7日主动有效复练率",north['active_review_users'],north['eligible_users'],"首练在窗口内完成且已满7日的唯一用户；24小时后至第7天的自主有效复练",north['pending_observation_users'])
@@ -77,7 +88,7 @@ def report(db, start=None, end=None):
         except (TypeError,ValueError):
             wanted=set()
         done={a.queue_item_id for a in db.query(DailyReviewAttempt).filter_by(session_id=s.id).all() if a.result in ('independent','hinted','text_completed') and aware(a.created_at)<=end and a.queue_item_id in queue}
-        if wanted and wanted<=done and s.status=='ENDED' and s.end_reason=='goal_reached':
+        if wanted and wanted<=done and s.status=='ENDED' and s.end_reason=='goal_reached' and (not historical or (s.ended_at and aware(s.ended_at)<=end)):
             finished_users.add(s.user_id)
     metric("daily_completion","今日复练完成率",len(finished_users),len(daily_users),"开始过组合任务的唯一用户；所选项目均完成；跳过/退出/失败不移走分母")
     words=set()
@@ -89,8 +100,8 @@ def report(db, start=None, end=None):
     disputes={e.turn_id for e in events if e.action=='word_dispute'}
     metric("word_dispute","词级反馈争议率",len(words&disputes),len(words),"有原始词级项目的评测回合；重复争议只算一次，无词级不入分母")
     recoveries = [r for r in db.query(RecoveryAttempt).all() if within(r.created_at) and r.session_id in by_id]
-    states=[recovery_status(db,r)['state'] for r in recoveries]
-    metric("recovery_success","处理中恢复成功率",states.count('succeeded'),len(states),"每个未决操作只计一次；结果快照可恢复才成功，pending/failed/uncertain不算成功",states.count('pending')+states.count('unresolved'))
+    states=[recovery_status(db,r,end if historical else None)['state'] for r in recoveries]
+    metric("recovery_success","处理中恢复成功率",states.count('succeeded'),len(states),"每个原已受理操作只计一次；含完成后重连，结果快照可恢复才成功，pending/failed/uncertain不算成功",states.count('pending')+states.count('unresolved'))
     checks={c.id:c for c in db.query(DeviceCheck).filter_by(status='ok').all() if within(c.created_at) and c.user_id not in excluded}
     recording_started={e.session_id for e in db.query(EventLog).filter_by(action_type='record_attempt').all() if within(e.created_at)}
     linked={s.device_check_id for s in ordinary if s.device_check_id in checks and s.id in recording_started}

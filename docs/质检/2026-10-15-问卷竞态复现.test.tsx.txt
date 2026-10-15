@@ -1,0 +1,17 @@
+import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {afterEach,expect,it,vi} from 'vitest';
+import ReviewSurvey from './ReviewSurvey';
+import {reviewSurvey} from '@/lib/api';
+vi.mock('@/lib/api',()=>({reviewSurvey:vi.fn(),recordProductEvent:vi.fn()}));
+afterEach(()=>{cleanup();vi.resetAllMocks();});
+it('reproduces: delayed shown snapshot overwrites a newer saved answer',async()=>{
+ let release:(value:{answer:null;version:number})=>void=()=>{};
+ vi.mocked(reviewSurvey).mockImplementation(async(_id,answer)=>answer==='shown'?await new Promise(resolve=>{release=resolve;}):{answer,version:2});
+ render(<ReviewSurvey sessionId='s'/>);
+ await waitFor(()=>expect(reviewSurvey).toHaveBeenCalledWith('s','shown'));
+ fireEvent.click(screen.getByRole('button',{name:'有帮助'}));
+ await waitFor(()=>expect(screen.getByRole('button',{name:'有帮助'})).toHaveAttribute('aria-pressed','true'));
+ await act(async()=>{release({answer:null,version:1});});
+ expect(screen.getByRole('button',{name:'有帮助'})).toHaveAttribute('aria-pressed','false');
+ expect(screen.queryByText('已记录，可以修改。')).not.toBeInTheDocument();
+});

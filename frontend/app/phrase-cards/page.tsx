@@ -111,10 +111,10 @@ export default function PhraseCardsPage() {
               </dl>
 
               <footer className={styles.cardActions}>
-                <button onClick={() => practice(card)} disabled={!!pending} className="btn btn-primary">
+                <button onClick={() => practice(card)} disabled={!!pending || card.practice_available === false} className="btn btn-primary">
                   <Icon name="mic" size={15} />{pending === `practice-${card.id}` ? "正在创建…" : "练这一句"}
                 </button>
-                <button onClick={() => queue(card)} disabled={!!pending || added.has(card.id)} className="btn btn-secondary">
+                <button onClick={() => queue(card)} disabled={!!pending || card.practice_available === false || added.has(card.id)} className="btn btn-secondary">
                   <Icon name="check" size={15} />{added.has(card.id) ? "已加入待复练" : pending === `queue-${card.id}` ? "正在加入…" : "加入待复练"}
                 </button>
               </footer>

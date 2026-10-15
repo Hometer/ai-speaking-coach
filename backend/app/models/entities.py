@@ -60,6 +60,7 @@ class Session(Base):
     in_flight: Mapped[bool] = mapped_column(default=False)  # 处理中标记（刷新恢复）
     initiation: Mapped[str] = mapped_column(String(16), default="self")
     state_version: Mapped[int] = mapped_column(Integer, default=0)
+    paused_from: Mapped[str] = mapped_column(String(32), default="")
     selection_id: Mapped[str] = mapped_column(String(64), default="")
     device_check_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pending_risk: Mapped[str] = mapped_column(Text, default="")  # 待确认可疑转写（REQ-32，刷新恢复）
@@ -204,12 +205,13 @@ class MemorySource(Base):
 class RequestOperation(Base):
     """外部调用前的持久认领；不保存请求正文或音频。"""
     __tablename__ = "request_operations"
-    __table_args__ = (UniqueConstraint("user_id", "scope", "object_id", "request_key", name="ux_operation_intent"), Index("ux_operation_active_session", "session_id", unique=True, sqlite_where=text("status = 'running' AND session_id != ''")))
+    __table_args__ = (UniqueConstraint("user_id", "scope", "object_id", "request_key", name="ux_operation_intent"), Index("ux_operation_active_session", "session_id", unique=True, sqlite_where=text("status = 'running' AND session_id != '' AND parent_id = ''")))
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     scope: Mapped[str] = mapped_column(String(32))
     object_id: Mapped[str] = mapped_column(String(64))
     session_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    parent_id: Mapped[str] = mapped_column(String(64), default="", index=True)
     request_key: Mapped[str] = mapped_column(String(64))
     request_hash: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(24), default="running")
@@ -218,6 +220,7 @@ class RequestOperation(Base):
     error_message: Mapped[str] = mapped_column(String(255), default="")
     error_status: Mapped[int] = mapped_column(Integer, default=409)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class BudgetReservation(Base):
@@ -229,6 +232,7 @@ class BudgetReservation(Base):
     day: Mapped[str] = mapped_column(String(16))
     amount: Mapped[float] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(16), default="reserved")
+    provider_started: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -562,6 +566,18 @@ class RecoveryAttempt(Base):
     session_id: Mapped[str] = mapped_column(String(64), index=True)
     operation_id: Mapped[str] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ReviewSurveyAnswer(Base):
+    """仅存问卷答案版本和时间，不复制练习正文；随会话清理。"""
+    __tablename__ = 'review_survey_answers'
+    __table_args__ = (UniqueConstraint('session_id', 'version', name='ux_survey_answer_version'),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    answer: Mapped[str] = mapped_column(String(16))
+    answered_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
 class SupplierBillLine(Base):

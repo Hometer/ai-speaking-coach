@@ -3,6 +3,7 @@
 从待复练队列选已到期、来源有效的 3~5 条组成一次连续练习，逐条回忆→提示→完成/跳过/延后/争议，
 结果写回同一套队列并按间隔档位（1/3/7/14）推进。沿用 AC07-08 跨日约束，不另建第二套队列。
 """
+from app.core.dates import utc_iso
 import json
 import re
 import uuid
@@ -18,7 +19,7 @@ from app.services.recall_judge import judge_recall
 from app.services import intent_result
 from app.services import recall_service
 from app.services import events as product_events
-from app.services.operations import durable, fence, require_active
+from app.services.operations import durable, fence, require_active, bump_version
 
 INTERVALS = [1, 3, 7, 14]
 DAILY_LIMIT = 5
@@ -75,6 +76,14 @@ def due_items(db: DbSession, user_id: str, limit: int = DAILY_LIMIT) -> list[Rev
         .all()
     )
     valid = [i for i in items if _aware(i.due_at) <= now and _source_valid(db, i)]
+    from app.services.practice_materials import existing_material
+    ready = []
+    for item in valid:
+        material = existing_material(db, item.source_session_id, item.source_turn_id, item.suggestion_sentence)
+        if material:
+            item.meaning_zh = material.meaning_zh
+            ready.append(item)
+    valid = ready
     valid.sort(key=lambda i: (_aware(i.due_at), 0 if i.retest_result == "independent" else 1))
     return valid[:limit]
 
@@ -92,7 +101,7 @@ def _item_dict(i: ReviewQueueItem) -> dict[str, Any]:
         "status": i.status,
         "success_count": i.success_count,
         "interval_days": i.interval_days,
-        "due_at": i.due_at.isoformat() if i.due_at else None,
+        "due_at": utc_iso(i.due_at) if i.due_at else None,
     }
 
 
@@ -150,7 +159,7 @@ def current_item(db: DbSession, session: Session, user_id: str) -> dict[str, Any
     ids = json.loads(session.daily_review_items or "[]")
     idx = session.daily_review_index
     if session.status == "ENDED":
-        return {"done": True, "index": idx, "total": len(ids)}
+        return {"done": True, "index": idx, "total": len(ids), "notice": "复练材料尚未准备好，已保留原到期状态。" if session.end_reason == "material_not_available" else ""}
     if idx >= len(ids):
         return {"done": True, "index": idx, "total": len(ids)}
     item = db.get(ReviewQueueItem, ids[idx])
@@ -159,6 +168,17 @@ def current_item(db: DbSession, session: Session, user_id: str) -> dict[str, Any
         session.end_reason = "source_invalid"
         db.commit()
         return {"done": True, "index": idx, "total": len(ids)}
+    from app.services.practice_materials import existing_material
+    material = existing_material(db, item.source_session_id, item.source_turn_id, item.suggestion_sentence)
+    if material is None:
+        session.status = 'ENDED'
+        session.end_reason = 'material_not_available'
+        session.ended_at = _now()
+        bump_version(db, session.id)
+        db.commit()
+        product_events.record(db, session.id, 'session_end', session.id, basis='material_not_available')
+        return {'done': True, 'index': idx, 'total': len(ids), 'notice': '复练材料尚未准备好，已保留原到期状态。'}
+    item.meaning_zh = material.meaning_zh
     return {"done": False, "index": idx, "total": len(ids), "item": _item_dict(item)}
 
 
@@ -168,6 +188,7 @@ def _advance(db: DbSession, session: Session) -> None:
     if session.daily_review_index >= len(ids):
         session.status = "ENDED"
         session.end_reason = "goal_reached"
+        session.ended_at = _now()
 
 
 @durable("daily_review", key_arg="attempt_key")
@@ -280,6 +301,7 @@ def control_action(db: DbSession, session_id: str, user_id: str, action: str) ->
     if action == "end":
         session.status = "ENDED"
         session.end_reason = "user_ended"
+        session.ended_at = _now()
         db.commit()
         product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason)
         return {"next": {"done": True, "index": session.daily_review_index, "total": len(json.loads(session.daily_review_items or "[]")), "summary": summary(db, session_id, user_id)}}

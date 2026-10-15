@@ -53,6 +53,7 @@ export interface TurnItem {
 }
 
 export interface DrillView {
+  material_available?: boolean;
   drill_stage: string;
   stage_label: string;
   drill_target: string;
@@ -100,6 +101,7 @@ export interface DailyReviewSummary {
 }
 
 export interface DailyReviewCurrent {
+  notice?: string;
   done: boolean;
   index: number;
   total: number;
@@ -115,6 +117,7 @@ export interface DailyReviewAttemptResult {
 }
 
 export interface PhraseCard {
+  practice_available?: boolean;
   id: number;
   source_session_id: string;
   source_turn_id: string;
@@ -207,6 +210,7 @@ export interface Scenario {
 }
 
 export interface QueueItem {
+  material_available?: boolean;
   attempt_stage?: string;
   question_text?: string;
   id: number;

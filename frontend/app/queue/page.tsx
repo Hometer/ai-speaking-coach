@@ -1,4 +1,5 @@
 "use client";
+import { apiDate } from "@/lib/dates";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -144,7 +145,7 @@ export default function QueuePage() {
       ) : (
         <div className="history-list">
           {items.map((it) => {
-            const isDue = !!it.due_at && new Date(it.due_at).getTime() <= now;
+            const isDue = it.material_available !== false && !!it.due_at && apiDate(it.due_at).getTime() <= now;
             return (
             <article key={it.id} className="panel history-row">
               <span className="icon-tile"><Icon name="check" /></span>
@@ -152,7 +153,7 @@ export default function QueuePage() {
                 <h3>{it.help_shown && it.suggestion_sentence ? it.suggestion_sentence : (it.question_text || it.meaning_zh || "（暂无提示）")}</h3>
                 <div className="history-meta">
                   <span>{STATUS_CN[it.status] || it.status}</span>
-                  {it.due_at && <span>到期 {new Date(it.due_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
+                  {it.due_at && <span>到期 {apiDate(it.due_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
                   {it.success_count > 0 && <span>独立成功 {it.success_count} 次</span>}
                 </div>
               </div>
@@ -163,7 +164,7 @@ export default function QueuePage() {
                     {isDue ? <><input className="field field-small" placeholder="写下复测回答" value={answers[it.id] || ""} onChange={(e) => setAnswers((prev) => ({ ...prev, [it.id]: e.target.value }))} />
                     <button onClick={() => retest(it.id)} disabled={!!pending || recId !== null} className="btn btn-secondary btn-small">{pending === String(it.id) ? "提交中…" : "复测"}</button>
                     <button onClick={() => toggleRecord(it.id)} disabled={!!pending || (recId !== null && recId !== it.id)} className="btn btn-primary btn-small"><Icon name={recId === it.id ? "stop" : "mic"} size={14} />{recId === it.id ? "停止" : "录音复测"}</button>
-                    {recId === it.id && <button onClick={cancelRecording} className="btn btn-ghost btn-small">取消录音</button>}</> : <span className="text-xs muted">到期后可复测</span>}
+                    {recId === it.id && <button onClick={cancelRecording} className="btn btn-ghost btn-small">取消录音</button>}</> : <span className="text-xs muted">{it.material_available === false ? "复练材料待准备" : "到期后可复测"}</span>}
                     {!it.help_shown && <button onClick={() => reveal(it.id)} disabled={!!pending} className="btn btn-ghost btn-small">看答案</button>}
                     <button onClick={() => act(it.id, skipQueueItem)} disabled={!!pending} className="btn btn-ghost btn-small">跳过</button>
                   </>

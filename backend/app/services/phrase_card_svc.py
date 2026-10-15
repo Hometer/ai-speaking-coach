@@ -54,16 +54,12 @@ def _build(db: DbSession, user_id: str, source_session_id: str, source_turn_id: 
     imp = next((i for i in review.get("improvements", []) if i.get("turn_id") == source_turn_id), None)
     if imp is None or imp.get("disputed") or review.get("stale"):
         raise AppError("NOT_FOUND", "改进建议不存在或已失效", status_code=404)
-    scene = SCENARIOS.get(source.scene_id, {})
-    kws = _keywords(source.scene_id)
-    suggestion = imp.get("practice_sentence") or ""
-    chunk = _pick_chunk(suggestion, kws)
-    variations = scene.get("variations") or []
-    refs = scene.get("reference_expressions") or []
-    other_ref = next((r for r in refs if r != suggestion), (refs[0] if refs else ""))
-    # 可替换部分：展示主要语块本身与可替换的同场景词，而不是把整句词替换成错误句。
-    replace_kws = [k for k in kws if k.lower() != chunk.lower()][:2]
-    replaceable = f"{chunk}（可换成 {' / '.join(replace_kws)}）" if replace_kws else chunk
+    from app.services.practice_materials import material_for
+    material = material_for(imp, source.scene_id)
+    suggestion = imp.get('practice_sentence') or ''
+    chunk = material.chunk_text
+    replaceable = f"{material.replaceable_text}（可换成 {material.replacement}）"
+    other_ref = suggestion.replace(material.replaceable_text, material.replacement, 1)
     return PhraseCard(
         user_id=user_id,
         source_session_id=source_session_id,
@@ -71,11 +67,20 @@ def _build(db: DbSession, user_id: str, source_session_id: str, source_turn_id: 
         original_text=imp.get("original", ""),
         suggestion_text=suggestion,
         chunk_text=chunk,
-        explanation_zh=imp.get("explanation_cn", "") or scene.get("goal_zh", ""),
-        context_zh=variations[0] if variations else scene.get("label", ""),
+        explanation_zh=material.meaning_zh,
+        context_zh=material.context_zh,
         replaceable=replaceable,
         example_text=other_ref,
     )
+
+
+def _current_view(db, card):
+    try:
+        fresh = _build(db, card.user_id, card.source_session_id, card.source_turn_id)
+        return {**_to_dict(fresh), 'id': card.id, 'practice_available': True}
+    except AppError:
+        return {**_to_dict(card), 'practice_available': False, 'chunk_text': '', 'replaceable': '',
+            'example_text': '', 'context_zh': '这条卡片的复练材料尚未准备好，保留原句供回看。'}
 
 
 def generate_card(db: DbSession, user_id: str, source_session_id: str, source_turn_id: str) -> dict[str, Any]:
@@ -86,7 +91,7 @@ def generate_card(db: DbSession, user_id: str, source_session_id: str, source_tu
         .first()
     )
     if existing is not None:
-        return _to_dict(existing)
+        return _current_view(db, existing)
     db.add(card)
     db.add(EventLog(session_id=source_session_id, turn_id=source_turn_id, action_type="phrase_card", basis="generated"))
     try:
@@ -100,7 +105,7 @@ def generate_card(db: DbSession, user_id: str, source_session_id: str, source_tu
             .first()
         )
         if existing is not None:
-            return _to_dict(existing)
+            return _current_view(db, existing)
         raise
     db.refresh(card)
     return _to_dict(card)
@@ -113,7 +118,7 @@ def list_cards(db: DbSession, user_id: str) -> list[dict[str, Any]]:
         .order_by(PhraseCard.created_at.desc())
         .all()
     )
-    return [_to_dict(c) for c in cards]
+    return [_current_view(db, c) for c in cards]
 
 
 def invalidate_by_source(db: DbSession, source_session_id: str) -> None:

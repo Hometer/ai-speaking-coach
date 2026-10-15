@@ -268,3 +268,29 @@ def migrate_db() -> None:
         for col, ddl in {"selection_id":"VARCHAR(64) DEFAULT ''", "device_check_id":"INTEGER"}.items():
             if col not in session_cols:
                 conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}"))
+
+        # 第二次质检修复：业务归属与活动互斥分离，保留旧记录。
+        for table, additions in {
+            'sessions': {'paused_from': "VARCHAR(32) DEFAULT ''"},
+            'request_operations': {'parent_id': "VARCHAR(64) DEFAULT ''", 'finished_at': 'DATETIME'},
+            'budget_reservations': {'provider_started': 'BOOLEAN DEFAULT 0'},
+        }.items():
+            present = {r[1] for r in conn.execute(text(f'PRAGMA table_info({table})'))}
+            for col, ddl in additions.items():
+                if col not in present:
+                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {col} {ddl}'))
+        conn.execute(text("UPDATE sessions SET paused_from=(SELECT result_status FROM turns WHERE turns.session_id=sessions.id AND result_status IN ('WAITING_INPUT','PRACTICE','RECHECK') ORDER BY seq DESC LIMIT 1) WHERE status='PAUSED' AND paused_from='' AND EXISTS (SELECT 1 FROM turns WHERE turns.session_id=sessions.id AND result_status IN ('WAITING_INPUT','PRACTICE','RECHECK'))"))
+        conn.execute(text('DROP INDEX IF EXISTS ux_operation_active_session'))
+        for row in conn.execute(text("SELECT id, scope, object_id, response_json FROM request_operations WHERE session_id = ''")).mappings().all():
+            sid = row['object_id'] if row['scope'] in ('drill_svc', 'daily_review', 'turn', 'turn_audio', 'practice') else ''
+            if not sid:
+                try:
+                    sid = json.loads(row['response_json'] or '{}').get('session_id', '')
+                except (ValueError, TypeError, AttributeError):
+                    sid = ''
+            if sid and conn.execute(text('SELECT id FROM sessions WHERE id=:sid AND user_id=(SELECT user_id FROM request_operations WHERE id=:id)'), {'sid': sid, 'id': row['id']}).first():
+                # 原本无归属的业务提交属于旧版嵌套请求；无法证明父 ID 时明确标记 legacy。
+                parent = 'legacy' if row['scope'] in ('drill_svc', 'daily_review', 'turn', 'turn_audio', 'practice') else ''
+                conn.execute(text('UPDATE request_operations SET session_id=:sid, parent_id=:parent WHERE id=:id'),
+                    {'sid': sid, 'parent': parent, 'id': row['id']})
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_operation_active_session ON request_operations(session_id) WHERE status='running' AND session_id!='' AND parent_id=''"))

@@ -41,6 +41,10 @@ export function clearIntentKey(scope: string): void {
   try { sessionStorage.removeItem(`ai_intent:${scope}`); } catch { /* 同上 */ }
 }
 
+export class ApiError extends Error {
+  constructor(message:string, public code:string, public status:number) { super(message); }
+}
+
 async function handle<T>(res: Response): Promise<T> {
   const text = await res.text();
   let data: unknown = null;
@@ -53,7 +57,7 @@ async function handle<T>(res: Response): Promise<T> {
   }
   if (!res.ok) {
     const msg = (data as ApiErrorBody | null)?.error?.message ?? `HTTP ${res.status}`;
-    throw new Error(msg);
+    throw new ApiError(msg, (data as ApiErrorBody | null)?.error?.code || "HTTP_ERROR", res.status);
   }
   // 200 + 合法 JSON（包括字面量 null）都按成功返回，避免 getPlan 等接口的空值被误报为"HTTP 200"。
   return data as T;
@@ -78,25 +82,60 @@ export async function recordDeviceCheck(status: string, summary: string): Promis
   return handle<{device_check_id: number}>(res);
 }
 
-export async function createSession(
-  level: string,
-  difficulty: string,
-  durationMinutes = 5,
-  sceneId = "job_interview",
-  planEntry?: { planId: number; planDay: number },
-  entry?: {selectionId?: string; deviceCheckId?: number},
-): Promise<SessionCreated> {
-  const scope = "create-session";
-  const requestKey = await intentKey(scope, JSON.stringify({ level, difficulty, durationMinutes, sceneId, planEntry, entry }));
-  const res = await fetch("/api/v1/sessions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ level, difficulty, duration_minutes: durationMinutes, scene_id: sceneId, request_key: requestKey, plan_id: planEntry?.planId, plan_day: planEntry?.planDay, selection_id:entry?.selectionId || "", device_check_id:entry?.deviceCheckId }),
-  });
-  const result = await handle<SessionCreated>(res);
-  clearIntentKey(scope);
-  clearIntentKey("scene-selection");
+type CreateBody = {level:string;difficulty:string;duration_minutes:number;scene_id:string;request_key:string;plan_id?:number;plan_day?:number;selection_id:string;device_check_id?:number};
+
+async function creationSlot():Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256",new TextEncoder().encode(getInviteCode()));
+  const identity=Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,"0")).join("");
+  return `ai_pending_create:${identity}`;
+}
+
+export async function pendingCreation():Promise<CreateBody | null> {
+  try {
+    const value=JSON.parse(sessionStorage.getItem(await creationSlot()) || "null") as CreateBody | null;
+    return value?.request_key && value.scene_id && value.level ? value : null;
+  } catch { return null; }
+}
+
+async function performCreation(body:CreateBody,recovery:boolean):Promise<SessionCreated> {
+  const slot=await creationSlot();
+  // 先持久保存精确请求，再发起可能付费的创建；保存失败时不发请求。
+  sessionStorage.setItem(slot,JSON.stringify(body));
+  try {
+    const result=await handle<SessionCreated>(await fetch("/api/v1/sessions",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify(body)}));
+    if(recovery)sessionStorage.setItem(`ai_intent:create:${result.session_id}`,JSON.stringify({key:body.request_key}));
+    sessionStorage.removeItem(slot);
+    clearIntentKey("create-session");clearIntentKey("scene-selection");
+    return result;
+  } catch(error) {
+    if(error instanceof ApiError && !["REQUEST_IN_PROGRESS","REQUEST_UNCERTAIN","INTERNAL_ERROR"].includes(error.code)) sessionStorage.removeItem(slot);
+    throw error;
+  }
+}
+
+const creationFlights=new Map<string,Promise<SessionCreated>>();
+function sendCreation(body:CreateBody,recovery=false):Promise<SessionCreated> {
+  const owner=getInviteCode();
+  const existing=creationFlights.get(owner);
+  if(existing)return existing;
+  const result=performCreation(body,recovery).finally(()=>{creationFlights.delete(owner);});
+  creationFlights.set(owner,result);
   return result;
+}
+
+export async function resumeCreation():Promise<SessionCreated | null> {
+  const body=await pendingCreation();
+  return body ? sendCreation(body,true) : null;
+}
+
+export async function createSession(
+  level: string, difficulty: string, durationMinutes=5, sceneId="job_interview",
+  planEntry?: {planId:number;planDay:number}, entry?: {selectionId?:string;deviceCheckId?:number},
+):Promise<SessionCreated> {
+  const previous=await pendingCreation();
+  return sendCreation(previous || {level,difficulty,duration_minutes:durationMinutes,scene_id:sceneId,
+    request_key:crypto.randomUUID(),plan_id:planEntry?.planId,plan_day:planEntry?.planDay,
+    selection_id:entry?.selectionId || "",device_check_id:entry?.deviceCheckId},previous!==null);
 }
 
 export async function createPracticeSentence(sourceSessionId: string, turnId: string): Promise<SessionCreated> {
@@ -560,4 +599,31 @@ export async function startRecovery(sessionId: string, operationId: string): Pro
 
 export async function disputePronunciation(sessionId: string, turnId: string): Promise<void> {
   await handle(await fetch(`/api/v1/sessions/${sessionId}/turns/${turnId}/pronunciation-dispute`,{method:"POST",headers:authHeaders()}));
+}
+
+// 只恢复此标签页尚未确认的提交；普通浏览不会登记已完成操作的恢复。
+export async function recoverPendingSubmissions(sessionId:string):Promise<void> {
+  const candidates:Array<{slot:string;scope:string;key:string}>=[];
+  try {
+    for(let i=0;i<sessionStorage.length;i++){
+      const slot=sessionStorage.key(i) || "";
+      const local=slot.replace(/^ai_intent:/,"");
+      let scope="";
+      if(local===`create:${sessionId}`)scope="create_session";
+      else if(local===`turn:${sessionId}`)scope="turn";
+      else if(local.startsWith(`practice:${sessionId}:`))scope="practice";
+      else if(local===`drill:${sessionId}`)scope="drill_svc";
+      else if(local===`drill-voice:${sessionId}` || local===`daily-voice:${sessionId}`)scope="voice";
+      else if(local===`daily:${sessionId}`)scope="daily_review";
+      if(scope){const value=JSON.parse(sessionStorage.getItem(slot) || "null") as {key?:string}|null;if(value?.key)candidates.push({slot,scope,key:value.key});}
+    }
+  } catch { return; }
+  await Promise.all(candidates.map(async item=>{
+    try {
+      const qs=new URLSearchParams({scope:item.scope,request_key:item.key});
+      const op=await handle<{operation_id:string;state:string}>(await fetch(`/api/v1/sessions/${sessionId}/operations/lookup?${qs}`,{headers:authHeaders()}));
+      await startRecovery(sessionId,op.operation_id);
+      if(op.state==="done" || op.state==="failed")sessionStorage.removeItem(item.slot);
+    } catch { /* 未受理或暂时断网时保留原键，不自动重发模型。 */ }
+  }));
 }
