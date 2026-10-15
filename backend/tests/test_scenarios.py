@@ -67,7 +67,7 @@ def test_record_device_check(client):
         headers=USER,
     )
     assert r.status_code == 200, r.text
-    assert r.json() == {"recorded": True}
+    assert r.json()["recorded"] is True and r.json()["device_check_id"] > 0
 
 
 # ===== v0.7 P0 多场景收口回归 =====

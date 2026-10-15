@@ -3,20 +3,31 @@ from typing import Any
 
 from sqlalchemy.orm import Session as DbSession
 
-from app.models.entities import Turn
+import json
+from app.core.config import settings
+from app.models.entities import Turn, Evaluation
+from app.services.answer_feedback import grounded, VERSION
 
 
-def _improvement(t: Turn, scene: dict) -> dict[str, Any]:
-    original = t.user_text or t.transcript
-    refs = scene.get("reference_expressions") or []
-    goal_zh = scene.get("goal_zh", "本次目标")
-    return {
-        "original": original,
-        "suggestion": f"Complete the sentence '{original}' with more detail about {goal_zh}.",
-        "explanation_cn": f"围绕「{goal_zh}」把表达补得更完整。",
-        "practice_sentence": refs[0] if refs else "",
-        "turn_id": t.id,
-    }
+def _improvements(db, turns):
+    result = []
+    for turn in turns:
+        if turn.eval_result in ("revised", "insufficient_evidence"):
+            continue
+        evaluation = db.query(Evaluation).filter_by(turn_id=turn.id, revision_version=turn.revision_version).order_by(Evaluation.id.desc()).first()
+        if not evaluation or evaluation.result == "revised":
+            continue
+        try:
+            items = grounded(turn.revised_text or turn.user_text or turn.transcript, json.loads(evaluation.feedback_json or "[]"))
+        except (ValueError, TypeError):
+            items = []
+        for item in items:
+            result.append({"original":turn.revised_text or turn.user_text or turn.transcript,
+                "suggestion":item.practice_sentence,"explanation_cn":item.explanation_cn,
+                "practice_sentence":item.practice_sentence,"source_quote":item.source_quote,
+                "issue_type":item.issue_type,"turn_id":turn.id,"revision_version":turn.revision_version,
+                "feedback_version":VERSION,"feedback_source":evaluation.feedback_origin})
+    return result[:2]
 
 
 def _ratings(goal_status: str, good_count: int) -> dict[str, str]:
@@ -65,11 +76,7 @@ def build_review(db: DbSession, session, end_reason: str) -> dict[str, Any]:
         t.user_text or t.transcript for t in user_turns if t.eval_result == "independent"
     ]
 
-    improvements = [
-        _improvement(t, scene)
-        for t in user_turns
-        if t.eval_result in ("incomplete", "hinted") and (t.user_text or t.transcript)
-    ][:2]
+    improvements = _improvements(db, user_turns)
 
     breakdown = {"voice": 0, "text": 0, "practice": 0, "hinted": 0}
     for t in turns:
@@ -82,6 +89,8 @@ def build_review(db: DbSession, session, end_reason: str) -> dict[str, Any]:
         "evidence": evidence,
         "good_fragments": good_fragments,
         "improvements": improvements,
+        "feedback_version": VERSION,
+        "feedback_status": "available" if improvements else "not_evaluated",
         "ratings": _ratings(goal_status, len(good_fragments)),
         "next_suggestion": f"Practice {scene.get('goal_zh', 'this scene')} again on your own.",
         "end_reason": end_reason,

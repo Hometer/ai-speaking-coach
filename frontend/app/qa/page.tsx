@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { qaLearningMetrics, reviewConversation, completeQaRecording, qaAddLabel, qaRecordingAccessLog, qaSessions, qaStats } from "@/lib/api";
 import type { QaSession } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
+import LearningMetrics from "@/components/LearningMetrics";
 import Icon from "@/components/Icon";
 
 const ISSUE_TYPES = [
@@ -17,6 +18,7 @@ const ISSUE_TYPES = [
 
 export default function QaPage() {
   const [learningMetrics, setLearningMetrics] = useState<Awaited<ReturnType<typeof qaLearningMetrics>> | null>(null);
+  const [metricsError,setMetricsError]=useState("");
   const [sessions, setSessions] = useState<QaSession[]>([]);
   const [stats, setStats] = useState<{ total: number; by_type: Record<string, number> }>({ total: 0, by_type: {} });
   const [loading, setLoading] = useState(true);
@@ -30,7 +32,7 @@ export default function QaPage() {
 
   useEffect(() => {
     let active = true;
-    void qaLearningMetrics().then(m => { if(active) setLearningMetrics(m); }).catch(() => {});
+    void qaLearningMetrics().then(m => { if(active) setLearningMetrics(m); }).catch(() => {if(active)setMetricsError("产品指标暂未加载，请刷新重试。");});
     Promise.all([qaSessions(), qaStats()])
       .then(([s, st]) => { if (active) { setSessions(s); setStats(st); } })
       .catch((e) => { if (active) setErr(e instanceof Error ? e.message : String(e)); })
@@ -93,6 +95,8 @@ export default function QaPage() {
       ) : (
         <>
           {learningMetrics && <div className="panel panel-padding mb-5"><h2>7 日主动有效复练</h2><p>满观察窗口 {learningMetrics.eligible_users} 人；主动有效复练 {learningMetrics.active_review_users} 人；{learningMetrics.active_review_rate === null ? "样本不足，待观察" : `${Math.round(learningMetrics.active_review_rate * 100)}%`}。完整场景复练 {learningMetrics.full_scene_review_users} 人；观察未满 {learningMetrics.pending_observation_users} 人。</p><p className="text-xs muted">排除文字、跟读、研究员安排和未到期复测。语音活动时长规则仍待真实样本校准。</p></div>}
+          {learningMetrics?.metrics && <LearningMetrics data={learningMetrics}/>}
+          {metricsError && <p role="alert">{metricsError}</p>}
           <div className="panel panel-padding mb-5">
             <span className="field-label">版本统计</span>
             <p className="mt-2">共标记 {stats.total} 条</p>

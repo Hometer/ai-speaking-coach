@@ -260,3 +260,11 @@ def migrate_db() -> None:
         ucols = {r[1] for r in conn.execute(text("PRAGMA table_info(provider_usage_events)"))}
         if "audio_seconds" not in ucols:
             conn.execute(text("ALTER TABLE provider_usage_events ADD COLUMN audio_seconds FLOAT"))
+        eval_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(evaluations)"))}
+        for col, ddl in {"feedback_json":"TEXT DEFAULT '[]'", "revision_version":"INTEGER DEFAULT 0", "feedback_origin":"VARCHAR(24) DEFAULT 'unknown'"}.items():
+            if col not in eval_cols:
+                conn.execute(text(f"ALTER TABLE evaluations ADD COLUMN {col} {ddl}"))
+        session_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))}
+        for col, ddl in {"selection_id":"VARCHAR(64) DEFAULT ''", "device_check_id":"INTEGER"}.items():
+            if col not in session_cols:
+                conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}"))

@@ -153,7 +153,13 @@ EVAL_SYSTEM_PROMPT = (
     "You receive: the goal, the current subgoal being evaluated, the subgoal's standard, the user's "
     "answer, whether a hint was used, and any tool results.\n"
     "Output ONLY a JSON object: "
-    '{"result": "independent|hinted|incomplete|insufficient_evidence", "evidence_turn_ids": []}.\n'
+    '{"result": "independent|hinted|incomplete|insufficient_evidence", "evidence_turn_ids": [], "feedback": []}.\n'
+    "feedback is at most TWO concrete language issues in THIS answer, independent of goal completion. "
+    "Each item has issue_type (grammar/vocabulary/expression), source_quote (exact substring of answer), "
+    "explanation_cn (specific Chinese explanation), practice_sentence (faithful corrected answer), "
+    "facts_preserved (boolean). Do not use scene reference sentences. Never invent names, numbers, "
+    "job titles, experiences or missing goal details. Correct English, mere brevity, an unanswered "
+    "task condition or uncertain meaning is NOT a language error: return feedback:[] in those cases.\n"
     "Rules:\n"
     "- independent: the answer SPECIFICALLY fulfills the current subgoal's standard with concrete "
     "content, without a hint. A single vague phrase or bare agreement (e.g. just 'I agree', 'I work "

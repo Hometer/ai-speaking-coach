@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { recordProductEvent, addToQueue, createSession, deleteAllSessions, deleteSession, getSession, listScenarios, listSessions } from "@/lib/api";
 import type { Scenario, SessionDetail, SessionListItem } from "@/lib/types";
 import Icon from "@/components/Icon";
+import ReviewSurvey from "@/components/ReviewSurvey";
 
 const EVAL_CN: Record<string, string> = { independent: "独立完成", hinted: "提示下完成", incomplete: "未完成", insufficient_evidence: "证据不足", text_completed: "文字完成", not_started: "未开始", revised: "待重算" };
 function formatDate(value: string | null) {
@@ -111,8 +112,9 @@ export default function HistoryPage() {
         {detail.turns.map(t => <div key={t.turn_id}>
           {t.input_type === "coach" ? <div className="detail-turn"><small>AI 教练</small>{t.reply_text}</div> : t.input_type === "practice" ? <div className="detail-turn user"><small>跟读练习</small>{t.practice_sentence || "短句练习"}</div> : <>{(t.revised_text || t.user_text || t.transcript) && <div className="detail-turn user"><small>你的回答{t.revised_text ? " · 已修订" : ""}</small>{t.revised_text || t.user_text || t.transcript}</div>}{t.reply_text && <div className="detail-turn"><small>AI 教练</small>{t.reply_text}</div>}</>}
         </div>)}
-        {detail.review && Array.isArray(detail.review.improvements) && detail.review.improvements.length > 0 && <div className="mt-5"><h3 className="font-semibold mb-2">值得再练的表达</h3>{(detail.review.improvements as Record<string, unknown>[]).map((imp,i) => { const tid = String(imp.turn_id ?? ""); return <div className="detail-turn" key={i}><small>{imp.disputed ? "已标记有误，待复核" : "改进建议"}</small><p>{String(imp.explanation_cn ?? "")}</p><p className="mt-2 font-medium">{String(imp.practice_sentence ?? "")}</p>{tid && !imp.disputed && <button onClick={() => addQueue(detail.session_id, tid)} disabled={!!pending || added.has(tid)} className="btn btn-secondary btn-small mt-2">{added.has(tid) ? "已加入待复练" : "加入待复练"}<Icon name="check" size={13} /></button>}</div>; })}</div>}
+        {detail.review && Array.isArray(detail.review.improvements) && detail.review.improvements.length > 0 && <div className="mt-5"><h3 className="font-semibold mb-2">值得再练的表达</h3>{(detail.review.improvements as Record<string, unknown>[]).map((imp,i) => { const tid = String(imp.turn_id ?? ""); return <div className="detail-turn" key={i}><small>{imp.disputed ? "已标记有误，待复核" : imp.feedback_source === "mock_fixture" ? "离线样例建议" : imp.feedback_version ? "针对本回合的建议" : "旧版建议，尚未按新口径核验"}</small><p>{String(imp.explanation_cn ?? "")}</p><p className="mt-2 font-medium">{String(imp.practice_sentence ?? "")}</p>{tid && !imp.disputed && <button onClick={() => addQueue(detail.session_id, tid)} disabled={!!pending || added.has(tid)} className="btn btn-secondary btn-small mt-2">{added.has(tid) ? "已加入待复练" : "加入待复练"}<Icon name="check" size={13} /></button>}</div>; })}</div>}
         <div className="flex flex-wrap gap-3 mt-5"><Link className="btn btn-secondary" href={`/practice/${detail.session_id}`}>{detail.status === "ENDED" ? "打开完整回顾" : "回到这次练习"}<Icon name="arrow" size={15} /></Link><button onClick={() => retry(detail.level, detail.difficulty, detail.scene_id)} disabled={!!pending} className="btn btn-primary">再练一次（同难度新题）</button></div>
+        {detail.practice_type === "interview" && detail.status === "ENDED" && detail.review && !detail.review.stale && Array.isArray(detail.review.evidence) && detail.review.evidence.length>0 && <ReviewSurvey sessionId={detail.session_id}/>}
         <p className="text-xs muted mt-4">反馈仅供练习参考，不代表考试成绩或语言能力认证。</p>
       </section>}
       <footer className="page-footer"><span><Icon name="shield" size={12} /> 会话文本保留 30 天，你也可以随时删除</span><span>Progress starts with practice.</span></footer>

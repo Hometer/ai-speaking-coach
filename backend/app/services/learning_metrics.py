@@ -8,9 +8,11 @@ def aware(dt):
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
-def calculate(db, user_id=None, now=None):
+def calculate(db, user_id=None, now=None, cohort_start=None, exclude_users=None):
     now=now or datetime.now(timezone.utc)
     sessions=db.query(Session).all()
+    if exclude_users:
+        sessions=[s for s in sessions if s.user_id not in exclude_users]
     if user_id:
         sessions=[s for s in sessions if s.user_id==user_id]
     ordinary=[s for s in sessions if s.practice_type=='interview']
@@ -18,6 +20,8 @@ def calculate(db, user_id=None, now=None):
     first={}
     for s in sorted(completed,key=lambda s:aware(s.ended_at)):
         first.setdefault(s.user_id,s)
+    if cohort_start:
+        first={uid:s for uid,s in first.items() if aware(s.ended_at)>=cohort_start}
     eligible={uid:s for uid,s in first.items() if aware(s.ended_at)+timedelta(days=7)<=now}
     active=set();full=set()
     for uid,initial in eligible.items():

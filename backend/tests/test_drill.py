@@ -145,7 +145,7 @@ def test_drill_voice_free_speak(client, monkeypatch):
 def test_drill_loose_match_not_exact(client):
     source_sid, source_tid, imp = _source_improvement(client)
     d = _create_drill(client, source_sid, source_tid)
-    r = _attempt(client, d["session_id"], "I have three years of experience in software development, yes.")
+    r = _attempt(client, d["session_id"], "I am working now.")
     assert r["success"] is True
 
 

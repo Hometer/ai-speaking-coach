@@ -21,6 +21,13 @@ class MockEvaluatorProvider(EvaluatorProvider):
     """确定性的 mock 评估器。规则：空/过短=证据不足；用过提示=提示下；含 'I have' 或足够长=独立；否则=未完成。"""
 
     def evaluate(self, context: dict[str, Any]) -> EvaluationOutput:
+        from app.services.answer_feedback import mock_feedback
+        result = self._completion(context)
+        if result.result != "insufficient_evidence":
+            result.feedback = mock_feedback((context.get("answer") or context.get("user_answer") or "").strip())
+        return result
+
+    def _completion(self, context: dict[str, Any]) -> EvaluationOutput:
         answer = (context.get("answer") or context.get("user_answer") or "").strip()
         hint_used = bool(context.get("hint_used", False))
         if len(answer) < 3:
@@ -66,9 +73,11 @@ class DashScopeEvaluatorProvider(EvaluatorProvider):
         if data is None:
             raise AppError("EVAL_PARSE_ERROR", "评估返回格式异常", status_code=502)
         try:
+            from app.services.answer_feedback import grounded
             return EvaluationOutput(
                 result=data.get("result", "insufficient_evidence"),
                 evidence_turn_ids=list(data.get("evidence_turn_ids", [])),
+                feedback=grounded(context.get("answer", ""), data.get("feedback", [])),
             )
         except Exception as exc:  # noqa: BLE001
             raise AppError("EVAL_PARSE_ERROR", "评估结果字段不合法", status_code=502) from exc

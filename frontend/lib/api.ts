@@ -69,13 +69,13 @@ export async function getScenario(sceneId: string): Promise<Scenario> {
   return handle<Scenario>(res);
 }
 
-export async function recordDeviceCheck(status: string, summary: string): Promise<void> {
+export async function recordDeviceCheck(status: string, summary: string): Promise<{device_check_id: number}> {
   const res = await fetch("/api/v1/device-check", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ status, summary }),
   });
-  await handle<unknown>(res);
+  return handle<{device_check_id: number}>(res);
 }
 
 export async function createSession(
@@ -84,16 +84,18 @@ export async function createSession(
   durationMinutes = 5,
   sceneId = "job_interview",
   planEntry?: { planId: number; planDay: number },
+  entry?: {selectionId?: string; deviceCheckId?: number},
 ): Promise<SessionCreated> {
   const scope = "create-session";
-  const requestKey = await intentKey(scope, JSON.stringify({ level, difficulty, durationMinutes, sceneId, planEntry }));
+  const requestKey = await intentKey(scope, JSON.stringify({ level, difficulty, durationMinutes, sceneId, planEntry, entry }));
   const res = await fetch("/api/v1/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ level, difficulty, duration_minutes: durationMinutes, scene_id: sceneId, request_key: requestKey, plan_id: planEntry?.planId, plan_day: planEntry?.planDay }),
+    body: JSON.stringify({ level, difficulty, duration_minutes: durationMinutes, scene_id: sceneId, request_key: requestKey, plan_id: planEntry?.planId, plan_day: planEntry?.planDay, selection_id:entry?.selectionId || "", device_check_id:entry?.deviceCheckId }),
   });
   const result = await handle<SessionCreated>(res);
   clearIntentKey(scope);
+  clearIntentKey("scene-selection");
   return result;
 }
 
@@ -524,7 +526,7 @@ export async function updateMemory(id: number, text: string): Promise<void> {
   await handle(await fetch(`/api/v1/users/me/memories/${id}`, {method: "PATCH", headers: {"Content-Type":"application/json", ...authHeaders()}, body: JSON.stringify({text})}));
 }
 
-export function recordProductEvent(sessionId: string, action: "demo_play" | "recording_play" | "record_start" | "record_cancel" | "record_retry" | "review_view", key = crypto.randomUUID()): void {
+export function recordProductEvent(sessionId: string, action: "demo_play" | "recording_play" | "record_attempt" | "record_start" | "record_cancel" | "record_retry" | "review_view", key = crypto.randomUUID()): void {
   void fetch(`/api/v1/sessions/${sessionId}/events`, {method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({action,request_key:key})}).catch(() => {});
 }
 
@@ -532,6 +534,30 @@ export async function reviewConversation(turnId: string, answered: boolean, repe
   await handle(await fetch(`/api/v1/qa/conversation/${turnId}`, {method:"PATCH",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({answered,repeated_followup,topic_jump})}));
 }
 
-export async function qaLearningMetrics(): Promise<{eligible_users:number;active_review_users:number;active_review_rate:number|null;full_scene_review_users:number;pending_observation_users:number}> {
+export async function qaLearningMetrics(): Promise<import("./types").LearningMetrics> {
   return handle(await fetch("/api/v1/qa/learning-metrics",{headers:authHeaders()}));
+}
+
+export async function selectScene(sceneId: string): Promise<string> {
+  const key = await intentKey("scene-selection",sceneId);
+  const result = await handle<{event_id:string}>(await fetch("/api/v1/users/me/product-events",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({action:"scene_select",request_key:key,scene_id:sceneId})}));
+  return result.event_id;
+}
+
+export function recordStage(sessionId: string, stage: string, action: "stage_view" | "stage_start"): void {
+  if (stage !== "free_speak" && stage !== "transfer") return;
+  void fetch("/api/v1/users/me/product-events",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({action,request_key:`${sessionId}:${stage}`,session_id:sessionId,stage})}).catch(()=>{});
+}
+
+export type SurveyAnswer = "helpful" | "not_helpful" | "uncertain";
+export async function reviewSurvey(sessionId: string, answer: SurveyAnswer | "shown"): Promise<{answer:SurveyAnswer | null;version:number}> {
+  return handle(await fetch(`/api/v1/sessions/${sessionId}/review-survey`,{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({answer})}));
+}
+
+export async function startRecovery(sessionId: string, operationId: string): Promise<void> {
+  await handle(await fetch(`/api/v1/sessions/${sessionId}/recoveries`,{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({operation_id:operationId})}));
+}
+
+export async function disputePronunciation(sessionId: string, turnId: string): Promise<void> {
+  await handle(await fetch(`/api/v1/sessions/${sessionId}/turns/${turnId}/pronunciation-dispute`,{method:"POST",headers:authHeaders()}));
 }

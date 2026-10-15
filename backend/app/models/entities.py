@@ -60,6 +60,8 @@ class Session(Base):
     in_flight: Mapped[bool] = mapped_column(default=False)  # 处理中标记（刷新恢复）
     initiation: Mapped[str] = mapped_column(String(16), default="self")
     state_version: Mapped[int] = mapped_column(Integer, default=0)
+    selection_id: Mapped[str] = mapped_column(String(64), default="")
+    device_check_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pending_risk: Mapped[str] = mapped_column(Text, default="")  # 待确认可疑转写（REQ-32，刷新恢复）
     plan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     plan_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -117,6 +119,9 @@ class Evaluation(Base):
     question: Mapped[str] = mapped_column(Text, default="")
     evidence_turn_ids: Mapped[str] = mapped_column(Text, default="")
     standard_version: Mapped[str] = mapped_column(String(16), default="v1")
+    feedback_json: Mapped[str] = mapped_column(Text, default="[]")
+    feedback_origin: Mapped[str] = mapped_column(String(24), default="unknown")
+    revision_version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -519,6 +524,43 @@ class ConversationQualityReview(Base):
     conclusion_json: Mapped[str] = mapped_column(Text)
     prompt_version: Mapped[str] = mapped_column(String(16))
     scenario_version: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ProductEvent(Base):
+    """白名单产品动作，不保存正文或任意 JSON。"""
+    __tablename__ = "product_events"
+    __table_args__ = (UniqueConstraint("user_id", "action", "request_key", name="ux_product_event_key"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(24))
+    request_key: Mapped[str] = mapped_column(String(64))
+    session_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    scene_id: Mapped[str] = mapped_column(String(32), default="")
+    stage: Mapped[str] = mapped_column(String(16), default="")
+    turn_id: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ReviewSurvey(Base):
+    __tablename__ = "review_surveys"
+    __table_args__ = (UniqueConstraint("session_id", name="ux_review_survey_session"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    answer: Mapped[str] = mapped_column(String(16), default="")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    shown_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class RecoveryAttempt(Base):
+    __tablename__ = "recovery_attempts"
+    __table_args__ = (UniqueConstraint("operation_id", name="ux_recovery_operation"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    operation_id: Mapped[str] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

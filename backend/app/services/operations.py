@@ -47,6 +47,9 @@ def durable(scope: str, key_arg: str = 'request_key', object_arg: str = 'session
                 values[key_arg] = key
             obj = str(values.get(object_arg) or user_id)
             payload = {k: v for k, v in values.items() if k not in ('db', 'submit', key_arg)}
+            for optional in ('selection_id', 'device_check_id'):
+                if not payload.get(optional):
+                    payload.pop(optional, None)
             digest = hashlib.sha256(json.dumps(payload, sort_keys=True, default=_json).encode()).hexdigest()
             row = db.query(RequestOperation).filter_by(user_id=user_id, scope=scope, object_id=obj, request_key=key).first()
             if row is None:

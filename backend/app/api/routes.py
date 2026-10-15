@@ -1,6 +1,7 @@
 """API 路由（同步 def，由 FastAPI 线程池执行，避免阻塞事件循环）。"""
 import json
 import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
@@ -115,7 +116,7 @@ def qa_recording_access_log(recording_id: int, reviewer_id: str = Depends(get_qa
 def create_session(req: SessionCreateRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes, req.scene_id, req.request_key, req.plan_id, req.plan_day)
+        return session_svc.create_session(db, user_id, req.level, req.difficulty, req.duration_minutes, req.scene_id, req.request_key, req.plan_id, req.plan_day, req.selection_id, req.device_check_id)
     finally:
         db.close()
 
@@ -159,9 +160,10 @@ def scenario_detail(scene_id: str, user_id: str = Depends(get_user_id)):
 def record_device_check(req: DeviceCheckRequest, user_id: str = Depends(get_user_id)):
     db = SessionLocal()
     try:
-        db.add(DeviceCheck(user_id=user_id, summary=req.summary, status=req.status))
+        check = DeviceCheck(user_id=user_id, summary=req.summary, status=req.status)
+        db.add(check)
         db.commit()
-        return {"recorded": True}
+        return {"recorded": True, "device_check_id":check.id}
     finally:
         db.close()
 
@@ -741,7 +743,7 @@ from pydantic import BaseModel, Field, StrictBool
 from typing import Literal
 
 class MediaEventRequest(BaseModel):
-    action: Literal["demo_play","recording_play","record_start","record_cancel","record_retry","review_view"]
+    action: Literal["demo_play","recording_play","record_attempt","record_start","record_cancel","record_retry","review_view"]
     request_key: str = Field(min_length=1,max_length=64)
     turn_id: str = Field(default="",max_length=64)
 
@@ -755,7 +757,11 @@ def media_event(session_id: str, req: MediaEventRequest, user_id: str = Depends(
     from app.services.events import record, MEDIA_ACTIONS
     db = SessionLocal()
     try:
-        session_svc._require_session(db, session_id, user_id)
+        session = session_svc._require_session(db, session_id, user_id)
+        if req.action == "review_view":
+            from app.services.completion import valid_completion
+            if not valid_completion(db, session):
+                raise AppError("REVIEW_NOT_AVAILABLE", "当前没有可查看的有效回顾", 409)
         req = req.model_dump()
         turn_id = req.get("turn_id", "")
         if turn_id:
@@ -769,12 +775,55 @@ def media_event(session_id: str, req: MediaEventRequest, user_id: str = Depends(
         db.close()
 
 
-@router.get("/qa/learning-metrics")
-def qa_learning_metrics(reviewer: str = Depends(get_qa_user_id)):
-    from app.services.learning_metrics import calculate
+from app.schemas.product import ProductMetrics, ProductEventRequest, SurveyRequest, RecoveryRequest
+
+
+@router.post('/users/me/product-events')
+def product_event(req: ProductEventRequest, user_id: str = Depends(get_user_id)):
+    from app.services.product_data import event
+    with SessionLocal() as db:
+        return event(db,user_id,req)
+
+
+@router.post('/sessions/{session_id}/review-survey')
+def review_survey(session_id: str, req: SurveyRequest, user_id: str = Depends(get_user_id)):
+    from app.services.product_data import survey
+    with SessionLocal() as db:
+        return survey(db,user_id,session_id,req.answer)
+
+
+@router.post('/sessions/{session_id}/recoveries')
+def begin_recovery(session_id: str, req: RecoveryRequest, user_id: str = Depends(get_user_id)):
+    from app.services.product_data import recover
+    with SessionLocal() as db:
+        return recover(db,user_id,session_id,req.operation_id)
+
+
+@router.get('/sessions/{session_id}/recoveries/{recovery_id}')
+def read_recovery(session_id: str, recovery_id: str, user_id: str = Depends(get_user_id)):
+    from app.services.product_data import recovery_status
+    from app.models.entities import RecoveryAttempt
+    with SessionLocal() as db:
+        session_svc._require_session(db,session_id,user_id)
+        row=db.get(RecoveryAttempt,recovery_id)
+        if row is None or row.user_id!=user_id or row.session_id!=session_id:
+            raise AppError('NOT_FOUND','恢复尝试不存在',404)
+        return recovery_status(db,row)
+
+
+@router.post('/sessions/{session_id}/turns/{turn_id}/pronunciation-dispute')
+def pronunciation_dispute(session_id: str, turn_id: str, user_id: str = Depends(get_user_id)):
+    from app.services.product_data import word_dispute
+    with SessionLocal() as db:
+        return word_dispute(db,user_id,session_id,turn_id)
+
+
+@router.get("/qa/learning-metrics", response_model=ProductMetrics)
+def qa_learning_metrics(start: datetime | None = None, end: datetime | None = None, reviewer: str = Depends(get_qa_user_id)):
+    from app.services.product_metrics import report
     db = SessionLocal()
     try:
-        return calculate(db)
+        return report(db, start, end)
     finally:
         db.close()
 

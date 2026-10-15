@@ -16,6 +16,7 @@ import {
   listSessions,
   recordDeviceCheck,
   setInviteCode,
+  selectScene,
 } from "@/lib/api";
 import type { Scenario } from "@/lib/types";
 import Icon from "@/components/Icon";
@@ -164,6 +165,10 @@ export default function Home() {
       .catch(() => setScene(null));
   }, [loggedIn, sceneId]);
 
+  useEffect(()=>{
+    if(loggedIn && scene?.scene_id===sceneId) void selectScene(sceneId).catch(()=>{});
+  },[loggedIn,sceneId,scene]);
+
   useEffect(() => {
     if (!loggedIn) return;
     let active = true;
@@ -214,11 +219,12 @@ export default function Home() {
       // 设备预检（失败不阻断，可转文字练习）
       const device = await checkDevice();
       setDeviceItems(device.items);
-      await recordDeviceCheck(device.ok ? "ok" : "degraded", device.summary).catch(() => {});
+      const check = await recordDeviceCheck(device.ok ? "ok" : "degraded", device.summary).catch(() => null);
+      const selectionId = await selectScene(sceneId).catch(()=>undefined);
       if (!device.ok) {
         setErr(`设备提示：${device.summary}。你仍可开始练习，语音回答可能受限，可用文字替代。`);
       }
-      const s = await createSession(level, difficulty, duration, sceneId, planEntry && planEntry.sceneId === sceneId ? planEntry : undefined);
+      const s = await createSession(level, difficulty, duration, sceneId, planEntry && planEntry.sceneId === sceneId ? planEntry : undefined, {selectionId,deviceCheckId:check?.device_check_id});
       router.push(`/practice/${s.session_id}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

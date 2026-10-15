@@ -2,7 +2,7 @@
 from sqlalchemy.exc import IntegrityError
 from app.models.entities import EventLog
 
-MEDIA_ACTIONS = {'demo_play','recording_play','record_start','record_cancel','record_retry','review_view'}
+MEDIA_ACTIONS = {'demo_play','recording_play','record_attempt','record_start','record_cancel','record_retry','review_view'}
 
 
 def record(db, session_id, action, key='', turn_id='', basis=''):

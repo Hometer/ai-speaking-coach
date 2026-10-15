@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { recordProductEvent, addToQueue, clearIntentKey, createPhraseCard, createPracticeSentence, discardRisk, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, intentKey, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, setQaRecordingConsent, skipPractice, submitTurn } from "@/lib/api";
+import { disputePronunciation, recordStage, startRecovery, recordProductEvent, addToQueue, clearIntentKey, createPhraseCard, createPracticeSentence, discardRisk, disputeReview, drillAction, drillAttempt, endSession, getInviteCode, getSession, intentKey, pauseSession, resumeSession, requestHelp, retryTurnAudio, reviseTurn, setQaRecordingConsent, skipPractice, submitTurn } from "@/lib/api";
 import type { SessionDetail, DrillView, RiskHold, TurnItem } from "@/lib/types";
 import AudioPlayer from "@/components/AudioPlayer";
+import ReviewSurvey from "@/components/ReviewSurvey";
 import Icon from "@/components/Icon";
 import styles from "./page.module.css";
 
@@ -53,6 +54,7 @@ export default function PracticePage() {
   const [slowRepeat, setSlowRepeat] = useState(false);
   const [practiceResult, setPracticeResult] = useState("");
   const [practiceEvaluation, setPracticeEvaluation] = useState<TurnItem["practice_eval"]>(null);
+  const [practiceTurnId,setPracticeTurnId]=useState("");
   const [recording, setRecording] = useState(false);
   const [audioRetryTurnId, setAudioRetryTurnId] = useState<string | null>(null);
   const [drill, setDrill] = useState<DrillView | null>(null);
@@ -77,8 +79,13 @@ export default function PracticePage() {
 
   useEffect(() => {
     let active = true;
+    const recoveries=new Set<string>();
     const receive = (d: SessionDetail) => {
         if (!active) return;
+        if((d.in_flight || d.request_state === "uncertain") && d.active_operation_id && !recoveries.has(d.active_operation_id)) {
+          recoveries.add(d.active_operation_id);
+          void startRecovery(sessionId,d.active_operation_id).catch(()=>{});
+        }
         setGoal(d.goal_text);
         setSceneLabel(d.scene_label || "");
         setStatus(d.status);
@@ -94,6 +101,7 @@ export default function PracticePage() {
         }
         if (lastPracticeIndex >= 0) {
           const practiced = d.turns[lastPracticeIndex];
+          setPracticeTurnId(practiced.turn_id);
           const demo = d.turns.slice(0, lastPracticeIndex).reverse().find((t) =>
             t.action_type === "suggest_practice" && t.practice_sentence === practiced.practice_sentence,
           );
@@ -143,6 +151,10 @@ export default function PracticePage() {
       .finally(() => { if (active) setSessionLoading(false); });
     return () => { active = false; if (polling) clearInterval(polling); };
   }, [sessionId]);
+
+  useEffect(()=>{
+    if(drill && status!=="ENDED") recordStage(sessionId,drill.drill_stage,"stage_view");
+  },[sessionId,drill,status]);
 
   useEffect(() => {
     if (messages.length > 1) bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -296,6 +308,7 @@ export default function PracticePage() {
     setBusy(true);
     setErr("");
     try {
+      if(drill) recordStage(sessionId,drill.drill_stage,"stage_start");
       const r = await drillAttempt(sessionId, drillText.trim());
       if (epoch !== requestEpoch.current) return;
       setDrillText("");
@@ -385,6 +398,8 @@ export default function PracticePage() {
       recRef.current.stop();
       return;
     }
+    if(mode==="answer") recordProductEvent(sessionId,"record_attempt");
+    if(mode==="drill" && drill) recordStage(sessionId,drill.drill_stage,"stage_start");
     try {
       document.querySelectorAll("audio").forEach(audio => audio.pause());
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -468,6 +483,7 @@ export default function PracticePage() {
       const isMock = !!data.eval?.mock;
       setPracticeResult(score === null ? "本次无法评估" : `评测得分 ${score}${isMock ? "（示例）" : "（实测）"}`);
       setPracticeEvaluation(data.eval);
+      setPracticeTurnId(data.turn_id || "");
       setLastPractice({ sentence: practiceSentence, demoUrl: practiceDemo, recordingUrl: data.recording_url || "" });
       addMsg("coach", data.recheck_reply_text, data.recheck_audio_url);
       setStatus(data.status);
@@ -728,6 +744,8 @@ export default function PracticePage() {
             <div className="mt-3"><p className="text-xs muted">示范表达</p>{lastPractice.demoUrl ? <AudioPlayer key={lastPractice.demoUrl} src={lastPractice.demoUrl} rate={slowDemo ? 0.75 : 1} /> : <p className="text-xs muted">示范暂不可用</p>}</div>
             <div className="mt-3"><p className="text-xs muted">你的录音（本次评价使用）</p>{lastPractice.recordingUrl ? <AudioPlayer key={lastPractice.recordingUrl} src={lastPractice.recordingUrl} kind="recording_play" /> : <p className="text-xs muted">录音已清理或本次未录音</p>}</div>
             {practiceEvaluation?.word_items?.slice(0,3).map((item, i) => <p className="text-xs muted" key={i}>{item.word}：{item.score == null ? "供应商未返回局部分数" : item.score}</p>)}
+            {practiceEvaluation?.word_items?.length && practiceTurnId ? <button className="btn btn-ghost btn-small" onClick={async()=>{try{await disputePronunciation(sessionId,practiceTurnId);setPracticeEvaluation(value=>value?{...value,disputed:true}:value);setPracticeResult("这次词级反馈已标记有争议，待复核。");}catch(e){setErr(e instanceof Error?e.message:String(e));}}}>词级反馈有误</button> : null}
+            {practiceEvaluation?.disputed && <p className="text-xs muted">这次词级反馈已标记争议，待复核。</p>}
             {practiceResult && <p className="text-xs muted mt-3">{practiceResult} · 仅供练习参考</p>}
           </section>}
           {err && <p className="error-banner" role="alert">{err}{audioRetryTurnId && <button onClick={handleAudioRetry} disabled={busy} className="text-link ml-2">重试语音</button>}</p>}
@@ -766,12 +784,14 @@ export default function PracticePage() {
         </div>}
 
         <div className="section-head mt-5"><h3><Icon name="book" size={17} /> 表达建议</h3><span>最多两条主要建议</span></div>
-        {review ? improvements.length ? <div className={styles.reviewGrid}>{improvements.map((imp,i) => <article key={i} className={styles.reviewItem}><span className="badge badge-neutral">表达建议 {String(i+1).padStart(2,"0")}</span><div className={styles.reviewOriginal}><small>你的原句</small><p>{String(imp.original ?? "")}</p></div><p className="muted text-sm">{String(imp.explanation_cn ?? "")}</p><div className={styles.reviewSuggestion}><small>可以试着这样说</small><p>{String(imp.practice_sentence ?? imp.suggestion ?? "")}</p></div>{imp.disputed || sourceInvalid ? <p className="text-xs muted">已标记有误或来源已失效，待复核。</p> : <div className={styles.reviewActions}><button onClick={() => handlePracticeSentence(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-primary btn-small"><Icon name="mic" size={14} />练这一句</button><button onClick={() => handlePhraseCard(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small"><Icon name="book" size={14} />语块卡</button><button onClick={() => handleAddQueue(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small"><Icon name="check" size={14} />加入待复练</button><button onClick={() => handleDispute(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small">评价有误</button></div>}</article>)}</div> : <div className="notice"><Icon name="book" size={19} /><p>本次暂无可展示的改进建议。<br />这不代表整体能力已达标；可以回看对话，再尝试一段新的表达。</p></div> : <div className="notice"><Icon name="help" size={19} /><p>回顾暂未就绪，已提交的对话仍然保留。<button className="text-link ml-2" onClick={end} disabled={busy}>重新获取回顾</button></p></div>}
+        {review && !review.feedback_version && <p className="text-xs muted">这是历史版本回顾，建议尚未按新的原回合反馈口径核验。</p>}
+        {review ? improvements.length ? <div className={styles.reviewGrid}>{improvements.map((imp,i) => <article key={i} className={styles.reviewItem}><span className="badge badge-neutral">表达建议 {String(i+1).padStart(2,"0")}</span>{imp.feedback_source === "mock_fixture" && <p className="text-xs muted">离线固定样例反馈，真实效果待验。</p>}<div className={styles.reviewOriginal}><small>你的原句</small><p>{String(imp.original ?? "")}</p></div><p className="muted text-sm">{String(imp.explanation_cn ?? "")}</p><div className={styles.reviewSuggestion}><small>可以试着这样说</small><p>{String(imp.practice_sentence ?? imp.suggestion ?? "")}</p></div>{imp.disputed || sourceInvalid ? <p className="text-xs muted">已标记有误或来源已失效，待复核。</p> : <div className={styles.reviewActions}><button onClick={() => handlePracticeSentence(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-primary btn-small"><Icon name="mic" size={14} />练这一句</button><button onClick={() => handlePhraseCard(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small"><Icon name="book" size={14} />语块卡</button><button onClick={() => handleAddQueue(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small"><Icon name="check" size={14} />加入待复练</button><button onClick={() => handleDispute(String(imp.turn_id ?? ""))} disabled={busy} className="btn btn-ghost btn-small">评价有误</button></div>}</article>)}</div> : <div className="notice"><Icon name="book" size={19} /><p>本次暂无可展示的改进建议。<br />这不代表整体能力已达标；可以回看对话，再尝试一段新的表达。</p></div> : <div className="notice"><Icon name="help" size={19} /><p>回顾暂未就绪，已提交的对话仍然保留。<button className="text-link ml-2" onClick={end} disabled={busy}>重新获取回顾</button></p></div>}
 
         {drill && drill.completed && <div className={styles.reviewSubBlock}><div className="section-head mt-0"><h3><Icon name="book" size={17} /> 脱稿练习</h3><span className="badge badge-neutral">{drill.outcome === "transfer" ? "迁移成功" : drill.outcome === "independent" ? "独立完成" : "已结束"}</span></div><p className="text-sm muted">{drill.outcome === "transfer" ? "换题成功，已形成迁移证据，并写回待复练记录。" : drill.outcome === "independent" ? "脱稿完成，已记为本次独立表达。" : "本次脱稿练习已结束，结果按帮助证据记录。"}</p></div>}
 
         <p className="text-xs muted mt-5">反馈仅供练习参考，不代表考试成绩或真实语言能力认证。</p>
       </section>}
+    {ended && !drill && review && !review.stale && Array.isArray(review.evidence) && review.evidence.length>0 && <ReviewSurvey sessionId={sessionId}/>}
     </main>
   );
 }

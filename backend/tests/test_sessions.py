@@ -430,7 +430,7 @@ def test_revise_scene_turn_revokes_derived_evidence(client, monkeypatch):
     completed = _done(_send_voice(client, sid, "I have a reservation under the name Li.", monkeypatch))
     completed_id = completed["turn_id"]
     assert completed["eval_result"] == "independent"
-    incomplete = _done(_send_text(client, sid, "Maybe breakfast."))
+    incomplete = _done(_send_text(client, sid, "Yesterday I go to work."))
     source_id = incomplete["turn_id"]
     client.post(f"/api/v1/sessions/{sid}/end", json={"reason": "user_ended"}, headers=USER)
     source = {"source_session_id": sid, "source_turn_id": source_id}

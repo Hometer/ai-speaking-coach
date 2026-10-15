@@ -380,14 +380,21 @@ def create_session(
     request_key: str = "",
     plan_id: int | None = None,
     plan_day: int | None = None,
+    selection_id: str = "",
+    device_check_id: int | None = None,
 ) -> dict[str, Any]:
     _get_or_create_user(db, user_id, level)
     scene = get_scene(scene_id)
     goal_text = scene["goal_text"]
-    request_payload = json.dumps({
+    create_payload = {
         "level": level, "difficulty": difficulty, "duration_minutes": duration_minutes,
         "scene_id": scene_id, "plan_id": plan_id, "plan_day": plan_day,
-    }, sort_keys=True)
+    }
+    if selection_id:
+        create_payload["selection_id"] = selection_id
+    if device_check_id is not None:
+        create_payload["device_check_id"] = device_check_id
+    request_payload = json.dumps(create_payload, sort_keys=True)
     replayed = intent_result.replay(db, user_id, "create_session", user_id, request_key, "create", request_payload)
     if replayed is not None:
         return replayed
@@ -421,6 +428,8 @@ def create_session(
             }
 
     from app.services.training_plan import bind_day
+    from app.services.product_data import validate_entry
+    validate_entry(db, user_id, scene_id, selection_id, device_check_id)
 
     bound_plan_id, bound_plan_day = bind_day(db, user_id, scene_id, plan_id, plan_day)
     session_id = uuid.uuid4().hex
@@ -443,6 +452,8 @@ def create_session(
         plan_id=bound_plan_id,
         plan_day=bound_plan_day,
         active_since=_now(),
+        selection_id=selection_id,
+        device_check_id=device_check_id,
     )
     db.add(session)
     audio_url = ""
@@ -872,6 +883,9 @@ def submit_turn(
             question=question,
             evidence_turn_ids=",".join(eval_out.evidence_turn_ids),
             standard_version=eval_out.standard_version,
+            feedback_json=json.dumps([f.model_dump() for f in eval_out.feedback], ensure_ascii=False),
+            feedback_origin="mock_fixture" if settings.provider_mode == "mock" else "evaluator",
+            revision_version=0,
         )
     )
     session.subgoals = json.dumps(new_subgoals, ensure_ascii=False)
@@ -1232,6 +1246,7 @@ def submit_practice(
         "status": new_status,
         "eval": eval_result,
         "recording_url": recording_url,
+        "turn_id": turn.id,
         "recheck_reply_text": decision.reply_text,
         "recheck_audio_url": audio_url,
     }
@@ -1314,6 +1329,7 @@ def get_session_detail(db: DbSession, session_id: str, user_id: str) -> dict[str
         "level": session.level or "basic",
         "in_flight": session.in_flight,
         "request_state": request_state(db, session_id),
+        "active_operation_id": active_operation_id(db, session_id),
         "pending_risk": json.loads(session.pending_risk) if session.pending_risk else None,
         "qa_recording_consent": qa_recording_svc.consent_status(db, user_id, session_id)["granted"],
         "current_help_level": (
@@ -1437,6 +1453,12 @@ def _collect_and_delete_session(db: DbSession, session: Session) -> set[str]:
     from app.models.entities import DailyReviewAttempt, DrillAttempt, IntentResult, PhraseCard, ProviderUsageEvent, QualityLabel, ReviewDueEvent, ReviewQueueItem
 
     memory_svc.delete_by_session(db, session.id)
+    from app.models.entities import ProductEvent, ReviewSurvey, RecoveryAttempt
+    db.query(ProductEvent).filter_by(session_id=session.id).delete()
+    if session.selection_id:
+        db.query(ProductEvent).filter_by(id=session.selection_id,user_id=session.user_id).delete()
+    db.query(ReviewSurvey).filter_by(session_id=session.id).delete()
+    db.query(RecoveryAttempt).filter_by(session_id=session.id).delete()
     qa_recording_svc.remove_session(db, session.id)
     from app.models.entities import RequestOperation, RecallEvidence, ConversationQualityReview
     db.query(ConversationQualityReview).filter_by(session_id=session.id).delete()
@@ -1598,6 +1620,9 @@ def delete_all_sessions(db: DbSession, user_id: str) -> None:
     for s in sessions:
         files |= _collect_and_delete_session(db, s)
     db.query(IntentResult).filter_by(user_id=user_id, scope="daily_start").delete()
+    from app.models.entities import ProductEvent, ReviewSurvey, RecoveryAttempt
+    for model in (ProductEvent, ReviewSurvey, RecoveryAttempt):
+        db.query(model).filter_by(user_id=user_id).delete()
     db.commit()
     _delete_audio_files(files)
     cleanup_old_uploads()
@@ -1777,3 +1802,9 @@ def request_state(db, session_id):
     from app.models.entities import RequestOperation
     row=db.query(RequestOperation).filter_by(session_id=session_id).order_by(RequestOperation.created_at.desc()).first()
     return row.status if row else None
+
+
+def active_operation_id(db, session_id):
+    from app.models.entities import RequestOperation
+    row=db.query(RequestOperation).filter_by(session_id=session_id).order_by(RequestOperation.created_at.desc()).first()
+    return row.id if row else None

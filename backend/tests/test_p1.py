@@ -55,7 +55,7 @@ def _send_text_turn(client, session_id, text):
 def _make_queue_source(client, scene_id="job_interview"):
     """创建带回顾建议的会话，返回 (session, turn_id)。"""
     s = _create_scene_session(client, scene_id)
-    r = _send_text_turn(client, s["session_id"], "this is my answer")  # incomplete
+    r = _send_text_turn(client, s["session_id"], "Yesterday I go to work.")  # 有明确离线反馈证据的样例
     turn_id = r["turn_id"]
     client.post(
         f"/api/v1/sessions/{s['session_id']}/end",

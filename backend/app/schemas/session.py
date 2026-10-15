@@ -15,6 +15,8 @@ class SessionCreateRequest(BaseModel):
     request_key: str = Field(default="", description="幂等键")
     plan_id: int | None = None
     plan_day: int | None = Field(default=None, ge=1, le=7)
+    selection_id: str = Field(default="", max_length=64)
+    device_check_id: int | None = Field(default=None, ge=1)
 
 
 class SessionCreatedResponse(BaseModel):
@@ -47,6 +49,7 @@ class TurnItem(BaseModel):
 class SessionDetailResponse(BaseModel):
     in_flight: bool = False
     request_state: str | None = None
+    active_operation_id: str | None = None
     session_id: str
     status: str
     goal_text: str
@@ -100,6 +103,7 @@ class EndResponse(BaseModel):
 
 
 class PracticeResponse(BaseModel):
+    turn_id: str = ""
     session_id: str
     status: str
     eval: dict = Field(default_factory=dict)

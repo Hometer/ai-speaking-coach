@@ -36,7 +36,7 @@ export interface RiskHold {
 }
 
 export interface TurnItem {
-  practice_eval?: { score?: number | null; mock?: boolean; word_items?: { word: string; score?: number; issue?: string }[]; error_code?: string } | null;
+  practice_eval?: { score?: number | null; mock?: boolean; disputed?: boolean; word_items?: { word: string; score?: number; issue?: string }[]; error_code?: string } | null;
   turn_id: string;
   seq: number;
   input_type: string;
@@ -129,6 +129,7 @@ export interface PhraseCard {
 }
 
 export interface SessionDetail {
+  active_operation_id?: string | null;
   in_flight?: boolean;
   request_state?: string | null;
   session_id: string;
@@ -147,6 +148,16 @@ export interface SessionDetail {
   review: Record<string, unknown> | null;
   drill: DrillView | null;
   turns: TurnItem[];
+}
+
+export interface ProductMetric {
+  label: string; numerator: number; denominator: number; rate: number | null; unknown: number; basis: string;
+}
+export interface LearningMetrics {
+  eligible_users: number; active_review_users: number; active_review_rate: number | null;
+  full_scene_review_users: number; pending_observation_users: number;
+  window: {start: string; end: string; scope: string};
+  metrics: Record<string, ProductMetric>; counts: Record<string, number>;
 }
 
 export interface SessionListItem {

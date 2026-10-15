@@ -5,7 +5,7 @@ import { getSession, submitTurn, endSession } from "@/lib/api";
 
 vi.mock("next/navigation",()=>({useParams:()=>({sessionId:"s"}),useRouter:()=>({push:vi.fn()})}));
 vi.mock("@/components/AudioPlayer",()=>({default:()=>null}));
-vi.mock("@/lib/api",()=>({getSession:vi.fn(),submitTurn:vi.fn(),endSession:vi.fn(),recordProductEvent:vi.fn()}));
+vi.mock("@/lib/api",()=>({getSession:vi.fn(),submitTurn:vi.fn(),endSession:vi.fn(),recordProductEvent:vi.fn(),recordStage:vi.fn(),startRecovery:vi.fn()}));
 const base={session_id:"s",status:"WAITING_INPUT",goal_text:"确认预订",scene_label:"酒店入住",review:null,source_invalid:false,qa_recording_consent:false,turns:[],drill:null};
 afterEach(()=>{cleanup();vi.resetAllMocks();});
 
