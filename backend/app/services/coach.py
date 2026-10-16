@@ -37,34 +37,17 @@ class MockCoachProvider(CoachProvider):
         )
 
     def decide(self, context: dict[str, Any]) -> CoachDecision:
+        scene = SCENARIOS.get(context.get("scene_id", ""), {})
+        follow_ups = scene.get("follow_ups") or {}
+        question = context.get("current_question") or (scene.get("openings") or {}).get(context.get("level", "basic")) or "Can you answer the current question?"
         if context.get("help_requested"):
-            return CoachDecision(
-                action_type="hint",
-                reply_text="Here's a hint: try a short, simple sentence about the question, and ask for more help if you need it.",
-            )
-        if context.get("skipped_practice"):
-            return CoachDecision(
-                action_type="follow_up",
-                reply_text="OK, let's continue with your experience.",
-            )
+            return CoachDecision(action_type="hint", reply_text=f"Try a short sentence to answer: {question}")
         practice = context.get("practice") or {}
-        if practice:
-            if not practice.get("valid"):
-                return CoachDecision(
-                    action_type="follow_up",
-                    reply_text="I couldn't assess that recording. Let's continue with your experience.",
-                )
-            score = practice.get("score")
-            if score is not None and score < 60:
-                return CoachDecision(
-                    action_type="suggest_practice",
-                    reply_text="Let's try that sentence once more, a bit slower.",
-                    practice_sentence=practice.get("reference_sentence", ""),
-                )
-            return CoachDecision(
-                action_type="follow_up",
-                reply_text="Good practice. Now tell me more about your experience.",
-            )
+        if context.get("skipped_practice") or practice:
+            if practice.get("valid") and practice.get("score") is not None and practice["score"] < 60:
+                return CoachDecision(action_type="suggest_practice", reply_text="Let's try that sentence once more, a bit slower.", practice_sentence=practice.get("reference_sentence", ""))
+            prefix = "Good practice. " if practice.get("valid") else "Let's continue. "
+            return CoachDecision(action_type="follow_up", reply_text=prefix + question, follow_up_question=question)
 
         result = context.get("eval_result", "")
         subgoal = context.get("subgoal", "")

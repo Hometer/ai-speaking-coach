@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import Page from "./page";
 
 vi.mock("@/lib/api", () => ({
+  pendingVoiceRisk:vi.fn(async()=>null),
   dueToday: vi.fn(async () => ({count: 1, items: []})),
   startDailyReview: vi.fn(async () => ({session_id: "review"})),
   dailyReviewView: vi.fn(async () => ({done:false,index:0,total:1,item:{id:1,meaning_zh:"确认预订",suggestion_sentence:"",help_shown:false}})),

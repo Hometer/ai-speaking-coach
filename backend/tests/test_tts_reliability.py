@@ -165,7 +165,7 @@ def test_tts_retry_no_duplicate_work(client, monkeypatch):
         n_turns = db.query(Turn).filter(Turn.session_id == s["session_id"], Turn.input_type == "text").count()
         assert n_turns == 1
         spent = db.query(BudgetLedger).filter_by(scope="session", scope_key=s["session_id"]).first().spent
-        assert spent == 0.20  # 开场 0.10 + 回合 0.10，无重复
+        assert round(spent, 2) == 0.30  # 开场 + 文本回合 + 独立 TTS 预留各 0.10；重试未创建第二个 TTS 意图
     finally:
         db.close()
 

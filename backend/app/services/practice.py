@@ -11,6 +11,8 @@ import base64
 import hashlib
 import hmac
 import json
+import math
+import re
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from email.utils import formatdate
@@ -86,16 +88,19 @@ def _parse_ise_xml(xml_text: str) -> float | None:
     except ET.ParseError:
         return None
     for node in root.iter():
+        if node.tag.lower().split("}")[-1] not in ("read_chapter", "sentence", "read_sentence", "rec_paper"):
+            continue
         ts = node.get("total_score")
         if ts is not None:
             try:
-                return float(ts)
+                value = float(ts)
+                return value if math.isfinite(value) and 0 <= value <= 5 else None
             except ValueError:
                 pass
     return None
 
 
-def _extract_word_items(xml_text: str) -> list[dict[str, Any]]:
+def _extract_word_items(xml_text: str, reference_text: str | None = None) -> list[dict[str, Any]]:
     """从评测 XML 提取词级节点（含原始位置），低分优先，最多三处。"""
     try:
         root = ET.fromstring(xml_text)
@@ -103,7 +108,7 @@ def _extract_word_items(xml_text: str) -> list[dict[str, Any]]:
         return []
     items: list[dict[str, Any]] = []
     for node in root.iter():
-        if "word" not in node.tag.lower():
+        if node.tag.lower().split("}")[-1] != "word":
             continue
         ts = node.get("total_score")
         if ts is None:
@@ -113,7 +118,17 @@ def _extract_word_items(xml_text: str) -> list[dict[str, Any]]:
             continue
         try:
             score = float(ts)
-        except ValueError:
+            begin = int(node.get("beg_pos") or node.get("start") or "")
+            end = int(node.get("end_pos") or node.get("end") or "")
+            if not math.isfinite(score) or not 0 <= score <= 5 or begin < 0 or end <= begin:
+                continue
+            if reference_text is not None:
+                # 只接受当前参考中可精确对应的字符范围；不猜供应商位置单位。
+                span = reference_text[begin:end]
+                norm = lambda x: re.sub(r"[^a-z']", "", x.casefold())
+                if end > len(reference_text) or not norm(word_text) or norm(span) != norm(word_text):
+                    continue
+        except (ValueError, TypeError):
             continue
         items.append(
             {
@@ -170,17 +185,18 @@ def _extract_ise_score(data: Any) -> float | None:
             return _parse_ise_xml(data)
         return None
     if isinstance(data, dict):
-        s = _extract_ise_score(data.get("data"))
-        if s is not None:
-            return s
-        for v in data.values():
-            s = _extract_ise_score(v)
-            if s is not None:
-                return s
+        # 协议状态/耗时等数字不是整句分数。
+        if "data" in data:
+            return _extract_ise_score(data["data"])
+        if "total_score" in data:
+            try:
+                return float(data["total_score"])
+            except (ValueError, TypeError):
+                return None
     return None
 
 
-def parse_result(frames: list[dict[str, Any]]) -> dict[str, Any]:
+def parse_result(frames: list[dict[str, Any]], reference_text: str | None = None) -> dict[str, Any]:
     """解析服务端回传帧，返回 {score, dimension, notes, word_items}（score 为百分制）。"""
     error: str | None = None
     score: float | None = None
@@ -195,15 +211,14 @@ def parse_result(frames: list[dict[str, Any]]) -> dict[str, Any]:
                 score = s
             xml_text = _xml_text_from_data(f.get("data"))
             if xml_text:
-                items = _extract_word_items(xml_text)
-                if items:
-                    word_items = items
+                items = _extract_word_items(xml_text, reference_text)
+                word_items = items
     if error:
         raise AppError("PRACTICE_EVAL_ERROR", "发音评测暂不可用，请稍后重试", status_code=502)
-    if score is None:
+    if score is None or not math.isfinite(score) or not 0 <= score <= 5:
         raise AppError("PRACTICE_EVAL_EMPTY", "评测未返回分数", status_code=502)
     # 讯飞英文评测为 5 分制，换算为百分制展示
-    return {"score": round(score * 20, 1), "dimension": "word/phrase", "notes": [], "word_items": word_items}
+    return {"score": round(score * 20, 1), "dimension": "word/phrase" if word_items else "sentence", "notes": [], "word_items": word_items}
 
 
 class PracticeEvalProvider(ABC):
@@ -281,7 +296,7 @@ class XfyunPracticeEvalProvider(PracticeEvalProvider):
                     frames.append(json.loads(msg))
                 except json.JSONDecodeError:
                     continue
-            return parse_result(frames)
+            return parse_result(frames, reference_text)
         finally:
             try:
                 ws.close()

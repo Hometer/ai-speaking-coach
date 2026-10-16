@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.core.errors import AppError
 from app.core.config import settings
-from app.models.entities import DrillAttempt, EventLog, ReviewQueueItem, Session
+from app.models.entities import DrillAttempt, EventLog, ReviewQueueItem, Session, Turn
 from app.services.prompts.scenarios import SCENARIOS
 from app.services.recall_judge import judge_recall, judge_transfer
 from app.services.transfer_eval import verify_new_condition
@@ -73,15 +73,25 @@ def _transfer_question(scene_id: str) -> str:
     return variations[0] if variations else "Try to say the same idea in a new situation."
 
 
-def _visible_help(session: Session, stage: str) -> str:
+def _material(session: Session, db: DbSession | None):
+    if db is None or not session.source_session_id:
+        return None
+    from app.services.practice_materials import existing_material
+    return existing_material(db, session.source_session_id, session.source_turn_id, session.drill_target)
+
+
+def _visible_help(session: Session, stage: str, db: DbSession | None = None) -> str:
+    material = _material(session, db)
     if stage == "full_text":
         return session.drill_target
-    if stage == "fill_blanks":
-        return _blank_keywords(session.drill_target, _keywords(session.scene_id))
-    if stage == "structure":
-        return _structure_hint(session.drill_target, _keywords(session.scene_id))
+    if stage in ("fill_blanks", "structure"):
+        if material is None:
+            return "复练材料尚未准备好，请先查看原回顾。"
+        if stage == "fill_blanks":
+            return session.drill_target.replace(material.replaceable_text, "___", 1)
+        return material.chunk_text + " · ___"
     if stage == "free_speak":
-        return session.drill_meaning
+        return material.meaning_zh if material else session.drill_meaning
     if stage == "transfer":
         return _transfer_question(session.scene_id)
     return ""
@@ -101,10 +111,19 @@ def _judge(text: str, target: str) -> bool:
     return overlap >= 0.4
 
 
+def _finish_clock(session: Session) -> None:
+    if session.status == "ENDED":
+        from app.services.session_svc import _active_elapsed_seconds
+        if session.ended_at is None:
+            session.ended_at = datetime.now(timezone.utc)
+        session.active_seconds = _active_elapsed_seconds(session)
+        session.active_since = None
+
+
 def drill_view(session: Session, db: DbSession | None = None) -> dict[str, Any]:
     stage = session.drill_stage or "full_text"
     material = None
-    available = True
+    available = not session.source_invalid
     if db is not None and session.source_session_id and not session.source_invalid:
         from app.services.practice_materials import existing_material
         material = existing_material(db, session.source_session_id, session.source_turn_id, session.drill_target)
@@ -122,28 +141,44 @@ def drill_view(session: Session, db: DbSession | None = None) -> dict[str, Any]:
             ]
             if "independent" in results:
                 outcome = "independent"
+    recording = None
+    if db is not None:
+        attempt = db.query(DrillAttempt).filter_by(drill_session_id=session.id).filter(DrillAttempt.input_type == "voice").order_by(DrillAttempt.id.desc()).first()
+        if attempt and (stage not in ("free_speak", "transfer") or attempt.stage == stage):
+            reveal = stage not in ("free_speak", "transfer") and not session.source_invalid
+            recording = {"recording_url": attempt.recording_url, "stage": attempt.stage,
+                "reference_version": attempt.reference_version,
+                "reference_sentence": attempt.reference_sentence if reveal else "",
+                "demo_audio_url": attempt.demo_audio_url if reveal else ""}
     return {
-        'material_available': available,
+        'recording': recording,
+        'material_available' : available,
         "drill_stage": stage,
         "stage_label": STAGE_LABEL.get(stage, ""),
         "drill_target": session.drill_target if stage not in ("free_speak", "transfer") else "",
         "drill_meaning": material.meaning_zh if material else session.drill_meaning if available else '',
-        "drill_chunk": " · ".join(_keywords(session.scene_id)[:3]) if stage not in ("free_speak", "transfer") else "",
-        "visible_help": material.meaning_zh if material and stage=='free_speak' else _visible_help(session, stage) if available else '复练材料尚未准备好，请先查看原回顾。',
+        "drill_chunk": material.chunk_text if material and stage not in ("free_speak", "transfer") else "",
+        "visible_help": material.meaning_zh if material and stage=='free_speak' else _visible_help(session, stage, db) if available else '复练材料尚未准备好，请先查看原回顾。',
         "completed": stage == "ended",
         "outcome": outcome,
     }
 
 
-def _record(db: DbSession, session: Session, user_id: str, text: str, result: str, reason: str, input_type: str = "text", help_shown: bool = False, attempt_key: str = "") -> None:
+def _record(db: DbSession, session: Session, user_id: str, text: str, result: str, reason: str, input_type: str = "text", help_shown: bool = False, attempt_key: str = "", recording_url: str = "") -> None:
+    import hashlib
+    opening = db.query(Turn).filter_by(session_id=session.id, input_type="coach", seq=0).first()
     db.add(
         DrillAttempt(
+            recording_url=recording_url,
+            reference_sentence=session.drill_target if recording_url else "",
+            reference_version="ref:" + hashlib.sha256(session.drill_target.encode()).hexdigest() if recording_url else "",
+            demo_audio_url=opening.reply_audio_url if recording_url and opening else "",
             user_id=user_id,
             source_session_id=session.source_session_id,
             source_turn_id=session.source_turn_id,
             drill_session_id=session.id,
             stage=session.drill_stage,
-            visible_help=_visible_help(session, session.drill_stage),
+            visible_help=_visible_help(session, session.drill_stage, db),
             answer_text=text.strip(),
             input_type=input_type,
             help_shown=help_shown,
@@ -192,7 +227,7 @@ def _write_back_queue(db: DbSession, user_id: str, source_turn_id: str, result: 
 
 @durable("drill_svc", key_arg="attempt_key")
 def submit_drill_attempt(
-    db: DbSession, session_id: str, user_id: str, text: str, input_type: str = "text", attempt_key: str = ""
+    db: DbSession, session_id: str, user_id: str, text: str, input_type: str = "text", attempt_key: str = "", recording_url: str = ""
 ) -> dict[str, Any]:
     session = _require_session(db, session_id, user_id)
     if session.practice_type not in ("sentence_practice", "drill"):
@@ -258,7 +293,7 @@ def submit_drill_attempt(
         transfer_guard = None
     fence(db, session, operation_version)
     reason = "completed" if success else "error"
-    _record(db, session, user_id, text, result, reason, input_type=input_type, help_shown=False, attempt_key=attempt_key)
+    _record(db, session, user_id, text, result, reason, input_type=input_type, help_shown=False, attempt_key=attempt_key, recording_url=recording_url)
     db.add(EventLog(session_id=session.id, turn_id="", action_type="drill", basis=result))
 
     if success:
@@ -266,6 +301,7 @@ def submit_drill_attempt(
             session.drill_stage = "ended"
             session.status = "ENDED"
             session.end_reason = "goal_reached"
+            _finish_clock(session)
             _write_back_queue(db, user_id, session.source_turn_id, "transfer")
         else:
             session.drill_stage = STAGE_ORDER[STAGE_ORDER.index(stage) + 1]
@@ -287,6 +323,8 @@ def submit_drill_attempt(
 
     if session.status == "ENDED":
         product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason or "")
+    _finish_clock(session)
+    db.commit()
     view = drill_view(session, db)
     response = {
         "success": success,
@@ -308,7 +346,12 @@ def drill_action(db: DbSession, session_id: str, user_id: str, action: str) -> d
     if action != "end":
         require_active(session)
     stage = session.drill_stage or "full_text"
-    if action == "skip":
+    if action == "repeat":
+        last = db.query(DrillAttempt).filter_by(drill_session_id=session.id).order_by(DrillAttempt.id.desc()).first()
+        if last is None or last.stage not in STAGE_ORDER:
+            raise AppError("INVALID_STATE", "没有可重录的阶段", 409)
+        session.drill_stage = last.stage
+    elif action == "skip":
         _record(db, session, user_id, "", "skipped", "skipped")
         session.drill_stage = STAGE_ORDER[STAGE_ORDER.index(stage) + 1] if stage != "transfer" else "ended"
         if session.drill_stage == "ended":
@@ -330,8 +373,7 @@ def drill_action(db: DbSession, session_id: str, user_id: str, action: str) -> d
     else:
         raise AppError("INVALID_INPUT", "未知的脱稿操作", status_code=422)
     bump_version(db, session.id)
-    if session.status == 'ENDED' and session.ended_at is None:
-        session.ended_at = datetime.now(timezone.utc)
+    _finish_clock(session)
     db.commit()
     if session.status == "ENDED":
         product_events.record(db, session.id, "session_end", session.id, basis=session.end_reason or "")

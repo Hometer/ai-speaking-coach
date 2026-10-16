@@ -130,6 +130,10 @@ def migrate_db() -> None:
                 conn.execute(text(f"ALTER TABLE review_queue_items ADD COLUMN {col} {ddl}"))
         dcols = {r[1] for r in conn.execute(text("PRAGMA table_info(drill_attempts)"))}
         dadditions = {
+            "recording_url": "VARCHAR(255) DEFAULT ''",
+            "reference_sentence": "TEXT DEFAULT ''",
+            "reference_version": "VARCHAR(80) DEFAULT ''",
+            "demo_audio_url": "VARCHAR(255) DEFAULT ''",
             "input_type": "VARCHAR(16) DEFAULT 'text'",
             "help_shown": "BOOLEAN DEFAULT 0",
             "attempt_key": "VARCHAR(64) DEFAULT ''",
@@ -173,6 +177,9 @@ def migrate_db() -> None:
             conn.execute(text("ALTER TABLE asr_risk_records ADD COLUMN request_key VARCHAR(64) DEFAULT ''"))
         if risk_cols and "request_hash" not in risk_cols:
             conn.execute(text("ALTER TABLE asr_risk_records ADD COLUMN request_hash VARCHAR(64) DEFAULT ''"))
+        for col, ddl in {"scope": "VARCHAR(32) DEFAULT 'turn'", "object_id": "VARCHAR(64) DEFAULT ''", "context_version": "TEXT DEFAULT ''"}.items():
+            if col not in risk_cols:
+                conn.execute(text(f"ALTER TABLE asr_risk_records ADD COLUMN {col} {ddl}"))
         # 旧版本只在 sessions.pending_risk JSON 中保存了录音地址，补齐风险记录引用。
         for row in conn.execute(text(
             "SELECT r.id, s.pending_risk FROM asr_risk_records r "

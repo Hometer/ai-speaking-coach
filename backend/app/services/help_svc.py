@@ -234,6 +234,7 @@ def request_help(
         guard.reserve(settings.nominal_cost_per_turn, session.id, user_id)
         reset_usage_attempts()
         try:
+            guard.mark_called()
             translated = _translate(text)
             fence(db, session, operation_version)
             turn = _record_help(db, session, "translate", 0, translated, "")

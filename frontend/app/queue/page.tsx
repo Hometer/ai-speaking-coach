@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { clearIntentKey, deleteQueueItem, disputeQueueItem, getInviteCode, intentKey, listQueue, recordProductEvent, retestQueueItem, revealQueueItem, skipQueueItem } from "@/lib/api";
 import type { QueueItem } from "@/lib/types";
+import VoiceRisk from "@/components/VoiceRisk";
+import { MediaLease } from "@/lib/mediaLease";
 import Icon from "@/components/Icon";
 
 const STATUS_CN: Record<string, string> = {
@@ -29,7 +31,10 @@ export default function QueuePage() {
   const recordSession = useRef("");
   const recordTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
+  const mediaLease = useRef(new MediaLease());
+  const [riskRevision, setRiskRevision] = useState(0);
   function cancelRecording() {
+    mediaLease.current.cancel();
     if (recordTimeout.current) clearTimeout(recordTimeout.current);
     if (recRef.current) { recRef.current.onstop = null; if (recRef.current.state === "recording") { recRef.current.stop(); if (recordSession.current) recordProductEvent(recordSession.current, "record_cancel"); } }
     streamRef.current?.getTracks().forEach(track => track.stop());
@@ -61,6 +66,7 @@ export default function QueuePage() {
   }
 
   async function retest(id: number) {
+    cancelRecording();
     const a = (answers[id] || "").trim();
     if (!a) { setErr("请先写下你的复测回答"); return; }
     setPending(String(id)); setErr("");
@@ -84,8 +90,11 @@ export default function QueuePage() {
   async function toggleRecord(id: number) {
     if (pending || !id) return;
     if (recRef.current && recRef.current.state === "recording") { recRef.current.stop(); return; }
+    const lease = mediaLease.current.begin();
+    if (lease === null) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mediaLease.current.accept(lease, stream)) return;
       if (!mounted.current) { stream.getTracks().forEach(t => t.stop()); return; }
       streamRef.current = stream;
       chunksRef.current = [];
@@ -106,6 +115,8 @@ export default function QueuePage() {
       recordTimeout.current = setTimeout(() => { if (rec.state === "recording") rec.stop(); }, 60_000);
       setRecId(id);
     } catch {
+      if (!mediaLease.current.fail(lease)) return;
+      streamRef.current?.getTracks().forEach(track => track.stop());
       setErr("无法获取麦克风，可用文字复测。");
     }
   }
@@ -121,6 +132,7 @@ export default function QueuePage() {
       const data = await res.json();
       if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
       clearIntentKey(scope);
+      if (data.risk_hold) { setRiskRevision(v => v + 1); return; }
       await reload();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -158,6 +170,7 @@ export default function QueuePage() {
                 </div>
               </div>
               <span className={`badge ${it.status === "mastered" ? "" : "badge-neutral"}`}>{STATUS_CN[it.status] || it.status}</span>
+              <VoiceRisk scope="queue_voice" objectId={String(it.id)} revision={riskRevision} disabled={!!pending} onResolved={reload} />
               <div className="row-actions queue-actions">
                 {it.status === "pending" || it.status === "awaiting_retest" ? (
                   <>

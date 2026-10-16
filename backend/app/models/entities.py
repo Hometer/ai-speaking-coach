@@ -422,6 +422,10 @@ class DrillAttempt(Base):
     result: Mapped[str] = mapped_column(String(16), default="")  # reference/hinted/independent/transfer/pending/failed
     ended_reason: Mapped[str] = mapped_column(String(16), default="")  # completed/skipped/user_ended/error
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    recording_url: Mapped[str] = mapped_column(String(255), default="")
+    reference_sentence: Mapped[str] = mapped_column(Text, default="")
+    reference_version: Mapped[str] = mapped_column(String(80), default="")
+    demo_audio_url: Mapped[str] = mapped_column(String(255), default="")
     ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
 
@@ -449,6 +453,9 @@ class AsrRiskRecord(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     session_id: Mapped[str] = mapped_column(String(64), index=True)
     turn_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    scope: Mapped[str] = mapped_column(String(32), default="turn")
+    object_id: Mapped[str] = mapped_column(String(64), default="")
+    context_version: Mapped[str] = mapped_column(Text, default="")
     risk_level: Mapped[str] = mapped_column(String(8), default="low")  # low/mid/high
     reason_codes: Mapped[str] = mapped_column(String(64), default="")
     original_text: Mapped[str] = mapped_column(Text, default="")

@@ -15,7 +15,7 @@ def has_ffmpeg() -> bool:
 def transcode_to_wav_file(src: Path) -> Path:
     """转成 16kHz 单声道 16bit WAV，返回文件路径。"""
     _require_ffmpeg()
-    dest = src.with_suffix(".wav")
+    dest = src.with_suffix(".asr.wav")  # WAV 输入也必须与输出不同，禁止覆盖源文件
     cmd = [
         settings.ffmpeg_bin, "-y", "-i", str(src),
         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",

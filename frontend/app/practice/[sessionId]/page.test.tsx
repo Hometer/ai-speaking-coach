@@ -1,13 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Page from "./page";
 import { getSession, submitTurn, endSession } from "@/lib/api";
 
 vi.mock("next/navigation",()=>({useParams:()=>({sessionId:"s"}),useRouter:()=>({push:vi.fn()})}));
 vi.mock("@/components/AudioPlayer",()=>({default:()=>null}));
-vi.mock("@/lib/api",()=>({getSession:vi.fn(),recoverPendingSubmissions:vi.fn(),submitTurn:vi.fn(),endSession:vi.fn(),recordProductEvent:vi.fn(),recordStage:vi.fn(),startRecovery:vi.fn()}));
+vi.mock("@/lib/api",()=>({pendingVoiceRisk:vi.fn(async()=>null),pauseSession:vi.fn(async()=>({status:"PAUSED"})),requestHelp:vi.fn(),reviseTurn:vi.fn(),getSession:vi.fn(),recoverPendingSubmissions:vi.fn(),submitTurn:vi.fn(),endSession:vi.fn(),recordProductEvent:vi.fn(),recordStage:vi.fn(),startRecovery:vi.fn()}));
 const base={session_id:"s",status:"WAITING_INPUT",goal_text:"确认预订",scene_label:"酒店入住",review:null,source_invalid:false,qa_recording_consent:false,turns:[],drill:null};
-afterEach(()=>{cleanup();vi.resetAllMocks();});
+beforeEach(async()=>{const api=await import("@/lib/api");vi.mocked(api.pendingVoiceRisk).mockResolvedValue(null);});
+afterEach(()=>{cleanup();vi.resetAllMocks();vi.unstubAllGlobals();});
 
 it("keeps end available during a request and ignores its late reply",async()=>{
   vi.mocked(getSession).mockResolvedValue(base as never);
@@ -35,4 +36,44 @@ it("does not render full answer history in the free speaking stage",async()=>{
   await screen.findByText(/脱稿阶梯/);
   expect(screen.queryByText("FULL_REFERENCE_ANSWER")).not.toBeInTheDocument();
   expect(screen.getByRole("button",{name:/录音说出/})).toBeEnabled();
+});
+
+it.each(["pause","end","unmount"])("stops a late microphone grant after %s",async(action)=>{
+  const api=await import("@/lib/api");
+  vi.mocked(api.pendingVoiceRisk).mockResolvedValue(null);
+  vi.mocked(getSession).mockResolvedValue(base as never);
+  vi.mocked(api.pauseSession).mockImplementation(async()=>{vi.mocked(getSession).mockResolvedValue({...base,status:"PAUSED"} as never);return {status:"PAUSED"} as never;});
+  vi.mocked(endSession).mockResolvedValue({review:{improvements:[]}} as never);
+  let grant:(s:unknown)=>void=()=>{};const stop=vi.fn(), start=vi.fn();
+  const getUserMedia=vi.fn(()=>new Promise(resolve=>{grant=resolve;}));
+  Object.defineProperty(navigator,"mediaDevices",{configurable:true,value:{getUserMedia}});
+  class Recorder { static isTypeSupported(){return true;} start=start; }
+  vi.stubGlobal("MediaRecorder",Recorder);
+  const view=render(<Page/>);
+  const record=await screen.findByRole("button",{name:"录音回答"});
+  fireEvent.click(record);fireEvent.click(record);
+  expect(getUserMedia).toHaveBeenCalledTimes(1);
+  if(action==="unmount")view.unmount();
+  else fireEvent.click(screen.getByRole("button",{name:action==="pause"?"暂停":"结束练习"}));
+  await act(async()=>grant({getTracks:()=>[{stop}]}));
+  expect(start).not.toHaveBeenCalled();expect(stop).toHaveBeenCalledTimes(1);
+  expect(submitTurn).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
+
+it("refreshes review and dependent actions after revising a turn",async()=>{
+  const api=await import("@/lib/api");
+  vi.mocked(api.pendingVoiceRisk).mockResolvedValue(null);
+  const old={...base,status:"ENDED",review:{goal_status:"incomplete",improvements:[{turn_id:"t",practice_sentence:"OLD_SENTENCE",explanation_cn:"OLD_DIAGNOSIS",practice_available:true}]},turns:[{turn_id:"t",input_type:"voice",user_text:"old text",reply_text:""}]};
+  vi.mocked(getSession).mockResolvedValue(old as never);
+  vi.mocked(api.reviseTurn).mockResolvedValue({} as never);
+  vi.spyOn(window,"prompt").mockReturnValue("new text");
+  render(<Page/>);await screen.findByText("OLD_SENTENCE");
+  vi.mocked(getSession).mockResolvedValue({...old,review:{stale:true,goal_status:"revised",improvements:[]},turns:[{...old.turns[0],revised_text:"new text"}]} as never);
+  fireEvent.click(screen.getByRole("button",{name:"修订转写"}));
+  await screen.findByText("new text");
+  expect(screen.queryByText("OLD_SENTENCE")).not.toBeInTheDocument();
+  expect(screen.queryByText("OLD_DIAGNOSIS")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button",{name:"练这一句"})).not.toBeInTheDocument();
+  vi.restoreAllMocks();
 });

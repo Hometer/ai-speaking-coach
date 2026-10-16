@@ -211,6 +211,13 @@ def submit_retest(
         intent_result.remember(db, user_id, "queue_retest", str(item_id), attempt_key, input_type, answer, response)
         return response
 
+    if result == "pending":
+        # 无法判断不是完成到期任务；保留到期/间隔及原成功事实。
+        db.commit()
+        response = {**_to_dict(item), "retest_result": "pending"}
+        intent_result.remember(db, user_id, "queue_retest", str(item_id), attempt_key, input_type, answer, response)
+        return response
+
     _resolve_due(db, item, result)
 
     item.last_practiced_at = _now()
@@ -269,8 +276,18 @@ def delete_item(db: DbSession, user_id: str, item_id: int) -> None:
     db.query(RecallEvidence).filter_by(queue_item_id=item.id).delete()
     db.query(RequestOperation).filter(RequestOperation.user_id == user_id,
         RequestOperation.object_id == str(item.id), RequestOperation.scope.in_(["queue_retest", "voice"])).delete()
+    from app.models.entities import AsrRiskRecord
+    from app.services.session_svc import _delete_audio_files
+    import os
+    files = set()
+    for risk in db.query(AsrRiskRecord).filter_by(user_id=user_id, scope="queue_voice", object_id=str(item_id)).all():
+        if risk.recording_url:
+            files.add(os.path.basename(risk.recording_url))
+        db.query(RequestOperation).filter_by(user_id=user_id, scope="voice_confirm", object_id=str(risk.id)).delete()
+        db.delete(risk)
     db.delete(item)
     db.commit()
+    _delete_audio_files(files)
 
 
 def invalidate_by_turn(db: DbSession, turn_id: str) -> None:

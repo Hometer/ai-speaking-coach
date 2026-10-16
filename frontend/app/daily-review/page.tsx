@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import VoiceRisk from "@/components/VoiceRisk";
+import { MediaLease } from "@/lib/mediaLease";
 import Icon from "@/components/Icon";
 import { clearIntentKey, dailyReviewAction, dailyReviewAttempt, dailyReviewView, dueToday, getInviteCode, intentKey, recordProductEvent, revealQueueItem, startDailyReview } from "@/lib/api";
 import type { DailyReviewCurrent, DueToday } from "@/lib/types";
@@ -22,8 +24,11 @@ export default function DailyReviewPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const recordTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
+  const mediaLease = useRef(new MediaLease());
+  const [riskRevision, setRiskRevision] = useState(0);
   const recordSession = useRef("");
   function cancelRecording() {
+    mediaLease.current.cancel();
     if (recordTimeout.current) clearTimeout(recordTimeout.current);
     if (recRef.current) { recRef.current.onstop = null; if (recRef.current.state === "recording") { recRef.current.stop(); if (recordSession.current) recordProductEvent(recordSession.current, "record_cancel"); } }
     streamRef.current?.getTracks().forEach(track => track.stop());
@@ -63,6 +68,7 @@ export default function DailyReviewPage() {
   }
 
   async function submit(withHelp: boolean) {
+    cancelRecording();
     if (!sessionId || !answer.trim()) return;
     setBusy(true);
     setErr("");
@@ -81,6 +87,7 @@ export default function DailyReviewPage() {
   }
 
   async function reveal() {
+    cancelRecording();
     if (!item) return;
     setBusy(true);
     setErr("");
@@ -99,9 +106,12 @@ export default function DailyReviewPage() {
   async function toggleRecord() {
     if (busy || !sessionId) return;
     if (recRef.current && recRef.current.state === "recording") { recRef.current.stop(); return; }
+    const lease = mediaLease.current.begin();
+    if (lease === null) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      if (!mediaLease.current.accept(lease, stream)) return;
       if (!mounted.current) { stream.getTracks().forEach(t => t.stop()); return; }
       streamRef.current = stream;
       chunksRef.current = [];
@@ -122,6 +132,8 @@ export default function DailyReviewPage() {
       recordTimeout.current = setTimeout(() => { if (rec.state === "recording") rec.stop(); }, 60_000);
       setRecording(true);
     } catch {
+      if (!mediaLease.current.fail(lease)) return;
+      streamRef.current?.getTracks().forEach(track => track.stop());
       setErr("无法获取麦克风，可用文字输入。");
     }
   }
@@ -143,6 +155,7 @@ export default function DailyReviewPage() {
       const data = await res.json();
       if (!res.ok) { setErr(data?.error?.message ?? `HTTP ${res.status}`); return; }
       clearIntentKey(scope);
+      if (data.risk_hold) { setRiskRevision(v => v + 1); return; }
       setShowHint(false);
       setMsg(data.result === "recall_completed" ? "回忆完成，接下来请回答换题条件。" : data.success ? "这一条已独立完成（语音）。" : "还没有对上，可以再试一次或使用提示。");
       if (data.next.done) { clearIntentKey("daily-start"); sessionStorage.removeItem("active-daily-review"); }
@@ -188,6 +201,7 @@ export default function DailyReviewPage() {
       <h1 className="page-title">把到期的表达，再说得稳一点。</h1>
       <p className="page-description">一次只练今天真正到期的内容。卡住可以看提示，退出和服务故障都不会记成学习失败。</p>
 
+      {sessionId && <VoiceRisk key={sessionId} scope="daily_voice" objectId={sessionId} revision={riskRevision} disabled={busy} onResolved={async () => setCurrent(await dailyReviewView(sessionId))} />}
       {err && <div className="error-banner" role="alert">{err}</div>}
       {(msg || current?.notice) && <div className="notice mt-4" role="status"><Icon name={current?.notice ? "help" : "check"} size={17} /><p>{msg || current?.notice}</p></div>}
 

@@ -468,11 +468,11 @@ export async function submitTurn(
 }
 
 export async function retryTurnAudio(sessionId: string, turnId: string): Promise<TurnDone> {
-  const res = await fetch(`/api/v1/sessions/${sessionId}/turns/${turnId}/audio`, {
-    method: "POST",
-    headers: authHeaders(),
-  });
-  return handle<TurnDone>(res);
+  const slot = `turn-audio:${sessionId}:${turnId}`;
+  const key = await intentKey(slot, "retry");
+  const result = await handle<TurnDone>(await fetch(`/api/v1/sessions/${sessionId}/turns/${turnId}/audio?request_key=${key}`, { method: "POST", headers: authHeaders() }));
+  clearIntentKey(slot);
+  return result;
 }
 
 export async function discardRisk(sessionId: string, turnId: string): Promise<void> {
@@ -493,7 +493,7 @@ export async function drillAttempt(sessionId: string, text: string, inputType = 
   return result;
 }
 
-export async function drillAction(sessionId: string, action: "skip" | "downgrade" | "jump" | "end"): Promise<DrillView> {
+export async function drillAction(sessionId: string, action: "skip" | "downgrade" | "jump" | "end" | "repeat"): Promise<DrillView> {
   const res = await fetch(`/api/v1/sessions/${sessionId}/drill/action`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -626,4 +626,20 @@ export async function recoverPendingSubmissions(sessionId:string):Promise<void> 
       if(op.state==="done" || op.state==="failed")sessionStorage.removeItem(item.slot);
     } catch { /* 未受理或暂时断网时保留原键，不自动重发模型。 */ }
   }));
+}
+
+export async function pendingVoiceRisk(scope: string, objectId: string): Promise<RiskHold | null> {
+  return handle(await fetch(`/api/v1/voice-risks?scope=${encodeURIComponent(scope)}&object_id=${encodeURIComponent(objectId)}`, { headers: authHeaders() }));
+}
+export async function confirmVoiceRisk(id: number, text: string): Promise<unknown> {
+  const slot = `voice-confirm:${id}`;
+  const result = await handle(await fetch(`/api/v1/voice-risks/${id}/confirm`, { method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ text, request_key: await intentKey(slot, text) }) }));
+  clearIntentKey(slot);
+  return result;
+}
+export async function discardVoiceRisk(id: number): Promise<unknown> {
+  return handle(await fetch(`/api/v1/voice-risks/${id}`, { method: "DELETE", headers: authHeaders() }));
+}
+export async function deletePlans(): Promise<{ deleted: number }> {
+  return handle(await fetch("/api/v1/training-plan", { method: "DELETE", headers: authHeaders() }));
 }

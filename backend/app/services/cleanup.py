@@ -33,10 +33,11 @@ def cleanup_stale_uploads() -> int:
 def cleanup_old_recordings() -> int:
     """清除已落库的本人录音及回放引用；教练合成音频仍随会话保留。"""
     from app.models.database import SessionLocal
-    from app.models.entities import AsrRiskRecord, Session, Turn
+    from app.models.entities import AsrRiskRecord, DrillAttempt, IntentResult, RequestOperation, Session, Turn
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=min(settings.upload_retention_minutes, settings.upload_max_age_minutes))
     removed = 0
+    expired_urls = set()
     with SessionLocal() as db:
         turns = db.query(Turn).filter(Turn.recording_url != "").all()
         for turn in turns:
@@ -49,6 +50,7 @@ def cleanup_old_recordings() -> int:
                 path.unlink(missing_ok=True)
             except OSError:
                 continue
+            expired_urls.add(turn.recording_url)
             turn.recording_url = ""
             if turn.practice_eval:
                 try:
@@ -78,8 +80,35 @@ def cleanup_old_recordings() -> int:
                         session.pending_risk = json.dumps(pending, ensure_ascii=False)
                 except (ValueError, TypeError, AttributeError):
                     pass
+            expired_urls.add(risk.recording_url)
             risk.recording_url = ""
             removed += 1
+        for attempt in db.query(DrillAttempt).filter(DrillAttempt.recording_url != "").all():
+            created = attempt.created_at
+            path = settings.data_dir / "audio" / os.path.basename(attempt.recording_url)
+            if created and (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created) >= cutoff and path.is_file() and path.stat().st_mtime >= cutoff.timestamp():
+                continue
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                continue
+            expired_urls.add(attempt.recording_url)
+            attempt.recording_url = ""
+            removed += 1
+        # 失效播放地址也从幂等快照撤销；业务判定和用户回答继续保留。
+        if expired_urls:
+            def strip(value):
+                if isinstance(value, dict):
+                    return {k: strip(v) for k, v in value.items()}
+                if isinstance(value, list):
+                    return [strip(v) for v in value]
+                return "" if isinstance(value, str) and value in expired_urls else value
+            for model in (IntentResult, RequestOperation):
+                for row in db.query(model).filter(model.response_json != "").all():
+                    try:
+                        row.response_json = json.dumps(strip(json.loads(row.response_json)), ensure_ascii=False)
+                    except (ValueError, TypeError):
+                        pass
         db.commit()
     return removed
 

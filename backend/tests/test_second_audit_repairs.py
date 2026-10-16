@@ -37,7 +37,7 @@ def drill(db, stage='free_speak'):
 def test_nested_operations_keep_owner_and_delete_all_text_copies(monkeypatch,delete_all):
     with SessionLocal() as db:
         target=drill(db,'full_text')
-        monkeypatch.setattr(session_svc,'transcribe_voice_bytes',lambda data:target)
+        monkeypatch.setattr(session_svc,'transcribe_voice_bytes',lambda data, *args:target)
         session_svc.submit_voice_intent(db,'user-a','drill','drill_voice','drill','nested',AUDIO,
             lambda text:drill_svc.submit_drill_attempt(db,'drill','user-a',text,'voice','nested'))
         rows=db.query(RequestOperation).filter_by(session_id='drill').all()
@@ -53,7 +53,7 @@ def test_nested_operations_keep_owner_and_delete_all_text_copies(monkeypatch,del
 def test_source_dispute_revokes_nested_replay(monkeypatch):
     with SessionLocal() as db:
         target=drill(db,'full_text')
-        monkeypatch.setattr(session_svc,'transcribe_voice_bytes',lambda data:target)
+        monkeypatch.setattr(session_svc,'transcribe_voice_bytes',lambda data, *args:target)
         send=lambda:session_svc.submit_voice_intent(db,'user-a','drill','drill_voice','drill','nested',AUDIO,
             lambda text:drill_svc.submit_drill_attempt(db,'drill','user-a',text,'voice','nested'))
         send();session_svc.dispute_review_improvement(db,'source','user-a','source-t')
@@ -271,7 +271,7 @@ def test_old_phrase_card_uses_current_material_without_overwriting_source_histor
 def test_recovering_voice_child_resolves_to_original_root(monkeypatch,client):
     with SessionLocal() as db:
         target=drill(db,'full_text')
-        monkeypatch.setattr(session_svc,'transcribe_voice_bytes',lambda data:target)
+        monkeypatch.setattr(session_svc,'transcribe_voice_bytes',lambda data, *args:target)
         session_svc.submit_voice_intent(db,'user-a','drill','drill_voice','drill','voice-key',AUDIO,
             lambda text:drill_svc.submit_drill_attempt(db,'drill','user-a',text,'voice','voice-key'))
         root=db.query(RequestOperation).filter_by(scope='voice').one().id

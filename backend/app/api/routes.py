@@ -2,8 +2,10 @@
 from app.core.dates import utc_iso
 import json
 import time
+import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
+from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, Depends, File, Form, Header, UploadFile, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -247,11 +249,11 @@ def confirm_turn(session_id: str, turn_id: str, req: ConfirmTurnRequest, user_id
 
 
 @router.post("/sessions/{session_id}/turns/{turn_id}/audio")
-def retry_turn_audio(session_id: str, turn_id: str, user_id: str = Depends(get_user_id)):
+def retry_turn_audio(session_id: str, turn_id: str, request_key: str = Query(default="", max_length=64), user_id: str = Depends(get_user_id)):
     """重新生成本回合语音（受鉴权保护、幂等）。会话结束后也可重试已有文字的音频。"""
     db = SessionLocal()
     try:
-        return session_svc.synthesize_turn_audio(db, session_id, user_id, turn_id, retry_failed=True)
+        return session_svc.synthesize_turn_audio(db, session_id, user_id, turn_id, retry_failed=True, request_key=request_key)
     finally:
         db.close()
 
@@ -267,6 +269,7 @@ def drill_attempt(session_id: str, req: DrillAttemptRequest, user_id: str = Depe
 
 @router.post("/sessions/{session_id}/drill-attempt/voice")
 def drill_attempt_voice(session_id: str, audio: UploadFile = File(...), attempt_key: str = Form(""), user_id: str = Depends(get_user_id)):
+    attempt_key = attempt_key or uuid.uuid4().hex
     data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
     db = SessionLocal()
     try:
@@ -539,6 +542,7 @@ def daily_review_attempt(session_id: str, req: DailyReviewAttemptRequest, user_i
 
 @router.post("/review-queue/daily-review/{session_id}/attempt/voice")
 def daily_review_attempt_voice(session_id: str, audio: UploadFile = File(...), attempt_key: str = Form(""), user_id: str = Depends(get_user_id)):
+    attempt_key = attempt_key or uuid.uuid4().hex
     data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
     db = SessionLocal()
     try:
@@ -587,8 +591,9 @@ def retest(item_id: int, req: RetestRequest, user_id: str = Depends(get_user_id)
         db.close()
 
 
-@router.post("/review-queue/{item_id}/retest/voice", response_model=QueueItemResponse)
+@router.post("/review-queue/{item_id}/retest/voice")
 def retest_voice(item_id: int, audio: UploadFile = File(...), attempt_key: str = Form(""), user_id: str = Depends(get_user_id)):
+    attempt_key = attempt_key or uuid.uuid4().hex
     data = audio.file.read(int(settings.max_audio_mb * 1024 * 1024) + 1)
     db = SessionLocal()
     try:
@@ -852,3 +857,36 @@ def conversation_history(turn_id: str, reviewer: str = Depends(get_qa_user_id)):
         return [{"reviewer_id":r.reviewer_id,"conclusions":json.loads(r.conclusion_json),"prompt_version":r.prompt_version,"scenario_version":r.scenario_version,"created_at":utc_iso(r.created_at)} for r in db.query(ConversationQualityReview).filter_by(turn_id=turn_id).order_by(ConversationQualityReview.id).all()]
     finally:
         db.close()
+
+
+class VoiceRiskConfirmation(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    request_key: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/voice-risks")
+def pending_voice_risk(scope: Literal["drill_voice", "daily_voice", "queue_voice"], object_id: str = Query(min_length=1, max_length=64), user_id: str = Depends(get_user_id)):
+    with SessionLocal() as db:
+        return session_svc.pending_voice_risk(db, user_id, scope, object_id)
+
+
+@router.post("/voice-risks/{risk_id}/confirm")
+def confirm_voice_risk(risk_id: int, req: VoiceRiskConfirmation, user_id: str = Depends(get_user_id)):
+    from app.models.entities import AsrRiskRecord
+    with SessionLocal() as db:
+        risk = db.query(AsrRiskRecord).filter_by(id=risk_id, user_id=user_id).first()
+        if risk is None:
+            raise AppError("NOT_FOUND", "待确认语音不存在", 404)
+        return session_svc.confirm_voice_risk(db, user_id, risk.session_id, risk_id, req.text, req.request_key)
+
+
+@router.delete("/voice-risks/{risk_id}")
+def discard_voice_risk(risk_id: int, user_id: str = Depends(get_user_id)):
+    with SessionLocal() as db:
+        return session_svc.discard_voice_risk(db, user_id, risk_id)
+
+
+@router.delete("/training-plan")
+def delete_plans(user_id: str = Depends(get_user_id)):
+    with SessionLocal() as db:
+        return plan_svc.delete_plans(db, user_id)

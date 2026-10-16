@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { createPlan, getPlan, pausePlan, restartPlan, resumePlan, skipPlanDay } from "@/lib/api";
+import { deletePlans, createPlan, getPlan, pausePlan, restartPlan, resumePlan, skipPlanDay } from "@/lib/api";
 import type { TrainingPlan } from "@/lib/types";
 import Icon from "@/components/Icon";
 
@@ -51,6 +51,14 @@ export default function PlanPage() {
     finally { setPending(""); }
   }
 
+  async function remove() {
+    if (!window.confirm("删除全部活动及历史计划？已有练习和待复练记录会保留。")) return;
+    setPending("delete"); setErr("");
+    try { await deletePlans(); setPlan(null); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setPending(""); }
+  }
+
   async function togglePause() {
     if (!plan) return;
     setPending("pause"); setErr("");
@@ -75,9 +83,10 @@ export default function PlanPage() {
           ))}
         </div>
         <label className="field-label mt-4">每天可用时间 <select className="field field-small" value={availableMinutes} onChange={e => setAvailableMinutes(Number(e.target.value))} disabled={!!pending}><option value={5}>5 分钟</option><option value={10}>10 分钟</option><option value={15}>15 分钟</option></select></label>
-        <div className="flex gap-3 mt-4">
+        <div className="flex gap-3 flex-wrap mt-4">
           <button className="btn btn-primary" onClick={create} disabled={!!pending}>{pending === "create" ? "生成中…" : "生成 / 更新计划"}</button>
           {plan && <button className="btn btn-ghost" onClick={togglePause} disabled={!!pending}>{plan.status === "paused" ? "恢复计划" : "暂停计划"}</button>}
+          <button className="btn btn-ghost" onClick={remove} disabled={!!pending || loading}>删除全部计划</button>
           {plan && <button className="btn btn-ghost" onClick={restart} disabled={!!pending}>重新开始</button>}
         </div>
       </div>

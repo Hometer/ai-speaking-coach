@@ -22,6 +22,7 @@ def evaluate(db, item, answer, input_type, session_id='', request_key='', valida
         guard = BudgetGuard(db)
         guard.reserve(settings.nominal_cost_per_turn, session_id or item.source_session_id, item.user_id)
         reset_usage_attempts()
+        guard.mark_called()
     try:
         if stage == 'transfer':
             verified = verify_new_condition(question, item.suggestion_sentence, answer) if input_type == 'voice' and not item.help_shown else None

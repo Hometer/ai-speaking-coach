@@ -27,6 +27,7 @@ export interface TurnDone {
 }
 
 export interface RiskHold {
+  risk_id?: number;
   risk_hold: true;
   risk_level: "mid" | "high";
   reason_codes: string[];
@@ -53,6 +54,7 @@ export interface TurnItem {
 }
 
 export interface DrillView {
+  recording?: { recording_url: string; stage: string; reference_version: string; reference_sentence: string; demo_audio_url: string } | null;
   material_available?: boolean;
   drill_stage: string;
   stage_label: string;

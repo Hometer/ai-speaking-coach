@@ -171,7 +171,7 @@ def _set_status(db: DbSession, user_id: str, status: str) -> dict[str, Any]:
     elif status == "active" and plan.status == "paused" and plan.paused_at:
         shift = max(0, (_local_date() - _local_date(plan.paused_at)).days)
         if shift:
-            days = json.loads(plan.days_json)
+            days = _to_dict(plan, db)["days"]
             for d in days:
                 if d.get("status") == "pending":
                     old = date.fromisoformat(d.get("scheduled_date") or (_local_date(plan.created_at) + timedelta(days=int(d.get("day", 1)) - 1)).isoformat())
@@ -245,3 +245,14 @@ def bind_day(db: DbSession, user_id: str, scene_id: str, plan_id: int | None, pl
     if day is None or day["scheduled_date"] != today or day["scene_id"] != scene_id or day["status"] != "pending":
         raise AppError("INVALID_PLAN_DAY", "该场景今天不在计划待练日", status_code=409)
     return plan.id, day["day"]
+
+
+def delete_plans(db: DbSession, user_id: str) -> dict[str, int]:
+    from app.models.entities import ProductEvent
+    ids = [p.id for p in db.query(TrainingPlan).filter_by(user_id=user_id).all()]
+    if ids:
+        db.query(Session).filter(Session.user_id == user_id, Session.plan_id.in_(ids)).update({"plan_id": None, "plan_day": None}, synchronize_session=False)
+        db.query(ProductEvent).filter(ProductEvent.user_id == user_id, ProductEvent.session_id.in_([f"plan:{i}" for i in ids])).delete(synchronize_session=False)
+        db.query(TrainingPlan).filter(TrainingPlan.user_id == user_id, TrainingPlan.id.in_(ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": len(ids)}
